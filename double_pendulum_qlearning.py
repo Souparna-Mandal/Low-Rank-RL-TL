@@ -1,6 +1,6 @@
 from typing import Any
 
-
+import math
 import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,8 +8,8 @@ from collections import defaultdict
 
 
 class QLearner:
-    def __init__(self, n_actions, n_bins=10, lr=0.1, gamma=0.99, 
-                 epsilon=1.0, eps_decay=0.998, eps_min=0.01):
+    def __init__(self, n_actions, n_bins=10, lr=0.1, gamma=0.7,
+                 epsilon=1.0, eps_decay=0.999, eps_min=0.001):
         self.n_actions = n_actions
         self.n_bins = n_bins
         self.lr = lr
@@ -46,7 +46,8 @@ class QLearner:
         self.q_table[s][action] += self.lr * (td_target - self.q_table[s][action]) # new_value = old_value + learning_rate × (target - old_value)
     
     def decay_epsilon(self): # decaying epsilon and going to more optimal sols
-        self.epsilon = max(self.eps_min, self.epsilon * self.eps_decay)  
+        self.epsilon = max(self.eps_min, self.epsilon * self.eps_decay)
+        # self.epsilon = max(self.eps_min, self.epsilon * math.exp(-1. * self.eps_decay))
 
 
 def train(n_episodes=1000):
@@ -136,7 +137,7 @@ def plot_progress(rewards):
 # Main program
 
 print("Training Q-learner on Acrobot...")
-agent, rewards = train(n_episodes=1000)
+agent, rewards = train(n_episodes=10000)
 
 print("\nPlotting...")
 plot_progress(rewards)
