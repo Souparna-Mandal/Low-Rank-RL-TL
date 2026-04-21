@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "low_rank_rl"
+version = "0.1.0"
+description = "Exploring low-rank structure in RL value and policy functions"
+requires-python = ">=3.10"
+dependencies = [
+    "gymnasium>=0.29.1",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.7.0",
+    "torch>=2.0.0",
+    "tensorly>=0.8.0",
+]
+
+[project.optional-dependencies]
+mujoco = ["gymnasium[mujoco]", "mujoco>=3.1.0"]
+dev = ["jupyter", "ipython", "pygame>=2.5.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["low_rank_rl*"]

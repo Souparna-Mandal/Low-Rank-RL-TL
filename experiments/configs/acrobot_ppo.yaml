@@ -1,0 +1,28 @@
+env_id: "Acrobot-v1"
+agent: "ppo"
+
+training:
+  n_episodes: 1000
+  rank_checkpoint_every: 100
+  n_rank_samples: 1024
+
+agent_kwargs:
+  hidden: 64
+  lr: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  ppo_epochs: 4
+  mini_batch_size: 64
+
+analysis:
+  hankel_steps: 500
+  hankel_n_rows: null
+  value_tensor_bins: 20
+  value_tensor_dims: [0, 1, 2, 3]
+
+output:
+  save_dir: "outputs/acrobot_ppo"
+  save_agent: true

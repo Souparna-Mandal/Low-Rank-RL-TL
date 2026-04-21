@@ -1,0 +1,32 @@
+env_id: "MountainCarContinuous-v0"
+agent: "dqn"
+
+training:
+  n_episodes: 1000
+  rank_checkpoint_every: 100
+  n_rank_samples: 1024
+
+agent_kwargs:
+  hidden: 128
+  batch_size: 128
+  gamma: 0.99
+  lr: 1.0e-4
+  tau: 0.005
+  eps_start: 0.9
+  eps_end: 0.01
+  eps_decay: 40000
+  buffer_capacity: 50000
+
+env_kwargs:
+  n_discrete_actions: 21
+  normalize_obs: true
+
+analysis:
+  hankel_steps: 300
+  hankel_n_rows: null
+  value_tensor_bins: 30
+  value_tensor_dims: [0, 1]   # position, velocity
+
+output:
+  save_dir: "outputs/mountaincar_dqn"
+  save_agent: true
