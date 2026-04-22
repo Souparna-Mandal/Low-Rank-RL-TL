@@ -48,7 +48,7 @@ Agent-specific invariants:
 - `registered_envs()` returns a non-empty list including `"Acrobot-v1"` and
   `"MountainCarContinuous-v0"`.
 - `make_env` wraps continuous-action envs to `Discrete` and sets
-  `metadata["action_type"]` appropriately.
+  `metadata["action_type"]` / `metadata["obs_type"]` appropriately.
 - `normalize_obs=True` override produces observations in $[-1, 1]$.
 - `DiscreteActionWrapper`:
   - action space is `Discrete(n_actions)`;
@@ -58,6 +58,16 @@ Agent-specific invariants:
   - resets of MountainCarContinuous yield observations in $[-1, 1]$
     within `1e-5` tolerance;
   - Pendulum's infinite bounds do not produce non-finite observations.
+- `DiscretizeObsWrapper`:
+  - observations are snapped to bin centres; `obs_to_index` is bound-safe;
+  - scalar `n_bins` broadcasts to a per-dim list; `bin_edges` length matches;
+  - infinite raw bounds are handled via the ±5 fallback before binning;
+  - `make_env` defaults correctly apply / omit the wrapper per env.
+- `GridWorldEnv`: reset returns start, step moves by the action delta,
+  walls and boundaries block moves, goal terminates with reward 0,
+  non-goal steps reward −1, truncation at `max_steps`, `state_grid`
+  enumerates all cells.
+- `find_obs_discretizer` walks the wrapper stack correctly.
 
 ### `test_analysis.py`
 
@@ -65,7 +75,10 @@ Agent-specific invariants:
   (constant row), `normalised_numerical_rank == 1` for a random full-rank
   matrix, bounds $1 \le \text{stable}, \text{effective} \le \min(m, n)$,
   spectral gap $\ge 0$, `summary` contains the expected keywords,
-  `sample_states` returns `(n, obs_dim)`.
+  `sample_states` returns the full canonical grid when the env is
+  discretised and MC-samples $n$ states otherwise,
+  `canonical_states` / `canonical_subsample` return the right shapes and
+  handle both the discretised and continuous cases.
 - **`tensor.py`** — `_mode_unfold` shapes on a 3-tensor, `hosvd_spectra`
   keys, descending singular values per mode, positive stable ranks,
   `build_value_tensor` produces the expected shape without NaNs.

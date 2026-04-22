@@ -20,7 +20,7 @@ agent_kwargs:
 analysis:
   hankel_steps: 500
   hankel_n_rows: null          # auto (T // 2)
-  value_tensor_bins: 20
+  value_tensor_bins: null           # null -> use the wrapper's canonical grid (21^4)
   value_tensor_dims: [0, 1, 2, 3]   # θ₁, θ₂, ω₁, ω₂
 
 output:

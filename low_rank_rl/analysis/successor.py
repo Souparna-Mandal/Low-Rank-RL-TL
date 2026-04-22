@@ -10,6 +10,7 @@ import gymnasium as gym
 
 from low_rank_rl.agents.base import BaseAgent
 from low_rank_rl.analysis.rank import _metrics_from_matrix, RankMetrics
+from low_rank_rl.envs.wrappers import find_obs_discretizer
 
 
 @dataclass
@@ -36,13 +37,25 @@ def build_successor_matrix(
     N = len(states)
     M = np.zeros((N, N), dtype=np.float64)
 
+    disc       = find_obs_discretizer(env)
+    idx_to_row: dict[tuple[int, ...], int] | None = None
+    if disc is not None:
+        idx_to_row = {}
+        for k, s in enumerate(states):
+            idx_to_row.setdefault(disc.obs_to_index(s), k)
+
     for i in range(N):
         env.reset()
         current_obs = states[i].copy()
         discount    = 1.0
 
         for _ in range(n_rollout_steps):
-            j = int(np.argmin(np.sum((states - current_obs) ** 2, axis=1)))
+            if idx_to_row is not None:
+                j = idx_to_row.get(disc.obs_to_index(current_obs))
+                if j is None:
+                    j = int(np.argmin(np.sum((states - current_obs) ** 2, axis=1)))
+            else:
+                j = int(np.argmin(np.sum((states - current_obs) ** 2, axis=1)))
             M[i, j] += discount
             discount *= gamma
 

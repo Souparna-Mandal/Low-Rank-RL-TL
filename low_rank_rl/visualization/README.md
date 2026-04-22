@@ -46,7 +46,9 @@ One sub-plot per mode of the value tensor (see
 values and annotates its stable rank
 $\sum_i \sigma_i^2 / \sigma_1^2$.
 
-Use `dim_labels=["θ₁", "θ₂", "ω₁", "ω₂"]` to label modes meaningfully.
+Use e.g. `dim_labels=["cos θ₁", "sin θ₁", "cos θ₂", "sin θ₂", "ω₁", "ω₂"]`
+(the full 6-D Acrobot obs) or `["x", "v"]` (MountainCar) to label modes
+meaningfully.
 
 ### `plot_rank_vs_episode(history)`
 

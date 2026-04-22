@@ -1,4 +1,18 @@
-"""Proximal Policy Optimisation (clipped surrogate + GAE)."""
+"""Proximal Policy Optimisation (clipped surrogate + GAE).
+
+The agent follows OpenAI Spinning Up's PPO pseudocode
+(https://spinningup.openai.com/en/latest/algorithms/ppo.html) and the common
+CleanRL single-file reference implementation
+(https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py):
+
+- Separate actor and critic MLPs with Tanh activations.
+- Generalised Advantage Estimation (GAE-λ) computed backwards with
+  ``next_val`` seeded by ``last_value`` to bootstrap truncated episodes.
+- Clipped surrogate objective L_CLIP = E[min(rₜ Aₜ, clip(rₜ, 1±ε) Aₜ)].
+- Entropy bonus and squared-error value loss combined in a single optimiser
+  step over several epochs of random mini-batches.
+- Per-rollout advantage normalisation and global-norm gradient clipping at 0.5.
+"""
 
 from __future__ import annotations
 

@@ -15,7 +15,7 @@ be fed into the whole analysis and visualisation stack without modification.
 
 | Sub-package | What lives there |
 |---|---|
-| `envs/`          | `make_env` factory + `DiscreteActionWrapper`, `NormalizeObsWrapper` |
+| `envs/`          | `make_env` factory + `DiscreteActionWrapper`, `NormalizeObsWrapper`, `DiscretizeObsWrapper`, `GridWorldEnv` |
 | `agents/`        | `BaseAgent` + DQN, PPO, tabular Q-learning, SARSA, Monte Carlo |
 | `analysis/`      | Rank metrics, HOSVD, Hankel, shifted successor measure |
 | `visualization/` | Matplotlib plots for training curves, spectra, value heatmaps |
@@ -32,6 +32,9 @@ Q \in \mathbb{R}^{N \times |\mathcal{A}|}, \qquad Q_{ij} = Q^\pi(s_i, a_j).
 $$
 
 The rank of $Q$ is the natural first diagnostic of low-rank structure.
+When the env has a `DiscretizeObsWrapper`, the probe set is the **full
+canonical grid** of bin centres, so the matrix is the exact tabular $Q$
+rather than a Monte-Carlo approximation.
 
 ### 2. The value tensor
 

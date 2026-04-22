@@ -7,7 +7,7 @@ from low_rank_rl.envs import make_env
 from low_rank_rl.agents import DQNAgent, QLearningAgent
 from low_rank_rl.analysis.rank import (
     RankMetrics, compute_rank_metrics, compute_rank_metrics_from_matrix,
-    sample_states, _metrics_from_matrix,
+    sample_states, canonical_states, canonical_subsample, _metrics_from_matrix,
 )
 from low_rank_rl.analysis.tensor import (
     build_value_tensor, hosvd_spectra, hosvd_stable_ranks,
@@ -24,8 +24,11 @@ from low_rank_rl.analysis.successor import (
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
-def make_agent():
-    return DQNAgent(6, 3, hidden=16, device="cpu")
+def make_agent(env=None, n_obs: int = 6, n_actions: int = 3):
+    if env is not None:
+        n_obs     = env.observation_space.shape[0]
+        n_actions = env.action_space.n
+    return DQNAgent(n_obs, n_actions, hidden=16, device="cpu")
 
 
 def make_tabular_agent(env):
@@ -84,11 +87,40 @@ class TestRankMetrics:
         assert "effective rank" in s
 
     def test_compute_rank_metrics_shape_consistency(self):
-        env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        env   = make_env("Acrobot-v1", discretize_obs=False)
+        agent = make_agent(env)
         states = sample_states(env, 32)
         m = compute_rank_metrics(agent, states)
-        assert m.matrix_shape == (32, 3)
+        assert m.matrix_shape == (32, env.action_space.n)
+        env.close()
+
+    def test_sample_states_returns_full_canonical_grid_when_discretised(self):
+        env = make_env("MountainCarContinuous-v0")  # 40 x 40 discretised by default
+        states = sample_states(env, 64)
+        assert states.shape == (40 * 40, env.observation_space.shape[0])
+        env.close()
+
+    def test_sample_states_continuous_env_uses_mc(self):
+        env    = make_env("MountainCarContinuous-v0", discretize_obs=False)
+        states = sample_states(env, 20)
+        assert states.shape == (20, env.observation_space.shape[0])
+        env.close()
+
+    def test_canonical_states_none_when_not_discretised(self):
+        env = make_env("MountainCarContinuous-v0", discretize_obs=False)
+        assert canonical_states(env) is None
+        env.close()
+
+    def test_canonical_subsample_caps_at_n(self):
+        env = make_env("MountainCarContinuous-v0")  # 1600 canonical states
+        sub = canonical_subsample(env, 64)
+        assert sub.shape == (64, env.observation_space.shape[0])
+        env.close()
+
+    def test_canonical_subsample_returns_full_grid_when_n_exceeds(self):
+        env = make_env("MountainCarContinuous-v0")
+        sub = canonical_subsample(env, 10_000)
+        assert sub.shape == (1600, env.observation_space.shape[0])
         env.close()
 
     def test_compute_from_matrix(self):
@@ -97,9 +129,10 @@ class TestRankMetrics:
         assert m.numerical_rank == 5
 
     def test_sample_states_shape(self):
-        env    = make_env("Acrobot-v1")
+        env    = make_env("Acrobot-v1", discretize_obs=False)
+        obs_dim = env.observation_space.shape[0]
         states = sample_states(env, 64)
-        assert states.shape == (64, 6)
+        assert states.shape == (64, obs_dim)
         env.close()
 
 
@@ -131,14 +164,14 @@ class TestTensorAnalysis:
 
     def test_build_value_tensor_shape(self):
         env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        agent = make_agent(env)
         T     = build_value_tensor(agent, env, dims=[0, 1], n_bins=5, n_samples=200)
         assert T.shape == (5, 5)
         env.close()
 
     def test_build_value_tensor_no_nans(self):
         env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        agent = make_agent(env)
         T     = build_value_tensor(agent, env, dims=[0, 1], n_bins=5, n_samples=200)
         assert np.all(np.isfinite(T))
         env.close()
@@ -195,14 +228,14 @@ class TestHankelMatrix:
 
     def test_collect_trajectory_keys(self):
         env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        agent = make_agent(env)
         traj  = collect_trajectory(agent, env, n_steps=20)
         assert set(traj.keys()) == {"states", "actions", "value", "q_taken", "policy"}
         env.close()
 
     def test_collect_trajectory_lengths_consistent(self):
         env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        agent = make_agent(env)
         traj  = collect_trajectory(agent, env, n_steps=20)
         T     = len(traj["states"])
         for k in ("actions", "value", "q_taken", "policy"):
@@ -212,7 +245,7 @@ class TestHankelMatrix:
     def test_hankel_rank_metrics_returns_dataclass(self):
         from low_rank_rl.analysis.hankel import HankelMetrics
         env     = make_env("Acrobot-v1")
-        agent   = make_agent()
+        agent   = make_agent(env)
         metrics = hankel_rank_metrics(agent, env, sequence_type="value", n_steps=40)
         assert isinstance(metrics, HankelMetrics)
         assert metrics.numerical_rank >= 1
@@ -287,8 +320,8 @@ class TestSuccessorAnalysis:
         assert "Shifted" in s
 
     def test_build_successor_matrix_shape_and_nonneg(self):
-        env   = make_env("Acrobot-v1")
-        agent = make_agent()
+        env   = make_env("Acrobot-v1", discretize_obs=False)
+        agent = make_agent(env)
         states = sample_states(env, 8)
         M      = build_successor_matrix(agent, env, states, gamma=0.9, n_rollout_steps=20)
         assert M.shape == (8, 8)
@@ -296,8 +329,8 @@ class TestSuccessorAnalysis:
         env.close()
 
     def test_successor_features_shape(self):
-        env    = make_env("Acrobot-v1")
-        agent  = make_agent()
+        env    = make_env("Acrobot-v1", discretize_obs=False)
+        agent  = make_agent(env)
         states = sample_states(env, 4)
         psi    = successor_features(
             agent, env, states,

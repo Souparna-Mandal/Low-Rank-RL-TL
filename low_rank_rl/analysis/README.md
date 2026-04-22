@@ -3,9 +3,26 @@
 Four complementary views of low-rank structure in an RL agent, sharing the
 same `BaseAgent.q_matrix` interface.
 
+## How probe states are chosen
+
+Every routine below starts from a probe set $S = \{s_1, \dots, s_N\}$. Two
+helpers in `rank.py` decide what that set looks like:
+
+- `sample_states(env, n)` — if the env has a `DiscretizeObsWrapper`,
+  returns the **full canonical grid** (every bin centre, $n$ ignored).
+  Otherwise rolls out a uniform random policy for `n` steps.
+- `canonical_states(env)` — returns the full grid or `None`.
+- `canonical_subsample(env, n, rng=None)` — random subset of the grid
+  of size `min(n, grid_total)`; MC-samples `n` states when the env is
+  not discretised. Used by the successor code where an $N^2$ matrix on
+  the full grid would be infeasible.
+
+So on discretised envs the rank / HOSVD routines see the **exact tabular
+Q-function**; no sampling noise, no visitation bias.
+
 ## 1. Q-matrix rank (`rank.py`)
 
-Given a probe set of states $S = \{s_1, \dots, s_N\}$ we form
+Given the probe set we form
 
 $$
 Q \in \mathbb{R}^{N \times |\mathcal A|}, \qquad Q_{ij} = Q^\pi(s_i, a_j)
@@ -14,16 +31,16 @@ $$
 and compute its singular values $\sigma_1 \ge \sigma_2 \ge \cdots$ via
 `np.linalg.svd`. Three rank estimates are reported:
 
-- **Numerical rank**
-  $r_\text{num} = \#\{i : \sigma_i > \tau \sigma_1\}$ with default
-  $\tau = 10^{-5}$.
-- **Stable rank** (Rudelson–Vershynin; standard in low-rank RL literature)
+- **Numerical rank** $r_\text{num} = \#\{i : \sigma_i > \tau \sigma_1\}$
+  with default $\tau = 10^{-5}$.
+- **Stable rank** (Rudelson–Vershynin; standard in the low-rank RL
+  literature)
   $$
   \mathrm{sr}(Q) = \frac{\lVert Q \rVert_F^2}{\sigma_1^2}
                 = \frac{\sum_i \sigma_i^2}{\sigma_1^2}.
   $$
-  Equals 1 for a rank-1 matrix; upper-bounded by $\min(m, n)$; scale-invariant
-  in $\sigma_1$.
+  Equals 1 for a rank-1 matrix; upper-bounded by $\min(m, n)$;
+  scale-invariant in $\sigma_1$.
 - **Effective rank** (Roy & Vetterli 2007)
   $$
   \mathrm{er}(Q) = \exp\!\Big( - \sum_i \bar p_i \log \bar p_i \Big),
@@ -31,54 +48,50 @@ and compute its singular values $\sigma_1 \ge \sigma_2 \ge \cdots$ via
   $$
   Smooth under perturbation, bounded in $[1, \min(m, n)]$.
 
-Additionally we report the **spectral gap** $\sigma_1 - \sigma_2$ and the
+Also reported: the **spectral gap** $\sigma_1 - \sigma_2$ and the
 **normalised numerical rank** $r_\text{num} / \min(m, n)$.
-
-`sample_states(env, n)` drives the environment with a *uniform random policy*
-and collects `n` states (resetting on termination). This is what feeds every
-spectral routine below.
 
 ## 2. Value tensor (`tensor.py`)
 
-When observations decompose naturally as
-$s = (s^{(1)}, \dots, s^{(k)})$, we discretise each chosen dimension into
-`n_bins` bins, then average $V(s) = \max_a Q(s, a)$ inside every cell:
+When observations decompose as $s = (s^{(1)}, \dots, s^{(k)})$ we
+discretise each chosen dim and build
 
 $$
 \mathcal V_{i_1 \dots i_k} = \frac{1}{|C_{i_1 \dots i_k}|} \sum_{s \in C_{i_1 \dots i_k}} V(s),
 $$
 
-with $C_{i_1 \dots i_k}$ the cell corresponding to bin indices
-$(i_1, \dots, i_k)$. Empty cells are back-filled with the global mean of $V$
-so the tensor has no NaNs for subsequent decomposition.
+with $C_{i_1 \dots i_k}$ the cell corresponding to bin indices. Empty
+cells are back-filled with the global mean of $V$.
+
+### Canonical fast-path
+
+If the env has a `DiscretizeObsWrapper` **and** `dims` covers every
+observation dim **and** the caller passes `n_bins=None`,
+`build_value_tensor` enumerates the full Cartesian product of bin centres
+and evaluates $V$ exactly — no averaging, no sampling. Pass any explicit
+`n_bins` to force the sample-and-average path.
 
 ### Mode-$n$ unfolding
-
-The mode-$n$ unfolding of a tensor
-$\mathcal T \in \mathbb{R}^{n_1 \times \cdots \times n_k}$ is the matrix
 
 $$
 \mathcal T_{(n)} \in \mathbb{R}^{n_n \times \prod_{m \neq n} n_m}
 $$
 
-obtained by moving axis $n$ to the front then flattening the rest
-(`np.moveaxis(T, n, 0).reshape(n_n, -1)`).
+obtained by moving axis $n$ to the front then flattening the rest.
 
 ### HOSVD spectra
 
-The singular values of $\mathcal V_{(n)}$ describe how much variance lives
+Singular values of $\mathcal V_{(n)}$ describe how much variance lives
 along mode $n$. `hosvd_spectra(tensor)` returns a dict keyed by mode and
 `hosvd_stable_ranks(tensor)` the stable rank of each unfolding.
 
 ### Tucker reconstruction
 
 Truncated Tucker of multilinear rank
-$(r_1, \dots, r_k)$ factors $\mathcal V = \mathcal G \times_1 U_1 \times_2 \cdots \times_k U_k$ with $U_n \in \mathbb{R}^{n_n \times r_n}$ and core
-$\mathcal G \in \mathbb{R}^{r_1 \times \cdots \times r_k}$. We report the
-relative Frobenius error
-$\lVert \mathcal V - \hat{\mathcal V} \rVert_F / \lVert \mathcal V \rVert_F$
-as a direct measure of how well low multilinear rank approximates $\mathcal V$.
-Requires the `tensorly` package.
+$(r_1, \dots, r_k)$ factors $\mathcal V = \mathcal G \times_1 U_1 \times_2 \cdots \times_k U_k$
+with $U_n \in \mathbb{R}^{n_n \times r_n}$. We report the relative
+Frobenius error $\lVert \mathcal V - \hat{\mathcal V} \rVert_F / \lVert \mathcal V \rVert_F$.
+Requires `tensorly`.
 
 ## 3. Hankel analysis (`hankel.py`)
 
@@ -89,26 +102,24 @@ Given a trajectory $(s_0, a_0, s_1, a_1, \dots)$ produced by the current
 - **q_taken**: $f_t = Q(s_t, a_t)$
 - **policy**:  $f_t = \arg\max_a Q(s_t, a)$ (cast to float)
 
-For sequence $(f_0, \dots, f_{T-1})$ and `n_rows = n`, the Hankel matrix
+For $(f_0, \dots, f_{T-1})$ and `n_rows = n`,
 
 $$
-H \in \mathbb{R}^{n \times (T - n + 1)}, \qquad H_{ij} = f_{i + j}
+H \in \mathbb{R}^{n \times (T - n + 1)}, \qquad H_{ij} = f_{i + j}.
 $$
 
-has two key properties:
+Two key properties:
 
-1. **Linear dynamics.** If the sequence is generated by a linear dynamical
-   system of order $r$, then $\mathrm{rank}(H) = r$ exactly. Rapid decay of
-   $\sigma_i(H)$ therefore indicates approximate finite-dimensional linear
-   structure.
+1. **Linear dynamics.** If the sequence is generated by a linear
+   dynamical system of order $r$, then $\mathrm{rank}(H) = r$ exactly.
 2. **Koopman embeddings.** A low-rank $H$ implies a finite-dimensional
-   Koopman-like linear embedding exists for the value dynamics along the
+   Koopman-like linear embedding for the value dynamics along the
    policy trajectory (arXiv:1408.4408).
 
 ### Dynamic Mode Decomposition (DMD)
 
-`dmd_from_hankel(H, rank=r)` fits a linear map $A$ such that
-$H_{:, 1:} \approx A \, H_{:, :-1}$ using a truncated SVD:
+`dmd_from_hankel(H, rank=r)` fits $H_{:, 1:} \approx A \, H_{:, :-1}$ via
+truncated SVD:
 
 $$
 X = U \Sigma V^\top, \qquad \tilde A = U^\top X' V \Sigma^{-1},
@@ -116,14 +127,12 @@ $$
 
 eigendecomposes $\tilde A = W \Lambda W^{-1}$, and lifts modes
 $\Phi = X' V \Sigma^{-1} W$. Returns `(modes, eigenvalues)`.
-
-Eigenvalue magnitudes indicate dynamics along each mode:
-$|\lambda| < 1$ decaying, $|\lambda| > 1$ growing, $|\lambda| \approx 1$
-oscillatory.
+Eigenvalue magnitudes indicate dynamics: $|\lambda|<1$ decaying,
+$|\lambda|>1$ growing, $|\lambda| \approx 1$ oscillatory.
 
 ## 4. Successor-measure analysis (`successor.py`)
 
-The (discounted) successor measure of policy $\pi$ is
+Discounted successor measure of policy $\pi$:
 
 $$
 M^\pi(s, s') = \sum_{t \ge 0} \gamma^t \, \mathbb{P}(s_t = s' \mid s_0 = s, \pi).
@@ -131,20 +140,19 @@ $$
 
 ### Empirical estimator
 
-`build_successor_matrix(agent, env, states, …)` estimates $M$ on a set of
-probe states of size $N$ by rolling out from each state, snapping each
-visited observation to its nearest probe state (Euclidean), and accumulating
-discounted visit counts:
+`build_successor_matrix(agent, env, states, …)` estimates $M$ on probe
+states of size $N$ by rolling out from each state and snapping each
+visited observation to its nearest probe. When the env is discretised we
+use `DiscretizeObsWrapper.obs_to_index` for **O(1) bin lookup** rather
+than Euclidean argmin.
 
 $$
-\hat M_{ij} = \sum_{t \ge 0} \gamma^t \, \mathbb 1[\text{nearest probe to } s_t = j \mid s_0 = s_i].
+\hat M_{ij} = \sum_{t \ge 0} \gamma^t \, \mathbb 1[\text{snap of } s_t = j \mid s_0 = s_i].
 $$
 
-Complexity is $O(N^2 \cdot T)$, so $N \le 64$ is recommended. Most Gymnasium
-environments do not allow `env.set_state`, so each rollout starts from
-`env.reset()` and the *probe* state merely serves as the snap target — this
-is an approximation adequate for comparing ranks but not for exact transition
-modelling.
+Complexity $O(N^2 \cdot T)$, so $N \le 64$ recommended — callers use
+`canonical_subsample(env, N)` to get a random subset of the canonical
+grid.
 
 ### Shift
 
@@ -155,49 +163,46 @@ $$
 \tilde M^\pi(s, s') = M^\pi(s, s') - \mu^\pi(s').
 $$
 
-We approximate $\mu^\pi$ by column means of $\hat M$ (a proxy for the
-long-run visit distribution). Then
+We approximate $\mu^\pi$ by the column mean of $\hat M$:
 
 $$
-\tilde M = M - \mathbf 1 \mu^\top, \qquad \tilde M = M \big( I - \tfrac{1}{n} \mathbf 1 \mathbf 1^\top \big),
+\tilde M = M - \mathbf 1 \mu^\top = M \big( I - \tfrac{1}{n} \mathbf 1 \mathbf 1^\top \big),
 $$
 
-so $\tilde M$ has zero column means and rank at most
-$\mathrm{rank}(M)$ (projection cannot raise rank).
+so $\tilde M$ has zero column means and rank at most $\mathrm{rank}(M)$
+(projection cannot raise rank).
 
 ### The paper's claim (arXiv:2509.05193)
 
-In generic environments $M^\pi$ *does not* admit a useful low-rank
-factorisation because a rank-1 "all-states-look-the-same-at-steady-state"
-component dominates its spectrum. Subtracting that component exposes the
-latent low-rank structure. `compare_shift_rank` packages this experiment by
-returning a `SuccessorComparison` with rank metrics for both $M$ and
-$\tilde M$, ready to plot side-by-side.
+In generic environments $M^\pi$ does not admit a useful low-rank
+factorisation because a rank-1 stationary component dominates its
+spectrum. Subtracting that component exposes the latent low-rank
+structure. `compare_shift_rank` returns a `SuccessorComparison` with rank
+metrics for both $M$ and $\tilde M$, ready to plot side-by-side.
 
 ### Successor features
-
-For any feature map $\varphi : \mathcal S \to \mathbb{R}^d$,
 
 $$
 \psi^\pi(s) = \mathbb{E}\!\left[ \sum_{t \ge 0} \gamma^t \varphi(s_t) \, \Big| \, s_0 = s, \pi \right].
 $$
 
 `successor_features(agent, env, states, feature_fn, γ)` estimates this by
-Monte-Carlo rollouts from each probe state. Relevant for zero-shot transfer
-(arXiv:2209.14935): if the reward is linear in $\varphi$,
-$r(s) = w^\top \varphi(s)$, then $Q^\pi(s, a) = w^\top \psi^\pi(s, a)$.
+MC rollouts. If the reward is linear in $\varphi$ — $r(s) = w^\top \varphi(s)$ —
+then $Q^\pi(s, a) = w^\top \psi^\pi(s, a)$ (arXiv:2209.14935).
 
 ## Testing
 
 `tests/test_analysis.py` covers:
 
-- `_metrics_from_matrix` on rank-1 matrices, full-rank matrices, and
-  constant-row matrices (stable rank ≈ 1).
-- Bounds $1 \le \mathrm{sr}, \mathrm{er} \le \min(m, n)$ for random matrices.
-- Mode-unfold shapes and HOSVD descending singular values.
-- Hankel antidiagonal identity, rank-1 check for constant sequences, and
-  rank ≤ 3 for pure sinusoids.
-- DMD output shapes and that eigenvalues are complex-typed.
-- `shifted_successor_matrix` always has zero column means.
-- Shifting cannot increase numerical rank (projection property).
-- A constructed "stationary + rank-2" matrix shifts to numerical rank ≤ 2.
+- `_metrics_from_matrix` on rank-1, full-rank, and constant-row matrices.
+- Bounds $1 \le \mathrm{sr}, \mathrm{er} \le \min(m, n)$.
+- `sample_states` returns the full canonical grid on discretised envs and
+  MC-samples $n$ states otherwise; `canonical_states` returns `None` off
+  the grid; `canonical_subsample` caps at $n$ / returns the full grid
+  when $n$ exceeds the grid size.
+- HOSVD mode-unfold shapes, descending singular values, positive stable
+  ranks, finite value tensors.
+- Hankel antidiagonal identity, rank-1 for constants, rank ≤ 3 for pure
+  sinusoids, DMD output shapes.
+- Successor shift: zero column means, cannot increase numerical rank,
+  stationary-plus-rank-2 collapses to rank ≤ 2 after shifting.

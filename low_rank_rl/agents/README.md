@@ -52,6 +52,11 @@ triggers the table update.
 
 ### Deep Q-Network (`dqn.py`)
 
+This implementation follows the
+[PyTorch official RL tutorial](https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html)
+so that every step of training (replay buffer layout, ε decay, target update,
+loss, clipping) can be cross-checked against the canonical reference.
+
 A 3-layer MLP Q-network with:
 
 - **Experience replay** of capacity `buffer_capacity`.
@@ -80,6 +85,11 @@ and the loss is $\mathrm{Huber}\!\big(Q_\theta(s_i, a_i) - y_i\big)$.
 version can be dropped in later.
 
 ### PPO (`ppo.py`)
+
+This implementation follows [OpenAI Spinning Up's PPO
+pseudocode](https://spinningup.openai.com/en/latest/algorithms/ppo.html) and
+the [CleanRL single-file
+reference](https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py).
 
 Separate actor and critic, each a 2-layer MLP with Tanh activations. Per
 rollout we compute **Generalised Advantage Estimation**:

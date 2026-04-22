@@ -5,6 +5,8 @@ loop → full analysis. Produces a folder of PNGs plus a saved agent checkpoint.
 
 ## Running
 
+### From the command line
+
 ```
 python experiments/run.py --config experiments/configs/acrobot_dqn.yaml
 python experiments/run.py --config experiments/configs/acrobot_ppo.yaml --episodes 200
@@ -12,11 +14,37 @@ python experiments/run.py --config experiments/configs/acrobot_ppo.yaml --episod
 
 The optional `--episodes` flag overrides `training.n_episodes` in the config.
 
+### Interactively, from a notebook
+
+`experiments/notebook.ipynb` mirrors `run.py` cell-by-cell: load a YAML (or
+build `cfg` in Python), build the env + agent, train with a **tqdm progress
+bar and a live reward-vs-episode plot**, then step through every analysis —
+Q-matrix spectrum, HOSVD, Hankel, successor shift, value heatmap — with plots
+rendered inline.
+
+The CLI and notebook share the same training loop in
+`low_rank_rl/training.py`. The DQN loop follows the
+[PyTorch RL tutorial](https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html)
+and the PPO loop follows
+[OpenAI Spinning Up's PPO](https://spinningup.openai.com/en/latest/algorithms/ppo.html).
+
+```
+jupyter notebook experiments/notebook.ipynb
+```
+
+The notebook auto-detects the repo root from any working directory, so it
+works wherever you launch Jupyter. A quick 50-episode Acrobot-DQN run takes
+~1–2 minutes on a laptop CPU.
+
 ## Config schema
 
 ```yaml
 env_id: "Acrobot-v1"            # Gymnasium env id registered in low_rank_rl.envs
-env_kwargs: {}                  # passed to make_env
+env_kwargs:                     # forwarded to make_env; overrides per-env defaults
+  n_discrete_actions: null      # wrap a Box action space to Discrete(n) (null = no wrap)
+  normalize_obs:      null      # null = use env default
+  discretize_obs:     null      # null = use env default
+  n_state_bins:       null      # per-dim bin counts; null = env default
 
 agent: "dqn"                    # one of: dqn, ppo, qlearning, sarsa, monte_carlo
 agent_kwargs:                   # forwarded to the agent constructor
@@ -26,10 +54,12 @@ agent_kwargs:                   # forwarded to the agent constructor
 training:
   n_episodes: 500               # outer loop length
   rank_checkpoint_every: 50     # compute Q-matrix rank every N episodes
-  n_rank_samples: 500           # state probes for rank metrics
+  n_rank_samples: 500           # state probe count; IGNORED when the env is
+                                # discretised (the full canonical grid is used)
 
 analysis:                       # everything below is optional
-  value_tensor_bins: 20         # bins per tensor axis
+  value_tensor_bins: null       # null = use the wrapper's canonical grid;
+                                # set an int to force the sample-and-average path
   value_tensor_dims: [0, 1, 2, 3]   # which obs dims to use as tensor axes
   hankel_steps: 500             # max trajectory length for Hankel analysis
   hankel_n_rows: null           # defaults to T // 2
@@ -72,16 +102,18 @@ Given a trained agent, the function writes the following to `output.save_dir`:
 | `value_heatmap.png`       | `plot_value_heatmap` on dims (0, 1) |
 | `agent.pt`                | `agent.save(…)` (if `save_agent: true`) |
 
-The runtime cost is dominated by `build_successor_matrix` ($O(N^2 T)$) and
-`build_value_tensor` ($O(\text{n\_samples})$ rollouts). Keep
-`n_rank_samples ≤ 64` for the successor comparison; `probe_states` is
-capped at `min(64, n_rank_samples)` inside `run_analysis`.
+On discretised envs the Q-rank and HOSVD steps see the **full canonical
+grid** (every bin centre), so the rank metrics are exact — there's no
+sampling noise, and `n_rank_samples` is ignored for those two analyses.
+The successor-measure step is the only $O(N^2 T)$ cost, so it takes a
+random subset of the canonical grid via `canonical_subsample(env, N)`
+with $N = \min(64, \text{n\_rank\_samples})$.
 
 ## Configs shipped in `configs/`
 
-- `acrobot_dqn.yaml`     — DQN on Acrobot-v1
+- `acrobot_dqn.yaml`     — DQN on Acrobot-v1 (6-D obs discretised `[7]*6`)
 - `acrobot_ppo.yaml`     — PPO on Acrobot-v1
-- `mountaincar_dqn.yaml` — DQN on MountainCarContinuous-v0 (discretised)
+- `mountaincar_dqn.yaml` — DQN on MountainCarContinuous-v0 (2-D obs discretised `40×40`)
 
 Edit these to start a new experiment; prefer copying an existing file over
 constructing one from scratch.

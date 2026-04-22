@@ -9,13 +9,14 @@ import gymnasium as gym
 
 from low_rank_rl.agents.base import BaseAgent
 from low_rank_rl.analysis.rank import _sample_states
+from low_rank_rl.envs.wrappers import find_obs_discretizer
 
 
 def build_value_tensor(
     agent: BaseAgent,
     env: gym.Env,
     dims: Optional[list[int]] = None,
-    n_bins: int = 20,
+    n_bins: Optional[int] = None,
     n_samples: int = 50_000,
 ) -> np.ndarray:
     obs_space = env.observation_space
@@ -23,20 +24,34 @@ def build_value_tensor(
     if dims is None:
         dims = list(range(min(obs_dim, 4)))
 
-    low  = np.clip(obs_space.low.astype(np.float64),  -1e4, 1e4)
-    high = np.clip(obs_space.high.astype(np.float64), -1e4, 1e4)
-    edges = [np.linspace(low[d], high[d], n_bins + 1) for d in dims]
+    disc = find_obs_discretizer(env)
+
+    if disc is not None and n_bins is None:
+        edges        = [disc.bin_edges[d]   for d in dims]
+        bins_per_dim = [disc.n_bins[d]      for d in dims]
+        if len(dims) == obs_dim:
+            centers    = [disc.bin_centers[d] for d in dims]
+            mesh       = np.meshgrid(*centers, indexing="ij")
+            all_states = np.stack([m.ravel() for m in mesh], axis=-1).astype(np.float64)
+            values     = agent.value_vector(all_states)
+            return values.reshape(tuple(bins_per_dim)).astype(np.float64)
+    else:
+        bins         = n_bins if n_bins is not None else 20
+        low  = np.clip(obs_space.low.astype(np.float64),  -1e4, 1e4)
+        high = np.clip(obs_space.high.astype(np.float64), -1e4, 1e4)
+        edges        = [np.linspace(low[d], high[d], bins + 1) for d in dims]
+        bins_per_dim = [bins] * len(dims)
 
     states = _sample_states(env, n_samples)
     values = agent.value_vector(states)
 
-    shape = tuple(n_bins for _ in dims)
+    shape = tuple(bins_per_dim)
     accum = np.zeros(shape, dtype=np.float64)
     count = np.zeros(shape, dtype=np.int64)
 
     for i, s in enumerate(states):
         idx = tuple(
-            int(np.clip(np.digitize(s[d], edges[j][1:-1]), 0, n_bins - 1))
+            int(np.clip(np.digitize(s[d], edges[j][1:-1]), 0, bins_per_dim[j] - 1))
             for j, d in enumerate(dims)
         )
         accum[idx] += values[i]

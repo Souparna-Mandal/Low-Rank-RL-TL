@@ -1,4 +1,17 @@
-"""Deep Q-Network with experience replay and soft target updates."""
+"""Deep Q-Network with experience replay and soft target updates.
+
+The agent follows the PyTorch official RL tutorial:
+https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+
+Notable choices kept identical to the tutorial:
+
+- ``Transition`` namedtuple with ``next_state=None`` for terminal transitions.
+- Two-hidden-layer MLP Q-network with ReLU activations.
+- ε-greedy policy with exponential decay on the environment step counter.
+- ``AdamW(..., amsgrad=True)`` optimiser.
+- Huber loss (``smooth_l1_loss``) and gradient value clipping at 100.
+- Soft target updates ``θ' ← τθ + (1 − τ)θ'`` after every optimisation step.
+"""
 
 from __future__ import annotations
 

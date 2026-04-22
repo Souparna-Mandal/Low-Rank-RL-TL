@@ -8,6 +8,7 @@ import numpy as np
 import gymnasium as gym
 
 from low_rank_rl.agents.base import BaseAgent
+from low_rank_rl.envs.wrappers import find_obs_discretizer
 
 
 @dataclass
@@ -45,7 +46,30 @@ def compute_rank_metrics_from_matrix(Q: np.ndarray, tol: float = 1e-5) -> RankMe
 
 
 def sample_states(env: gym.Env, n: int) -> np.ndarray:
+    grid = canonical_states(env)
+    if grid is not None:
+        return grid
     return _sample_states(env, n)
+
+
+def canonical_states(env: gym.Env) -> np.ndarray | None:
+    disc = find_obs_discretizer(env)
+    if disc is None:
+        return None
+    centers = disc.bin_centers
+    mesh    = np.meshgrid(*centers, indexing="ij")
+    return np.stack([m.ravel() for m in mesh], axis=-1).astype(np.float64)
+
+
+def canonical_subsample(env: gym.Env, n: int, rng: np.random.Generator | None = None) -> np.ndarray:
+    """Random subset of the canonical grid, or MC-sampled states if env is not discretised."""
+    grid = canonical_states(env)
+    if grid is None:
+        return _sample_states(env, n)
+    if len(grid) <= n:
+        return grid
+    rng = rng or np.random.default_rng(0)
+    return grid[rng.choice(len(grid), size=n, replace=False)]
 
 
 def _metrics_from_matrix(Q: np.ndarray, tol: float) -> RankMetrics:

@@ -24,7 +24,7 @@ env_kwargs:
 analysis:
   hankel_steps: 300
   hankel_n_rows: null
-  value_tensor_bins: 30
+  value_tensor_bins: null     # null -> use the wrapper's canonical grid (40x40 here)
   value_tensor_dims: [0, 1]   # position, velocity
 
 output:

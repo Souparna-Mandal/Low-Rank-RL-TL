@@ -122,7 +122,11 @@ class TestRankAnalysisPlots:
 class TestValueFnPlots:
     def setup_method(self):
         self.env   = make_env("Acrobot-v1")
-        self.agent = DQNAgent(6, 3, hidden=16, device="cpu")
+        self.agent = DQNAgent(
+            self.env.observation_space.shape[0],
+            self.env.action_space.n,
+            hidden=16, device="cpu",
+        )
 
     def teardown_method(self):
         self.env.close()

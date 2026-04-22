@@ -32,16 +32,16 @@ from low_rank_rl.analysis.rank   import compute_rank_metrics, sample_states
 from low_rank_rl.analysis.tensor import build_value_tensor, hosvd_spectra
 from low_rank_rl.visualization   import plot_singular_value_spectrum, plot_hosvd_spectra
 
-env    = make_env("Acrobot-v1")
-agent  = DQNAgent(n_obs=6, n_actions=3)
+env    = make_env("Acrobot-v1")                      # raw 6-D obs discretised [7]*6
+agent  = DQNAgent(n_obs=env.observation_space.shape[0], n_actions=env.action_space.n)
 # ... train ...
 
-states  = sample_states(env, 500)
+states  = sample_states(env, 500)                     # full canonical grid — n ignored
 metrics = compute_rank_metrics(agent, states)
 print(metrics.summary())
 plot_singular_value_spectrum(metrics, save_path="q_spectrum.png")
 
-V_tensor = build_value_tensor(agent, env, dims=[0, 1, 2, 3], n_bins=20)
+V_tensor = build_value_tensor(agent, env, dims=[0, 1, 2, 3, 4, 5])
 plot_hosvd_spectra(hosvd_spectra(V_tensor), save_path="hosvd.png")
 ```
 
@@ -80,11 +80,3 @@ pytest -q
 
 The suite is fully headless (`matplotlib` Agg backend) and runs in a few
 seconds. See `tests/README.md` for what each module covers.
-
-## Key references
-
-- Tensor and matrix low-rank value-function approximation in RL — arXiv:2201.09736
-- The shifted successor measure — arXiv:2509.05193
-- Successor features for transfer — arXiv:2209.14935
-- Hankel matrices and Koopman DMD — arXiv:1408.4408
-- Roy & Vetterli, *The effective rank*, EUSIPCO 2007
