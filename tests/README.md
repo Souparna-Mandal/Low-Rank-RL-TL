@@ -1,5 +1,7 @@
 # `tests/`
 
+Note the Testing suite for now is entirely agent generate, so use with discretion. 
+
 Pytest suite covering every public module of `low_rank_rl`. Run from the
 project root:
 
@@ -71,12 +73,11 @@ Agent-specific invariants:
 
 ### `test_analysis.py`
 
-- **`rank.py`** — stable rank equals 1 for an exact rank-1 matrix
-  (constant row), `normalised_numerical_rank == 1` for a random full-rank
-  matrix, bounds $1 \le \text{stable}, \text{effective} \le \min(m, n)$,
-  spectral gap $\ge 0$, `summary` contains the expected keywords,
+- **`rank.py`** — numerical rank equals 1 for a rank-1 matrix and
+  $\min(m, n)$ for a random full-rank matrix; singular values are in
+  descending order; `summary` contains `"numerical rank"`;
   `sample_states` returns the full canonical grid when the env is
-  discretised and MC-samples $n$ states otherwise,
+  discretised and MC-samples $n$ states otherwise;
   `canonical_states` / `canonical_subsample` return the right shapes and
   handle both the discretised and continuous cases.
 - **`tensor.py`** — `_mode_unfold` shapes on a 3-tensor, `hosvd_spectra`

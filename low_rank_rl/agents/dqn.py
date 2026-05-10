@@ -9,8 +9,10 @@ Notable choices kept identical to the tutorial:
 - Two-hidden-layer MLP Q-network with ReLU activations.
 - ε-greedy policy with exponential decay on the environment step counter.
 - ``AdamW(..., amsgrad=True)`` optimiser.
-- Huber loss (``smooth_l1_loss``) and gradient value clipping at 100.
+- Huber loss (``smooth_l1_loss``) with gradient-norm clipping at 10.
 - Soft target updates ``θ' ← τθ + (1 − τ)θ'`` after every optimisation step.
+- Double DQN target: action selection uses the online network, evaluation uses
+  the target network — reduces the max-bootstrap overestimation bias.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class DQNAgent(BaseAgent):
         batch_size: int = 128,
         gamma: float = 0.99,
         lr: float = 3e-4,
-        tau: float = 0.005,
+        tau: float = 0.001,
         eps_start: float = 0.9,
         eps_end: float = 0.01,
         eps_decay: int = 2500,
@@ -179,16 +181,18 @@ class DQNAgent(BaseAgent):
 
         q_sa = self.policy_net(state_batch).gather(1, action_batch)
 
+        # Double DQN: select next action with online net, evaluate with target net.
         next_v = torch.zeros(self.batch_size, device=self.device)
         with torch.no_grad():
-            next_v[non_final_mask] = self.target_net(non_final_next).max(1).values
+            next_a = self.policy_net(non_final_next).argmax(dim=1, keepdim=True)
+            next_v[non_final_mask] = self.target_net(non_final_next).gather(1, next_a).squeeze(1)
 
         target = (next_v * self.gamma) + reward_batch
         loss = F.smooth_l1_loss(q_sa, target.unsqueeze(1))
 
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=10.0)
         self.optimizer.step()
 
         for p, tp in zip(self.policy_net.parameters(), self.target_net.parameters()):

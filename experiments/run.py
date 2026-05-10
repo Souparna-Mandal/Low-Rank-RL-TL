@@ -43,7 +43,7 @@ def build_agent(agent_name: str, env, kwargs: dict):
     if agent_name == "dqn":
         return DQNAgent(n_obs=n_obs, n_actions=n_actions, **kwargs)
     if agent_name in ("qlearning", "q_learning"):
-        return QLearningAgent(n_actions=n_actions, obs_low=obs_space.low, obs_high=obs_space.high, **kwargs)
+        return QLearningAgent(env=env, n_actions=n_actions, **kwargs)
     if agent_name == "sarsa":
         return SarsaAgent(n_actions=n_actions, obs_low=obs_space.low, obs_high=obs_space.high, **kwargs)
     if agent_name == "monte_carlo":
@@ -78,8 +78,8 @@ def run_analysis(agent, env, cfg: dict, out_dir: pathlib.Path) -> None:
         hm = hankel_rank_metrics(
             agent, env,
             sequence_type=seq_type,
-            n_steps=analysis_cfg.get("hankel_steps", 500),
-            n_rows=analysis_cfg.get("hankel_n_rows", None),
+            n_steps=analysis_cfg.get("hankel_steps"),
+            n_rows=analysis_cfg.get("hankel_n_rows"),
         )
         print(f"  {hm.summary()}")
         plot_hankel_spectrum(hm).savefig(out_dir / f"hankel_{seq_type}.png", dpi=150)

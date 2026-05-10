@@ -1,4 +1,4 @@
-"""Abstract base class shared by every RL agent in this package."""
+"""Abstract base class shared by every RL agent."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import abc
 import pathlib
 
 import numpy as np
-
 
 class BaseAgent(abc.ABC):
     @abc.abstractmethod
@@ -17,13 +16,18 @@ class BaseAgent(abc.ABC):
 
     @abc.abstractmethod
     def q_matrix(self, states: np.ndarray) -> np.ndarray:
-        """Return Q(s, a) as an (N, n_actions) array without mutating state."""
+        """Return Q(s, a) as an (N, n_actions) array without changing any states."""
 
     def save(self, path: str | pathlib.Path) -> None:
-        raise NotImplementedError(f"{type(self).__name__} does not implement save()")
+        """Save the current Model Params, like Neural Network Parms for PPO and DQN to
+        the path specified. Good to also include optimiser state which may be useful when
+        we want to retrain agents or continue from crashed points. """
+        raise NotImplementedError(f"{type(self).__name__} has not implemented save()")
 
     def load(self, path: str | pathlib.Path) -> None:
-        raise NotImplementedError(f"{type(self).__name__} does not implement load()")
+        """Loads respective state dicts from the given path and restores them to the agent
+        instance. """
+        raise NotImplementedError(f"{type(self).__name__} has not implemented load()")
 
     def value_vector(self, states: np.ndarray) -> np.ndarray:
         return self.q_matrix(states).max(axis=1)

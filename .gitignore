@@ -1,0 +1,47 @@
+# macOS
+.DS_Store
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Packaging / build artifacts
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Experiment artefacts (figures, checkpoints, logs)
+outputs/
+mountain_car_results_*/
+*.pt
+*.pth
+*.ckpt
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+!papers/**/*.pdf
+
+# Notebooks
+*.nbconvert.ipynb
+
+# Environment / secrets
+.env
+.env.*

@@ -1,21 +1,21 @@
 env_id: "MountainCar-v0"     # 3 discrete actions (left / none / right), reward = -1 per step
-agent: "dqn"
+agent: "ppo"
 
 training:
-  n_episodes: 1000
+  n_episodes: 500
   rank_checkpoint_every: 20
   n_rank_samples: 1600
 
 agent_kwargs:
-  hidden: 128
-  batch_size: 128
+  hidden: 64
+  lr: 3.0e-4
   gamma: 0.99
-  lr: 1.0e-3                 # bumped from 1e-4 — episodes are 200 steps, ~5x fewer grad updates
-  tau: 0.005
-  eps_start: 0.9
-  eps_end: 0.05
-  eps_decay: 10000           # tuned for ~200-step episodes (~50 ep to near-floor)
-  buffer_capacity: 50000
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  ppo_epochs: 4
+  mini_batch_size: 64
 
 env_kwargs:
   normalize_obs: true
@@ -25,10 +25,10 @@ env_kwargs:
 analysis:
   hankel_steps: null
   hankel_n_rows: null
-  hankel_sequence_types: ["value", "q_taken"]   # capture per-checkpoint Hankel
+  hankel_sequence_types: ["value", "q_taken"]
   value_tensor_bins: null     # null -> use the wrapper's canonical grid (40x40 here)
   value_tensor_dims: [0, 1]   # position, velocity
 
 output:
-  save_dir: "outputs/mountaincar_dqn"
+  save_dir: "outputs/mountaincar_ppo"
   save_agent: true

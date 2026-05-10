@@ -2,7 +2,7 @@
 
 The agent follows OpenAI Spinning Up's PPO pseudocode
 (https://spinningup.openai.com/en/latest/algorithms/ppo.html) and the common
-CleanRL single-file reference implementation
+Also this:
 (https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py):
 
 - Separate actor and critic MLPs with Tanh activations.

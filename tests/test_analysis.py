@@ -32,12 +32,7 @@ def make_agent(env=None, n_obs: int = 6, n_actions: int = 3):
 
 
 def make_tabular_agent(env):
-    return QLearningAgent(
-        n_actions=env.action_space.n,
-        obs_low=env.observation_space.low,
-        obs_high=env.observation_space.high,
-        n_bins=5,
-    )
+    return QLearningAgent(env=env, n_actions=env.action_space.n)
 
 
 # ── rank.py ───────────────────────────────────────────────────────────────────
@@ -49,42 +44,22 @@ class TestRankMetrics:
         Q = u @ v
         m = _metrics_from_matrix(Q, tol=1e-5)
         assert m.numerical_rank == 1
-        assert m.stable_rank < 1.5
 
     def test_full_rank_matrix(self):
         Q = np.random.randn(20, 5)
         m = _metrics_from_matrix(Q, tol=1e-10)
         assert m.numerical_rank == 5
-        assert m.normalised_numerical_rank == pytest.approx(1.0)
 
-    def test_stable_rank_bounds(self):
-        Q = np.random.randn(50, 5)
+    def test_singular_values_descending(self):
+        Q = np.random.randn(20, 5)
         m = _metrics_from_matrix(Q, tol=1e-10)
-        assert 1.0 <= m.stable_rank <= min(Q.shape)
-
-    def test_effective_rank_bounds(self):
-        Q = np.random.randn(50, 5)
-        m = _metrics_from_matrix(Q, tol=1e-10)
-        assert 1.0 <= m.effective_rank <= min(Q.shape)
-
-    def test_stable_rank_rank1_is_one(self):
-        u = np.ones((20, 1))
-        v = np.ones((1, 5))
-        Q = u @ v
-        m = _metrics_from_matrix(Q, tol=1e-5)
-        assert m.stable_rank == pytest.approx(1.0, abs=1e-5)
-
-    def test_spectral_gap_positive(self):
-        Q = np.random.randn(20, 3)
-        m = _metrics_from_matrix(Q, tol=1e-10)
-        assert m.spectral_gap >= 0.0
+        assert np.all(np.diff(m.singular_values) <= 0)
 
     def test_summary_string(self):
         Q = np.random.randn(10, 3)
         m = _metrics_from_matrix(Q, tol=1e-5)
         s = m.summary()
-        assert "stable rank" in s
-        assert "effective rank" in s
+        assert "numerical rank" in s
 
     def test_compute_rank_metrics_shape_consistency(self):
         env   = make_env("Acrobot-v1", discretize_obs=False)

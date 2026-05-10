@@ -94,7 +94,8 @@ class TestDQNAgent:
 
 class TestQLearningAgent:
     def setup_method(self):
-        self.agent = QLearningAgent(N_ACTIONS, OBS_LOW, OBS_HIGH, n_bins=5)
+        self.env   = make_env("Acrobot-v1", n_state_bins=5)
+        self.agent = QLearningAgent(env=self.env, n_actions=N_ACTIONS)
 
     def test_act_valid_action(self):
         assert 0 <= self.agent.act(random_state()) < N_ACTIONS
@@ -134,7 +135,7 @@ class TestQLearningAgent:
         Q_before = self.agent.q_matrix(states)
         with tempfile.NamedTemporaryFile(suffix=".pkl") as f:
             self.agent.save(f.name)
-            agent2 = QLearningAgent(N_ACTIONS, OBS_LOW, OBS_HIGH, n_bins=5)
+            agent2 = QLearningAgent(env=self.env, n_actions=N_ACTIONS)
             agent2.load(f.name)
         np.testing.assert_array_equal(Q_before, agent2.q_matrix(states))
 
@@ -172,12 +173,13 @@ class TestSarsaAgent:
 
     def test_sarsa_differs_from_qlearning_on_same_data(self):
         """SARSA uses next_action; Q-learning uses max. With repeated visits they diverge."""
-        ql    = QLearningAgent(N_ACTIONS, OBS_LOW, OBS_HIGH, n_bins=5)
+        env   = make_env("Acrobot-v1", n_state_bins=5)
+        ql    = QLearningAgent(env=env, n_actions=N_ACTIONS)
         sarsa = SarsaAgent(N_ACTIONS, OBS_LOW, OBS_HIGH, n_bins=5)
         np.random.seed(0)
         s  = random_state()
         ns = random_state()
-        ql.q_table[ql._discretise(ns)]       = np.array([5.0, -5.0, 0.0])
+        ql.q_table[ql._obs_to_index(ns)]     = np.array([5.0, -5.0, 0.0])
         sarsa.q_table[sarsa._discretise(ns)] = np.array([5.0, -5.0, 0.0])
         ql.update(s, 0, -1.0, ns, False)
         sarsa.update(s, 0, -1.0, ns, False, next_action=1)

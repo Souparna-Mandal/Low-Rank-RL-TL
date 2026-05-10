@@ -98,6 +98,8 @@ Given a trained agent, the function writes the following to `output.save_dir`:
 | `hosvd_spectra.png`       | `plot_hosvd_spectra` on `hosvd_spectra(build_value_tensor(…))` |
 | `hankel_value.png`        | `plot_hankel_spectrum` for the value-trajectory Hankel |
 | `hankel_q_taken.png`      | ditto, for the Q-taken trajectory |
+| `hankel_policy.png`       | ditto, for the greedy-action trajectory |
+| `hankel_actions.png`      | ditto, for the realised-action trajectory |
 | `successor_shift.png`     | `plot_shift_comparison` for $M$ vs $\tilde M$ |
 | `value_heatmap.png`       | `plot_value_heatmap` on dims (0, 1) |
 | `agent.pt`                | `agent.save(…)` (if `save_agent: true`) |

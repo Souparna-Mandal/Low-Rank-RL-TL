@@ -22,12 +22,14 @@ the PPO loop follows OpenAI Spinning Up's pseudocode
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from tqdm.auto import tqdm
 
-from low_rank_rl.analysis.rank import compute_rank_metrics, sample_states
+from low_rank_rl.analysis.rank   import compute_rank_metrics, sample_states
+from low_rank_rl.analysis.hankel import hankel_rank_metrics
 
 
 EpisodeCallback = Callable[[int, int, float], None]
@@ -38,17 +40,53 @@ class TrainingLog:
     durations:    list[int]    = field(default_factory=list)
     rewards:      list[float]  = field(default_factory=list)
     rank_history: list[dict]   = field(default_factory=list)
+    eval_history: list[dict]   = field(default_factory=list)
+    best_eval:    float        = float("-inf")
+    best_episode: int          = 0
 
 
-def _rank_snapshot(agent, env, n_rank_samples: int) -> tuple[dict, object]:
+def _evaluate(agent, env, n_episodes: int) -> float:
+    """Mean greedy-policy return over n_episodes (no exploration, no learning)."""
+    rewards = []
+    for _ in range(n_episodes):
+        obs, _ = env.reset()
+        done, total = False, 0.0
+        while not done:
+            action = agent.act(obs, training=False)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            total += float(reward)
+        rewards.append(total)
+    return sum(rewards) / max(len(rewards), 1)
+
+
+def _checkpoint(agent, env, cfg: dict) -> tuple[dict, object]:
+    """Q-matrix rank + optional Hankel spectra for the current greedy policy.
+
+    Hankel capture is controlled by ``cfg['analysis']['hankel_sequence_types']``
+    (list of {"value", "q_taken", "policy", "actions"}). Empty/missing ->
+    skipped, matching the previous snapshot behaviour.
+    """
+    n_rank_samples = cfg["training"]["n_rank_samples"]
+    analysis_cfg   = cfg.get("analysis", {}) or {}
+    hankel_seqs    = analysis_cfg.get("hankel_sequence_types") or []
+
     states = sample_states(env, n_rank_samples)
     m      = compute_rank_metrics(agent, states)
-    return {
-        "numerical_rank":  m.numerical_rank,
-        "stable_rank":     m.stable_rank,
-        "effective_rank":  m.effective_rank,
-        "normalised_rank": m.normalised_numerical_rank,
-    }, m
+    snap: dict = {"numerical_rank": m.numerical_rank}
+
+    if hankel_seqs:
+        hsnap = {}
+        for s in hankel_seqs:
+            hsnap[s] = hankel_rank_metrics(
+                agent, env,
+                sequence_type=s,
+                n_steps=analysis_cfg.get("hankel_steps"),
+                n_rows=analysis_cfg.get("hankel_n_rows"),
+            )
+        snap["hankel"] = hsnap
+
+    return snap, m
 
 
 def _progress(n_ep: int, desc: str, enable: bool):
@@ -72,9 +110,12 @@ def train_step_based(
     n_ep             = cfg["training"]["n_episodes"]
     checkpoint_every = cfg["training"]["rank_checkpoint_every"]
     n_rank_samples   = cfg["training"]["n_rank_samples"]
+    eval_every       = cfg["training"].get("eval_every")
+    eval_episodes    = cfg["training"].get("eval_episodes", 5)
 
-    log = TrainingLog()
-    bar = _progress(n_ep, f"{type(agent).__name__} train", progress)
+    log        = TrainingLog()
+    bar        = _progress(n_ep, f"{type(agent).__name__} train", progress)
+    best_state = None  # snapshot of policy_net.state_dict() at best eval
 
     for ep in bar:
         obs, _         = env.reset()
@@ -92,13 +133,26 @@ def train_step_based(
         log.rewards.append(total)
 
         if ep % checkpoint_every == 0:
-            snap, m = _rank_snapshot(agent, env, n_rank_samples)
+            snap, m = _checkpoint(agent, env, cfg)
             log.rank_history.append({"episode": ep, **snap})
             bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
+
+        if eval_every and ep % eval_every == 0 and hasattr(agent, "policy_net"):
+            mean_r = _evaluate(agent, env, eval_episodes)
+            log.eval_history.append({"episode": ep, "mean_reward": mean_r})
+            if mean_r > log.best_eval:
+                log.best_eval    = mean_r
+                log.best_episode = ep
+                best_state       = copy.deepcopy(agent.policy_net.state_dict())
+                bar.write(f"  ep {ep:4d}/{n_ep}  eval={mean_r:+.1f}  ★ new best")
 
         bar.set_postfix(_postfix(log.rewards))
         if on_episode is not None:
             on_episode(ep, t, total)
+
+    if best_state is not None:
+        agent.policy_net.load_state_dict(best_state)
+        agent.target_net.load_state_dict(best_state)
 
     return log
 
@@ -134,7 +188,7 @@ def train_episode_based(
         log.rewards.append(total)
 
         if ep % checkpoint_every == 0:
-            snap, m = _rank_snapshot(agent, env, n_rank_samples)
+            snap, m = _checkpoint(agent, env, cfg)
             log.rank_history.append({"episode": ep, **snap})
             bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
 
@@ -182,7 +236,7 @@ def train_ppo(
         log.rewards.append(total)
 
         if ep % checkpoint_every == 0:
-            snap, m = _rank_snapshot(agent, env, n_rank_samples)
+            snap, m = _checkpoint(agent, env, cfg)
             log.rank_history.append({"episode": ep, **snap})
             bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
 

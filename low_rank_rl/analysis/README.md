@@ -17,8 +17,6 @@ helpers in `rank.py` decide what that set looks like:
   not discretised. Used by the successor code where an $N^2$ matrix on
   the full grid would be infeasible.
 
-So on discretised envs the rank / HOSVD routines see the **exact tabular
-Q-function**; no sampling noise, no visitation bias.
 
 ## 1. Q-matrix rank (`rank.py`)
 
@@ -29,27 +27,12 @@ Q \in \mathbb{R}^{N \times |\mathcal A|}, \qquad Q_{ij} = Q^\pi(s_i, a_j)
 $$
 
 and compute its singular values $\sigma_1 \ge \sigma_2 \ge \cdots$ via
-`np.linalg.svd`. Three rank estimates are reported:
+`np.linalg.svd`. `RankMetrics` exposes:
 
-- **Numerical rank** $r_\text{num} = \#\{i : \sigma_i > \tau \sigma_1\}$
+- `matrix_shape` — $(N, |\mathcal A|)$.
+- `singular_values` — the full $\sigma_i$ vector (plotted as a bar chart).
+- `numerical_rank` — $r_\text{num} = \#\{i : \sigma_i > \tau \sigma_1\}$
   with default $\tau = 10^{-5}$.
-- **Stable rank** (Rudelson–Vershynin; standard in the low-rank RL
-  literature)
-  $$
-  \mathrm{sr}(Q) = \frac{\lVert Q \rVert_F^2}{\sigma_1^2}
-                = \frac{\sum_i \sigma_i^2}{\sigma_1^2}.
-  $$
-  Equals 1 for a rank-1 matrix; upper-bounded by $\min(m, n)$;
-  scale-invariant in $\sigma_1$.
-- **Effective rank** (Roy & Vetterli 2007)
-  $$
-  \mathrm{er}(Q) = \exp\!\Big( - \sum_i \bar p_i \log \bar p_i \Big),
-  \qquad \bar p_i = \frac{\sigma_i^2}{\sum_j \sigma_j^2}.
-  $$
-  Smooth under perturbation, bounded in $[1, \min(m, n)]$.
-
-Also reported: the **spectral gap** $\sigma_1 - \sigma_2$ and the
-**normalised numerical rank** $r_\text{num} / \min(m, n)$.
 
 ## 2. Value tensor (`tensor.py`)
 
@@ -95,18 +78,38 @@ Requires `tensorly`.
 
 ## 3. Hankel analysis (`hankel.py`)
 
-Given a trajectory $(s_0, a_0, s_1, a_1, \dots)$ produced by the current
-(optionally greedy) policy, we record three sequences:
+Given one trajectory $(s_0, a_0, s_1, a_1, \dots, s_{T-1}, a_{T-1})$
+rolled out under the **greedy policy** $\pi(s) = \arg\max_a Q(s, a)$
+(the agent's current best estimate of the optimal policy), we record
+four scalar channels:
 
 - **value**:   $f_t = V(s_t) = \max_a Q(s_t, a)$
 - **q_taken**: $f_t = Q(s_t, a_t)$
 - **policy**:  $f_t = \arg\max_a Q(s_t, a)$ (cast to float)
+- **actions**: $f_t = a_t$ (cast to float)
 
 For $(f_0, \dots, f_{T-1})$ and `n_rows = n`,
 
 $$
 H \in \mathbb{R}^{n \times (T - n + 1)}, \qquad H_{ij} = f_{i + j}.
 $$
+
+### Automatic sizing
+
+`collect_trajectory(..., n_steps=None)` runs until natural termination
+or the env's `spec.max_episode_steps`, so $T$ is the full greedy
+trajectory length. `hankel_rank_metrics(..., n_rows=None)` then picks
+$n_\text{rows} = \lfloor T/2 \rfloor$, giving a (near-)square Hankel.
+That maximises $\min(n_\text{rows}, n_\text{cols})$ and therefore the
+largest rank the matrix *could* have, so any low-rank structure we see
+is a property of the signal and not an artefact of the window.
+
+### Metrics
+
+`HankelMetrics` exposes `hankel_shape`, `sequence_length`,
+`singular_values`, and the numerical rank
+$r_\text{num} = \#\{i : \sigma_i > \tau \sigma_1\}$ with default
+$\tau = 10^{-5}$.
 
 Two key properties:
 
@@ -194,8 +197,8 @@ then $Q^\pi(s, a) = w^\top \psi^\pi(s, a)$ (arXiv:2209.14935).
 
 `tests/test_analysis.py` covers:
 
-- `_metrics_from_matrix` on rank-1, full-rank, and constant-row matrices.
-- Bounds $1 \le \mathrm{sr}, \mathrm{er} \le \min(m, n)$.
+- `_metrics_from_matrix` on rank-1 and full-rank matrices; singular
+  values descending; summary string.
 - `sample_states` returns the full canonical grid on discretised envs and
   MC-samples $n$ states otherwise; `canonical_states` returns `None` off
   the grid; `canonical_subsample` caps at $n$ / returns the full grid

@@ -1,0 +1,35 @@
+env_id: "CartPole-v1"
+agent: "dqn"
+
+training:
+  n_episodes: 1000
+  rank_checkpoint_every: 20   # record rank metrics every N episodes
+  n_rank_samples: 100000        # states sampled for rank estimation
+  eval_every: 10               # greedy eval every N episodes (0/null to disable)
+  eval_episodes: 5             # number of episodes per eval
+
+agent_kwargs:
+  hidden: 128
+  batch_size: 128
+  gamma: 0.99
+  lr: 3.0e-4
+  tau: 0.001
+  eps_start: 1.0
+  eps_end: 0.02
+  eps_decay: 4000
+  buffer_capacity: 100000
+
+env_kwargs:
+  normalize_obs: true
+  discretize_obs: true
+  n_state_bins: [15, 15, 15, 15]   # cart x, cart v, pole θ, pole ω
+
+analysis:
+  hankel_steps: null
+  hankel_n_rows: null             # auto (T // 2)
+  value_tensor_bins: null           # null -> use the wrapper's canonical grid (10^4)
+  value_tensor_dims: [0, 1, 2, 3]   # cart x, cart v, pole θ, pole ω
+
+output:
+  save_dir: "outputs/cartpole_dqn"
+  save_agent: true

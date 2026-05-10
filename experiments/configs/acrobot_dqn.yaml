@@ -2,8 +2,8 @@ env_id: "Acrobot-v1"
 agent: "dqn"
 
 training:
-  n_episodes: 500
-  rank_checkpoint_every: 50   # record rank metrics every N episodes
+  n_episodes: 300
+  rank_checkpoint_every: 20   # record rank metrics every N episodes
   n_rank_samples: 1024        # states sampled for rank estimation
 
 agent_kwargs:
@@ -14,14 +14,19 @@ agent_kwargs:
   tau: 0.005
   eps_start: 0.9
   eps_end: 0.01
-  eps_decay: 2500
+  eps_decay: 1250
   buffer_capacity: 10000
 
+env_kwargs:
+  normalize_obs: true
+  discretize_obs: true
+  n_state_bins: [21, 2, 21, 2, 21, 21]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
+
 analysis:
-  hankel_steps: 500
-  hankel_n_rows: null          # auto (T // 2)
+  hankel_steps: null
+  hankel_n_rows: null             # auto (T // 2)
   value_tensor_bins: null           # null -> use the wrapper's canonical grid (21^4)
-  value_tensor_dims: [0, 1, 2, 3]   # θ₁, θ₂, ω₁, ω₂
+  value_tensor_dims: [0, 1, 2, 3, 4, 5]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
 
 output:
   save_dir: "outputs/acrobot_dqn"

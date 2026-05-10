@@ -17,17 +17,13 @@ class HankelMetrics:
     hankel_shape:    tuple[int, int]
     singular_values: np.ndarray
     numerical_rank:  int
-    stable_rank:     float
-    effective_rank:  float
 
     def summary(self) -> str:
         m, n = self.hankel_shape
         return (
             f"Hankel({self.sequence_type}) {m}x{n}  |  "
             f"seq_len={self.sequence_length}  |  "
-            f"num_rank={self.numerical_rank}  |  "
-            f"stable_rank={self.stable_rank:.2f}  |  "
-            f"eff_rank={self.effective_rank:.2f}"
+            f"num_rank={self.numerical_rank}/{min(m, n)}"
         )
 
 
@@ -42,16 +38,32 @@ def build_hankel_matrix(sequence: np.ndarray, n_rows: int) -> np.ndarray:
     return H
 
 
+def _env_horizon(env: gym.Env, fallback: int = 1000) -> int:
+    """Upper bound on episode length; prefer the env's built-in cap."""
+    spec = getattr(env, "spec", None)
+    if spec is not None and getattr(spec, "max_episode_steps", None):
+        return int(spec.max_episode_steps)
+    return fallback
+
+
 def collect_trajectory(
     agent: BaseAgent,
     env: gym.Env,
-    n_steps: int = 500,
+    n_steps: int | None = None,
     use_greedy: bool = True,
 ) -> dict[str, np.ndarray]:
+    """Roll out one episode under the (greedy) policy.
+
+    When ``n_steps`` is ``None`` we run up to the env's
+    ``spec.max_episode_steps`` and stop on natural termination/truncation —
+    i.e. the full trajectory produced by the current optimal policy π.
+    """
+    max_steps = n_steps if n_steps is not None else _env_horizon(env)
+
     states, actions, values, q_taken, policy = [], [], [], [], []
     obs, _ = env.reset()
 
-    for _ in range(n_steps):
+    for _ in range(max_steps):
         action = agent.act(obs, training=not use_greedy)
         q_row  = agent.q_matrix(obs[np.newaxis])[0]
 
@@ -67,7 +79,7 @@ def collect_trajectory(
 
     return {
         "states":  np.array(states),
-        "actions": np.array(actions),
+        "actions": np.array(actions, dtype=np.float64),
         "value":   np.array(values),
         "q_taken": np.array(q_taken),
         "policy":  np.array(policy, dtype=np.float64),
@@ -78,24 +90,28 @@ def hankel_rank_metrics(
     agent: BaseAgent,
     env: gym.Env,
     sequence_type: str = "value",
-    n_steps: int = 500,
+    n_steps: int | None = None,
     n_rows: int | None = None,
     tol: float = 1e-5,
 ) -> HankelMetrics:
-    traj   = collect_trajectory(agent, env, n_steps=n_steps)
-    seq    = traj[sequence_type]
-    T      = len(seq)
-    n_rows = n_rows or T // 2
+    """Numerical rank of the Hankel matrix of a greedy-policy trajectory.
+
+    ``n_steps=None``  → roll out the full episode under the greedy policy.
+    ``n_rows=None``   → square Hankel (``T // 2``), which maximises
+                        ``min(n_rows, n_cols)`` and therefore the largest
+                        rank we can possibly detect.
+    """
+    traj = collect_trajectory(agent, env, n_steps=n_steps, use_greedy=True)
+    seq  = traj[sequence_type]
+    T    = len(seq)
+    if n_rows is None:
+        n_rows = max(2, T // 2)
 
     H     = build_hankel_matrix(seq, n_rows)
     sigma = np.linalg.svd(H, compute_uv=False)
 
     threshold = tol * sigma[0] if sigma[0] > 0 else tol
     num_rank  = int(np.sum(sigma > threshold))
-    stable    = float(np.sum(sigma ** 2) / (sigma[0] ** 2 + 1e-12))
-    p         = sigma ** 2 / (np.sum(sigma ** 2) + 1e-12)
-    p         = p[p > 1e-12]
-    eff_rank  = float(np.exp(-np.sum(p * np.log(p))))
 
     return HankelMetrics(
         sequence_type=sequence_type,
@@ -103,8 +119,6 @@ def hankel_rank_metrics(
         hankel_shape=H.shape,
         singular_values=sigma,
         numerical_rank=num_rank,
-        stable_rank=stable,
-        effective_rank=eff_rank,
     )
 
 
@@ -121,3 +135,7 @@ def dmd_from_hankel(H: np.ndarray, rank: int | None = None) -> tuple[np.ndarray,
     eigenvalues, eigvectors = np.linalg.eig(A_tilde)
     modes                   = Xp @ Vt.T @ np.diag(1.0 / (sigma + 1e-12)) @ eigvectors
     return modes, eigenvalues
+
+
+
+# Also look at the Log of Q function. 

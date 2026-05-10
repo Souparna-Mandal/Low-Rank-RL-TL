@@ -9,11 +9,12 @@ _ENV_DEFAULTS: dict[str, dict] = {
     "Acrobot-v1":               {"normalize_obs": True,  "n_discrete_actions": None, "discretize_obs": True,  "n_state_bins": [7, 7, 7, 7, 7, 7]},
     "CartPole-v1":              {"normalize_obs": False, "n_discrete_actions": None, "discretize_obs": True,  "n_state_bins": [10, 10, 10, 10]},
     "LunarLander-v2":           {"normalize_obs": False, "n_discrete_actions": None, "discretize_obs": False, "n_state_bins": None},
+    "MountainCar-v0":           {"normalize_obs": True,  "n_discrete_actions": None, "discretize_obs": True,  "n_state_bins": [40, 40]},
     "MountainCarContinuous-v0": {"normalize_obs": True,  "n_discrete_actions": 21,   "discretize_obs": True,  "n_state_bins": [40, 40]},
     "Pendulum-v1":              {"normalize_obs": True,  "n_discrete_actions": 15,   "discretize_obs": True,  "n_state_bins": [11, 11, 15]},
     "HalfCheetah-v4":           {"normalize_obs": True,  "n_discrete_actions": 11,   "discretize_obs": False, "n_state_bins": None},
     "Hopper-v4":                {"normalize_obs": True,  "n_discrete_actions": 11,   "discretize_obs": False, "n_state_bins": None},
-    "Ant-v4":                   {"normalize_obs": True,  "n_discrete_actions": 11,   "discretize_obs": False, "n_state_bins": None},
+    "Ant-v4":                   {"normalize_obs": True,  "n_discrete_actions": 11,   "discretize_obs": True, "n_state_bins": [100,100,105,1]},
     "GridWorld-v0":             {"normalize_obs": False, "n_discrete_actions": None, "discretize_obs": False, "n_state_bins": None},
 }
 

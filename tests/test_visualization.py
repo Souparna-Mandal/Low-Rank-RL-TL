@@ -32,16 +32,12 @@ def _make_hankel_metrics() -> HankelMetrics:
     from low_rank_rl.analysis.hankel import build_hankel_matrix
     H     = build_hankel_matrix(seq, n_rows=30)
     sigma = np.linalg.svd(H, compute_uv=False)
-    p     = sigma ** 2 / (sigma ** 2).sum()
-    p     = p[p > 1e-12]
     return HankelMetrics(
         sequence_type="value",
         sequence_length=60,
         hankel_shape=H.shape,
         singular_values=sigma,
         numerical_rank=int(np.sum(sigma > 1e-5 * sigma[0])),
-        stable_rank=float(np.sum(sigma**2) / sigma[0]**2),
-        effective_rank=float(np.exp(-np.sum(p * np.log(p)))),
     )
 
 
@@ -95,7 +91,7 @@ class TestRankAnalysisPlots:
 
     def test_rank_vs_episode(self):
         history = [
-            {"episode": ep, "stable_rank": 2.0, "effective_rank": 1.5, "normalised_rank": 0.5}
+            {"episode": ep, "numerical_rank": 3}
             for ep in range(0, 500, 50)
         ]
         fig = plot_rank_vs_episode(history)

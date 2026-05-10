@@ -29,15 +29,11 @@ same axes.
 
 ## Rank / spectral plots
 
-### `plot_singular_value_spectrum(metrics: RankMetrics)`
+### `plot_singular_value_spectrum(metrics: RankMetrics, log_scale=False)`
 
-Log-scale plot of $\sigma_1, \sigma_2, \dots$ with two reference lines:
-
-- horizontal dashed line at $10^{-5} \sigma_1$ (the default numerical-rank
-  threshold);
-- vertical dotted line at `numerical_rank - 0.5`.
-
-Stable rank, effective rank, and spectral gap are annotated in the corner.
+Bar chart of $\sigma_1, \sigma_2, \dots$ with a vertical dotted line at
+`numerical_rank - 0.5` marking the cut-off. Pass `log_scale=True` for a
+log y-axis.
 
 ### `plot_hosvd_spectra(spectra: dict[int, np.ndarray])`
 
@@ -52,16 +48,15 @@ meaningfully.
 
 ### `plot_rank_vs_episode(history)`
 
-Takes a list of checkpoint dicts with keys
-`{"episode", "stable_rank", "effective_rank", "normalised_rank"}`. Draws one
-subplot per metric showing its evolution during training. Useful for
-observing rank collapse (or lack thereof) during learning.
+Takes a list of checkpoint dicts with keys `{"episode", "numerical_rank"}`
+and plots numerical rank vs episode. Useful for observing rank collapse
+(or lack thereof) during learning.
 
 ### `plot_hankel_spectrum(metrics: HankelMetrics)`
 
-Single-axis log plot of $\sigma_i(H)$ for a Hankel matrix, with the
-numerical rank cut-off as a vertical dotted line and stable/effective rank
-annotations.
+Log-scale bar chart of $\sigma_i(H)$ for a Hankel matrix, with the
+numerical rank cut-off drawn as a vertical dotted line. The title
+carries the sequence type, Hankel shape, and trajectory length.
 
 ### `plot_shift_comparison(comparison: SuccessorComparison)`
 

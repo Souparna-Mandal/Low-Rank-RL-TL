@@ -9,6 +9,7 @@ from low_rank_rl.visualization.rank_analysis import (
     plot_hosvd_spectra,
     plot_rank_vs_episode,
     plot_hankel_spectrum,
+    plot_hankel_spectra_over_training,
     plot_shift_comparison,
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "plot_hosvd_spectra",
     "plot_rank_vs_episode",
     "plot_hankel_spectrum",
+    "plot_hankel_spectra_over_training",
     "plot_shift_comparison",
 ]
