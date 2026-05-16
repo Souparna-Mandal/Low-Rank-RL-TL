@@ -12,22 +12,22 @@ agent_kwargs:
   gamma: 0.99
   lr: 3.0e-4
   tau: 0.005
-  eps_start: 0.9
+  eps_start: 0.99
   eps_end: 0.01
-  eps_decay: 1250
+  eps_decay: 12000
   buffer_capacity: 10000
 
 env_kwargs:
   normalize_obs: true
   discretize_obs: true
-  n_state_bins: [21, 2, 21, 2, 21, 21]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
-
+  n_state_bins: [7,7,7,7,11,11]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
+# 21, 2, 21 , 2, 21, 21 
 analysis:
   hankel_steps: null
   hankel_n_rows: null             # auto (T // 2)
   value_tensor_bins: null           # null -> use the wrapper's canonical grid (21^4)
-  value_tensor_dims: [0, 1, 2, 3, 4, 5]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
+  value_tensor_dims: [0, 1, 2, 3, 4, 5]   # cos θ₁, sin ,θ₁ cos θ₂, sin θ₂, ω₁, ω₂
 
 output:
-  save_dir: "outputs/acrobot_dqn"
+  save_dir: "outputs/acrobot_dqn/version2"
   save_agent: true

@@ -7,26 +7,26 @@ training:
   n_rank_samples: 1024
 
 agent_kwargs:
-  hidden: 64
+  hidden: 128
   lr: 3.0e-4
   gamma: 0.99
   gae_lambda: 0.95
   clip_eps: 0.2
   entropy_coef: 0.01
   value_coef: 0.5
-  ppo_epochs: 4
-  mini_batch_size: 64
+  ppo_epochs: 8
+  mini_batch_size: 128
 
 env_kwargs:
   normalize_obs: true
   discretize_obs: true
-  n_state_bins: [7, 7, 7, 7, 7, 7]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
+  n_state_bins: [21, 2, 21, 2, 21, 21]   # cos θ₁, sin θ₁, cos θ₂, sin θ₂, ω₁, ω₂
 
 analysis:
-  hankel_steps: 500
+  hankel_steps: null
   hankel_n_rows: null
   value_tensor_bins: null           # null -> use the wrapper's canonical grid (21^4)
-  value_tensor_dims: [0, 1, 2, 3]
+  value_tensor_dims: [0, 1, 2, 3, 4, 5,6 ]
 
 output:
   save_dir: "outputs/acrobot_ppo"

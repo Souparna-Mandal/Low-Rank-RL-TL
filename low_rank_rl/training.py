@@ -93,11 +93,15 @@ def _progress(n_ep: int, desc: str, enable: bool):
     return tqdm(range(1, n_ep + 1), desc=desc, disable=not enable, dynamic_ncols=True)
 
 
-def _postfix(rewards: list[float], window: int = 20) -> dict[str, str]:
+def _postfix(rewards: list[float], window: int = 20, agent=None) -> dict[str, str]:
     recent = rewards[-window:] if rewards else [0.0]
     mean_r = sum(recent) / len(recent)
-    return {"ep_reward": f"{rewards[-1]:+.1f}" if rewards else "—",
-            f"mean{len(recent)}": f"{mean_r:+.1f}"}
+    out = {"ep_reward": f"{rewards[-1]:+.1f}" if rewards else "—",
+           f"mean{len(recent)}": f"{mean_r:+.1f}"}
+    eps = getattr(agent, "epsilon", None)
+    if eps is not None:
+        out["eps"] = f"{float(eps):.3f}"
+    return out
 
 
 def train_step_based(
@@ -109,7 +113,6 @@ def train_step_based(
 ) -> TrainingLog:
     n_ep             = cfg["training"]["n_episodes"]
     checkpoint_every = cfg["training"]["rank_checkpoint_every"]
-    n_rank_samples   = cfg["training"]["n_rank_samples"]
     eval_every       = cfg["training"].get("eval_every")
     eval_episodes    = cfg["training"].get("eval_episodes", 5)
 
@@ -135,7 +138,9 @@ def train_step_based(
         if ep % checkpoint_every == 0:
             snap, m = _checkpoint(agent, env, cfg)
             log.rank_history.append({"episode": ep, **snap})
-            bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
+            eps_attr = getattr(agent, "epsilon", None)
+            eps_str  = f"  eps={float(eps_attr):.3f}" if eps_attr is not None else ""
+            bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}{eps_str}  {m.summary()}")
 
         if eval_every and ep % eval_every == 0 and hasattr(agent, "policy_net"):
             mean_r = _evaluate(agent, env, eval_episodes)
@@ -146,7 +151,7 @@ def train_step_based(
                 best_state       = copy.deepcopy(agent.policy_net.state_dict())
                 bar.write(f"  ep {ep:4d}/{n_ep}  eval={mean_r:+.1f}  ★ new best")
 
-        bar.set_postfix(_postfix(log.rewards))
+        bar.set_postfix(_postfix(log.rewards, agent=agent))
         if on_episode is not None:
             on_episode(ep, t, total)
 
@@ -192,7 +197,7 @@ def train_episode_based(
             log.rank_history.append({"episode": ep, **snap})
             bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
 
-        bar.set_postfix(_postfix(log.rewards))
+        bar.set_postfix(_postfix(log.rewards, agent=agent))
         if on_episode is not None:
             on_episode(ep, t, total)
 
@@ -240,7 +245,7 @@ def train_ppo(
             log.rank_history.append({"episode": ep, **snap})
             bar.write(f"  ep {ep:4d}/{n_ep}  dur={t:4d}  R={total:+.1f}  {m.summary()}")
 
-        bar.set_postfix(_postfix(log.rewards))
+        bar.set_postfix(_postfix(log.rewards, agent=agent))
         if on_episode is not None:
             on_episode(ep, t, total)
 
