@@ -1,0 +1,8 @@
+environment: 
+    name: "Acrobot-v1"
+    discretisation:
+        state: [21,21,21,21,21,21]
+        action: Null # Already discrete by definition
+    normalise_observation: True 
+
+    
