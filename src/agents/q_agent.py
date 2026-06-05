@@ -84,7 +84,9 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
         device="mps", TD_LR = 0.1, buffer_util=1):
-        """_summary_
+        
+        """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
+        function along with the replay buffer for sampling from prior experiences. 
 
         Args:
             replay_buffer_capacity (int): _description_
@@ -205,3 +207,17 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             target_net_state[key] += self.TD_LR*(policy_net_state[key] - target_net_state[key])
         self.target_net.load_state_dict(target_net_state)
         
+    def save(self, path):
+        torch.save({
+            "policy_net": self.policy_net.state_dict(),
+            "target_net": self.target_net.state_dict(),
+            "optimiser": self.optimiser.state_dict(),
+            "epsilon": self.epsilon,
+        }, path)
+
+    def load(self, path):
+        ckpt = torch.load(path, map_location=self.device)
+        self.policy_net.load_state_dict(ckpt["policy_net"])
+        self.target_net.load_state_dict(ckpt["target_net"])
+        self.optimiser.load_state_dict(ckpt["optimiser"])
+        self.epsilon = ckpt["epsilon"]

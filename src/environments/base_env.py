@@ -6,13 +6,7 @@ import numpy as np
 
 from .wrappers.discrete_wrappers import DiscreteActionWrapper, DiscreteStateWrapper
 
-## Initialisations ##
-CONFIG = pathlib.Path(__file__).parent / "config.yaml"
 environments = {}
-
-## Load the Environments ##
-with open(CONFIG) as f:
-    environments = yaml.safe_load(f)
 
 ## Initialise the Environments ## 
 
