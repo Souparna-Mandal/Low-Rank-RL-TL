@@ -1,0 +1,18 @@
+[project]
+name = "low-rank-rl-tl"
+version = "0.1.0"
+description = "Low-Rank RL Transfer Learning thesis codebase"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.2",
+    "gymnasium[classic-control]>=0.29",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "matplotlib>=3.8",
+    "tqdm>=4.66",
+    "ipykernel>=6.29",
+]
+
+[tool.uv]
+package = false
