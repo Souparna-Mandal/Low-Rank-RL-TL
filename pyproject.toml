@@ -3,7 +3,7 @@ name = "low-rank-rl-tl"
 version = "0.1.0"
 description = "Low-Rank RL Transfer Learning thesis codebase"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "torch>=2.2",
     "gymnasium[classic-control]>=0.29",
