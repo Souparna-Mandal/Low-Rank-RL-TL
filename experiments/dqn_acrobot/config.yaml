@@ -1,0 +1,33 @@
+experiment:
+  name: dqn_acrobot
+  seed: 52
+  device: mps
+
+environment:
+  name: Acrobot-v1
+  render_mode: null
+  discrete_config: null
+  # Verbose normalise kwargs passed straight into make_environment(**env_kwargs).
+  # Empty action/state dicts -> RescaleAction / RescaleObservation are skipped.
+  normalise:
+    action: {}
+    state: {}
+
+network:
+  # MLP Q-network is defined inside exp1.ipynb
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 10000
+  batch_size: 128
+  nn_learning_rate: 0.0003
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99995   
+  discount_factor: 0.99
+  TD_LR: 0.005           # soft target-network updates
+  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+
+training:
+  no_episodes: 500
+  target_network_update_steps: 1
