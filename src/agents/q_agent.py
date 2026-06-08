@@ -108,8 +108,13 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         BaseAgent.__init__(self, env)
         EpsilonGreedyExplorer.__init__(self, eps_start, eps_min, decay_rate)
         self.replay_buffer = ReplayBuffer(replay_buffer_capacity)
+        
+        # Preparing the Neural networks for DQN
         self.policy_net = q_network(**nn_extra_kwargs).to(device)
         self.target_net = q_network(**nn_extra_kwargs).to(device)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+        
         self.optimiser = optim.AdamW(self.policy_net.parameters(), lr=nn_learning_rate, amsgrad=True)
         self.device = device
         self.loss = DqnLoss(discount_factor, base_loss)
