@@ -11,8 +11,14 @@ environment:
   # Empty action/state dicts -> RescaleAction / RescaleObservation are skipped.
   normalise:
     action: {}
-    state: {}
-
+    state:
+      min: [-4.8, -10, -0.41887903, -10,]
+      max: [4.8, 10, 0.41887903, 10]
+  clip:
+    action: False 
+    state :
+      min: [ null, -100, null, -100]
+      max: [ null, 100, null, 100]
 network:
   # MLP Q-network is defined inside exp1.ipynb
   hidden_sizes: [128, 128]
@@ -23,10 +29,10 @@ agent:
   nn_learning_rate: 0.0005
   eps_start: 1.0
   eps_min: 0.01
-  decay_rate: 0.99997
+  decay_rate: 0.99991
   discount_factor: 0.99
   TD_LR: 0.005           # soft target-network updates
-  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  buffer_util: 3         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
 
 training:
   no_episodes: 1500
@@ -40,4 +46,9 @@ analysis:
   methods:
     - name: hankel_rollout
       kwargs:
+
         seed: 52
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        batch_size: 64
