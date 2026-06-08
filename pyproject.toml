@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.8",
     "tqdm>=4.66",
     "ipykernel>=6.29",
+    "scipy>=1.17.1",
 ]
 
 [tool.uv]
