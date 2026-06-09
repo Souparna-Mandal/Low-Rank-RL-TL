@@ -1,6 +1,8 @@
-import gymnasium as gym 
-from gymnasium.wrappers import RescaleAction, RescaleObservation, ClipAction, TransformObservation
-import yaml 
+import gymnasium as gym
+from gymnasium.wrappers import (RescaleAction, RescaleObservation, ClipAction,
+                                TransformObservation, AtariPreprocessing,
+                                FrameStackObservation)
+import yaml
 import pathlib
 import numpy as np
 
@@ -24,8 +26,26 @@ def make_environment(env_name: str, render_mode = None,
     Returns:
         gym.env: the created environment object.
     """
+    # Atari envs processing
+    atari_cfg = env_kwargs.get('atari', None)
+    if atari_cfg:
+        env = gym.make(env_name, render_mode=render_mode, frameskip=1)
+        env = AtariPreprocessing(
+            env,
+            noop_max=atari_cfg['noop_max'],
+            frame_skip=atari_cfg['frame_skip'],
+            screen_size=atari_cfg['screen_size'],
+            terminal_on_life_loss=atari_cfg['terminal_on_life_loss'],
+            grayscale_obs=atari_cfg['grayscale_obs'],
+            grayscale_newaxis=atari_cfg['grayscale_newaxis'],
+            scale_obs=atari_cfg['scale_obs'],
+        )
+        if atari_cfg['frame_stack'] > 1:
+            env = FrameStackObservation(env, stack_size=atari_cfg['frame_stack'])
+        return env
+
     env = gym.make(env_name, render_mode=render_mode)
-    
+
     # Discretise the State Action Space
     if discrete_config is not None:
         if discrete_config['no_action_bins'] > 0:
