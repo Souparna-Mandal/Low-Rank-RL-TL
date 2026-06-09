@@ -41,8 +41,11 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             print(f"episode {episode} avg_rewarg: {ep_avg}")
         
         if DEBUG:
-            print(f"episode {episode} is complete with reward{epsiode_total_reward}")
-            print(f"DEBUG INFO: replay_buffer_length{len(agent.replay_buffer)}")
+            print("**************************** DEBUG INFO START **********************************")
+            print(f"Episode {episode} is complete with reward {epsiode_total_reward}")
+            print(f"Replay_buffer_length {len(agent.replay_buffer)}")
+            print(f"Epsilon for epsilon-greedy is {agent.epsilon}")
+            print("**************************** DEBUG INFO END **********************************")
             
         # Analysis prints during training
         if episode % analysis_config["ep_freq"] == 0:
