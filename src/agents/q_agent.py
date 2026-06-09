@@ -83,7 +83,8 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         env: gym.Env,
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
-        device="mps", TD_LR = 0.1, buffer_util=1):
+        device="mps", TD_LR = 0.1, buffer_util=1,
+        double=False):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
         function along with the replay buffer for sampling from prior experiences. 
@@ -103,6 +104,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             device (str, optional): _description_. Defaults to "mps".
             TD_LR (float, optional): _description_. Defaults to 0.1.
             buffer_util (int, optional): _description_. Defaults to 1.
+            Double (Bool, optional): If enabled it uses Double DQN for Q value target estimation
         """
         
         BaseAgent.__init__(self, env)
@@ -121,6 +123,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.batch_size =  batch_size
         self.TD_LR = TD_LR
         self.buffer_util = buffer_util
+        self.double = True
         
     def act_greedy(self, state: torch.tensor):
         """_summary_
@@ -196,7 +199,11 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             if non_final_mask.any():
                 next_state = torch.cat([s for s in batch.next_state if s is not None])
                 with torch.no_grad():
-                    Q_s_1_a[non_final_mask] = self.target_net(next_state).max(dim=1).values
+                    if self.double:
+                        next_actions = self.policy_net(next_state).argmax(dim=1, keepdim=True) # Policy net chooses the next action (max)
+                        Q_s_1_a[non_final_mask] = self.target_net(next_state).gather(1, next_actions).squeeze(1) # Target net calculates the Q value for the update
+                    else:
+                        Q_s_1_a[non_final_mask] = self.target_net(next_state).max(dim=1).values
             
             self.optimiser.zero_grad()
             loss = self.loss(Q_s_a, rewards, Q_s_1_a)
