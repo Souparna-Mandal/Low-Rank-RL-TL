@@ -123,7 +123,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.batch_size =  batch_size
         self.TD_LR = TD_LR
         self.buffer_util = buffer_util
-        self.double = True
+        self.double = double
         
     def act_greedy(self, state: torch.tensor):
         """_summary_
