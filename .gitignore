@@ -45,3 +45,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# AI developed experimental stuff 
+.claude
