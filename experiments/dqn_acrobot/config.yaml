@@ -12,6 +12,9 @@ environment:
   normalise:
     action: {}
     state: {}
+  clip:
+    action: False 
+    state: []
 
 network:
   # MLP Q-network is defined inside exp1.ipynb
@@ -30,7 +33,8 @@ agent:
 
 training:
   no_episodes: 500
-  target_network_update_steps: 1
+  target_network_update_steps: 2
+  train_frequency_steps: 200
 
 analysis:
   ep_freq: 50
