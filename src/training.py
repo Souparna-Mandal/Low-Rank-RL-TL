@@ -6,11 +6,12 @@ from tqdm import tqdm
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       no_episodes: int, target_network_update_steps: int ,
+                      train_frequency_steps: int,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict = {},
                       DEBUG=False):
     state, info = env.reset(seed = np_seed)
-    j = 0
+    j,k = 0,0
     episode_rewards_training = []
     for episode in tqdm(range(no_episodes)):
         # Do a policy rollout and explore with the current agent
@@ -25,14 +26,17 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             state = next_state
             epsiode_total_reward += reward
             
-            # This is used to bring the Network used to Calculate Q-Targets uptodate with the policy network
-            j+= 1
+            # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
+            j+= 1 
+            k+=1
             if j >= target_network_update_steps:
-                j= 0
+                j = 0
                 agent.update_target_network()
-            
-        # train the agent 
-        agent.train() # train once an episode finished
+            if k >= train_frequency_steps:
+                k = 0
+                # train the agent 
+                agent.train() # train every train_frequency_steps steps
+
         # reset the environment for next episode
         state, _ = env.reset()
         episode_rewards_training.append(epsiode_total_reward)
@@ -50,8 +54,17 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         # Analysis prints during training
         if episode % analysis_config["ep_freq"] == 0:
             for method,name in zip(analysis_config["methods"], ['Hankel Value Function','Q-function']):
-                print(name)
+                print(f"****************************{name}****************************")
                 matrix = method(agent=agent, env=env)
-                rank.plot_matrix_spectra(matrix)
-            
+                r, sr, shape, irs, rc, nzc, nzr = rank.row_rank_property_check(matrix, name)
+                # returns effective_rank, stable_rank, shape, irs (normalised top-r leverage per row),
+                # rc = coherence of the rank-r row space ((m/rank)*max leverage, in [1, m/rank]),
+                # nzc and nzr are the number of non zero columns and rows in the original matrix.
+                print(f"eff_rank: {r}, stable_rank: {sr:.2f}, shape: {shape}, non-zero rows :{nzr}, non-zero cols:{nzc}")
+                print(f"top-r leverage spread: min={irs.min():.4g} max={irs.max():.4g} (uniform would be {1.0/shape[0]:.4g})")
+                print(f"row-space coherence score: {rc:.4g}")
+            # The Hankel analysis above rolls out `env` to termination, leaving it in a stale/terminated
+            # state. Reset before the next training episode so we don't resume from a hijacked env.
+            state, _ = env.reset()
+
     return episode_rewards_training
