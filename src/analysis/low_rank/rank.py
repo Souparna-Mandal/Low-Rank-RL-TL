@@ -59,7 +59,7 @@ def row_rank_property_check(matrix: np.ndarray, matrix_name: str,
 
     # Effective rank: how many singular values are needed to capture `energy_frac` of the Frobenius energy.
     rank = max(energy_rank(s_vals, energy_frac), 1)
-    # Stable rank: energy-based, threshold-free sanity check (sum sigma_i^2 / sigma_1^2), in [1, min(m,n)].
+    # Stable rank: energy-based (sum sigma_i^2 / sigma_1^2), in [1, min(m,n)].
     stable_rank = float((s_vals**2).sum() / s_vals[0]**2)
 
     # Restrict to the top-r left-singular subspace; everything below is a property of THAT subspace.

@@ -83,7 +83,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         env: gym.Env,
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
-        device="mps", TD_LR = 0.1, buffer_util=1,
+        device="mps", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
         double=False):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
@@ -104,6 +104,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             device (str, optional): _description_. Defaults to "mps".
             TD_LR (float, optional): _description_. Defaults to 0.1.
             buffer_util (int, optional): _description_. Defaults to 1.
+            gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
             Double (Bool, optional): If enabled it uses Double DQN for Q value target estimation
         """
         
@@ -124,6 +125,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.TD_LR = TD_LR
         self.buffer_util = buffer_util
         self.double = double
+        self.gd_steps_ceil = gd_steps_ceil
         
     def act_greedy(self, state: torch.tensor):
         """_summary_
@@ -176,7 +178,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
     def train(self,):
         """_summary_
         """
-        gd_steps = len(self.replay_buffer) // (self.buffer_util * self.batch_size) # Try to use 1/4th of the buffer 
+        gd_steps = min(len(self.replay_buffer) // (self.buffer_util * self.batch_size), self.gd_steps_ceil)
         for _ in range(gd_steps):
             transitions = self.replay_buffer.sample(self.batch_size)
             batch = Transition(*zip(*transitions)) # This is a nice hack that does a transpose giving us: 

@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       no_episodes: int, target_network_update_steps: int ,
-                      train_frequency_steps: int,
+                      train_frequency_steps: int, warmup_steps: int = 0,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict = {},
                       DEBUG=False):
@@ -28,7 +28,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             
             # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
             j+= 1 
-            k+=1
+            k+= 1
             if j >= target_network_update_steps:
                 j = 0
                 agent.update_target_network()
@@ -53,16 +53,19 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             
         # Analysis prints during training
         if episode % analysis_config["ep_freq"] == 0:
-            for method,name in zip(analysis_config["methods"], ['Hankel Value Function','Q-function']):
-                print(f"****************************{name}****************************")
-                matrix = method(agent=agent, env=env)
-                r, sr, shape, irs, rc, nzc, nzr = rank.row_rank_property_check(matrix, name)
-                # returns effective_rank, stable_rank, shape, irs (normalised top-r leverage per row),
-                # rc = coherence of the rank-r row space ((m/rank)*max leverage, in [1, m/rank]),
-                # nzc and nzr are the number of non zero columns and rows in the original matrix.
-                print(f"eff_rank: {r}, stable_rank: {sr:.2f}, shape: {shape}, non-zero rows :{nzr}, non-zero cols:{nzc}")
-                print(f"top-r leverage spread: min={irs.min():.4g} max={irs.max():.4g} (uniform would be {1.0/shape[0]:.4g})")
-                print(f"row-space coherence score: {rc:.4g}")
+            for method, names in analysis_config["methods"]:
+                results = method(agent=agent, env=env)
+                if not isinstance(results, tuple): # Deals with functions returning multiple matrices for analysis 
+                    results = (results,)
+                for matrix, name in zip(results, names):
+                    print(f"****************************{name}****************************")
+                    r, sr, shape, irs, rc, nzc, nzr = rank.row_rank_property_check(matrix, name)
+                    # returns effective_rank, stable_rank, shape, irs (normalised top-r leverage per row),
+                    # rc = coherence of the rank-r row space ((m/rank)*max leverage, in [1, m/rank]),
+                    # nzc and nzr are the number of non zero columns and rows in the original matrix.
+                    print(f"eff_rank: {r}, stable_rank: {sr:.2f}, shape: {shape}, non-zero rows :{nzr}, non-zero cols:{nzc}")
+                    print(f"top-r leverage spread: min={irs.min():.4g} max={irs.max():.4g} (uniform would be {1.0/shape[0]:.4g})")
+                    print(f"row-space coherence score: {rc:.4g}")
             # The Hankel analysis above rolls out `env` to termination, leaving it in a stale/terminated
             # state. Reset before the next training episode so we don't resume from a hijacked env.
             state, _ = env.reset()

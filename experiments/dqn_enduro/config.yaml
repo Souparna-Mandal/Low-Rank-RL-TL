@@ -57,6 +57,7 @@ agent:
   discount_factor: 0.99
   TD_LR: 0.0025                     # soft target update; Polyak-style
   buffer_util: 4                    # grad steps/ep ~ len(buffer) / (4 * batch)
+  gd_steps_ceil: 10                 # hard cap on gradient steps per training call
 
 training:
   no_episodes: 2000
@@ -70,3 +71,4 @@ analysis:
     - name: hankel_rollout
       kwargs:
         seed: 52
+      outputs: [Hankel Q, Hankel V]

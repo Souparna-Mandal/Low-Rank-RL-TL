@@ -29,15 +29,17 @@ agent:
   nn_learning_rate: 0.0005
   eps_start: 1.0
   eps_min: 0.01
-  decay_rate: 0.99991
+  decay_rate: 0.99992
   discount_factor: 0.99
-  TD_LR: 0.01           # soft target-network updates
-  buffer_util: 2         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  TD_LR: 0.3           # soft target-network updates
+  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  # With the current settings when buffer is full it should do 781 gd_steps without the ceiling
+  gd_steps_ceil: 40     # hard cap on gradient steps per training call
   double: True
 
 training:
   no_episodes: 1500
-  target_network_update_steps: 10
+  target_network_update_steps: 50
   train_frequency_steps: 100
 
 analysis:
@@ -48,9 +50,10 @@ analysis:
   methods:
     - name: hankel_rollout
       kwargs:
-
         seed: 52
+      outputs: [Hankel Q, Hankel V]
     - name: q_matrix_dqn
       kwargs:
-        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (CartPole obs_dim = 4)
         batch_size: 64
+      outputs: [Q-function]
