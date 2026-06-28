@@ -25,12 +25,12 @@ environment:
   # episodes off mid-race. scale_obs=False keeps obs as uint8 to save memory;
   # the CNN divides by 255 in its forward pass.
   atari:
-    noop_max: 30
+    noop_max: 30 # executes a random number (0-30) no-op actions before handing to the agent to randomise state and prevent memorisation
     frame_skip: 4
-    screen_size: 84
+    screen_size: 84 # rescaling the input for computation
     terminal_on_life_loss: false
     grayscale_obs: true
-    grayscale_newaxis: false
+    grayscale_newaxis: false # if false then a frame is (84,84) instead of (84,84,1)
     scale_obs: false
     frame_stack: 4
 
@@ -57,10 +57,18 @@ agent:
   discount_factor: 0.99
   TD_LR: 0.0025                     # soft target update; Polyak-style
   buffer_util: 4                    # grad steps/ep ~ len(buffer) / (4 * batch)
+  gd_steps_ceil: 10                 # hard cap on gradient steps per training call
+  grad_clip_norm: 10.0              # max global L2 norm for gradient clipping per step
 
 training:
   no_episodes: 2000
-  target_network_update_steps: 2000    # soft updates -> apply every env step
+  target_network_update_steps: 200    # soft updates -> apply every env step
+  train_frequency_steps: 200           # train after every 200 env steps
+  use_episode_training: False           # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  solved_reward: 5000                  # Enduro has no standard solved threshold; set high to disable early stop
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
 
 analysis:
   ep_freq: 100
@@ -70,3 +78,4 @@ analysis:
     - name: hankel_rollout
       kwargs:
         seed: 52
+      outputs: [Hankel Q, Hankel V]

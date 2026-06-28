@@ -1,5 +1,5 @@
 experiment:
-  name: dqn_acrobot
+  name: dqn_acrobot_2
   seed: 52
   device: mps
 
@@ -29,14 +29,20 @@ agent:
   decay_rate: 0.99995   
   discount_factor: 0.99
   TD_LR: 0.005           # soft target-network updates
-  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  buffer_util: 1         # What fraction of the buffer to use (Increasing reducing the gd_steps) ==== gradient steps/episode ~ len(buffer) / (buffer_util * batch)
   # With the current settings when buffer is full it should do 40 gd_steps without the ceiling
   gd_steps_ceil: 1      # hard cap on gradient steps per training call
+  grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
 
 training:
   no_episodes: 500
   target_network_update_steps: 2
-  train_frequency_steps: 2 
+  train_frequency_steps: 2
+  use_episode_training: False   # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  solved_reward: -80        # Acrobot-v1 solved at avg reward >= -100
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
 
 analysis:
   ep_freq: 50

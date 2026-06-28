@@ -29,16 +29,24 @@ agent:
   nn_learning_rate: 0.0005
   eps_start: 1.0
   eps_min: 0.01
-  decay_rate: 0.99991
+  decay_rate: 0.99992
   discount_factor: 0.99
-  TD_LR: 0.01           # soft target-network updates
-  buffer_util: 2         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  TD_LR: 0.3           # soft target-network updates
+  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  # With the current settings when buffer is full it should do 781 gd_steps without the ceiling
+  gd_steps_ceil: 40     # hard cap on gradient steps per training call
+  grad_clip_norm: 10.0  # max global L2 norm for gradient clipping per step
   double: True
 
 training:
   no_episodes: 1500
-  target_network_update_steps: 10
+  target_network_update_steps: 200
   train_frequency_steps: 100
+  use_episode_training: True   # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  solved_reward: 475         # CartPole-v1 solved at >= 475 avg reward
+  warmup_steps: 1500
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
 
 analysis:
   ep_freq: 50
@@ -48,9 +56,10 @@ analysis:
   methods:
     - name: hankel_rollout
       kwargs:
-
         seed: 52
+      outputs: [Hankel Q, Hankel V]
     - name: q_matrix_dqn
       kwargs:
-        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (CartPole obs_dim = 4)
         batch_size: 64
+      outputs: [Q-function]
