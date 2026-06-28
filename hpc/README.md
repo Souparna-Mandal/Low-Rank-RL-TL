@@ -32,18 +32,46 @@ qsub job.pbs
 - Request `ngpus=1` for any training run; omit it for CPU-only debugging.
 - Output logs go to `job.pbs.o<jobid>` and `job.pbs.e<jobid>` in the submission directory.
 
-## Personal Note
-
-PBS is the job scheduler used when we specify the `qsub` command. We put those as comments in our bash file we submit. 
+## Monitoring Jobs
 
 ```bash
--N <job-name>
+qsub job.pbs              # submit — prints your job ID e.g. 1234567.pbs
+qstat                     # all your jobs + status (Q=queued, R=running, E=exiting)
+qstat -f 1234567.pbs      # full details on a specific job
+qstat -T 1234567.pbs      # estimated start time
+qdel 1234567.pbs          # cancel a job
 ```
 
-`#PBS -lselect=1:ncpus=4:mem=16gb:ngpus=1:gpu_type=A100` is for the resource request. Breaking down the colon-separated chunks:
+Watch logs while running:
 
-select=1 — 1 node
-ncpus=4 — 4 CPU cores on that node
-mem=16gb — 16 GB RAM
-ngpus=1 — 1 GPU
-gpu_type=A100 — specifically an A100 (omit this to get any available GPU)
+```bash
+tail -f job.pbs.o         # live stdout
+tail -f job.pbs.e         # live stderr
+```
+
+Status codes: `Q` = queued, `R` = running, `E` = exiting. Job disappears from `qstat` once complete — check log files at that point.
+
+## PBS Directives Reference
+
+PBS is the job scheduler invoked via `qsub`. `#PBS` lines look like comments to bash but the scheduler reads them before the script runs.
+
+| Directive | Meaning |
+|-----------|---------|
+| `#PBS -N <job-name>` | Job name shown in `qstat` output |
+| `#PBS -lwalltime=HH:MM:SS` | Time limit — job is killed if it exceeds this; shorter walltime tends to get scheduled faster |
+| `#PBS -o job.pbs.o` | Stdout log file (written in `$PBS_O_WORKDIR`) |
+| `#PBS -e job.pbs.e` | Stderr log file (written in `$PBS_O_WORKDIR`) |
+
+### Resource request (`-lselect`)
+
+```
+#PBS -lselect=1:ncpus=4:mem=16gb:ngpus=1:gpu_type=A100
+```
+
+| Chunk | Meaning |
+|-------|---------|
+| `select=1` | Number of nodes |
+| `ncpus=4` | CPU cores per node |
+| `mem=16gb` | RAM per node |
+| `ngpus=1` | GPUs per node |
+| `gpu_type=A100` | Specific GPU type (omit to get any available GPU) |
