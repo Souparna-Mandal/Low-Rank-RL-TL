@@ -2,8 +2,8 @@
 #PBS -N low-rank-rl
 #PBS -lselect=1:ncpus=4:mem=16gb:ngpus=1:gpu_type=A100
 #PBS -lwalltime=2:0:0
-#PBS -o job.pbs.o
-#PBS -e job.pbs.e
+#PBS -o hpc/job.pbs.o
+#PBS -e hpc/job.pbs.e
 
 module load Miniforge3/24.11.3-0
 eval "$(conda shell.bash hook)"
