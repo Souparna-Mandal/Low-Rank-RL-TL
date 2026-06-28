@@ -1,0 +1,62 @@
+experiment:
+  name: dqn_acrobot_2
+  seed: 52
+  device: mps
+
+environment:
+  name: Acrobot-v1
+  render_mode: null
+  discrete_config: null
+  # Verbose normalise kwargs passed straight into make_environment(**env_kwargs).
+  # Empty action/state dicts -> RescaleAction / RescaleObservation are skipped.
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: False 
+    state: []
+
+network:
+  # MLP Q-network is defined inside exp1.ipynb
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 10000
+  batch_size: 128
+  nn_learning_rate: 0.0003
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99995   
+  discount_factor: 0.99
+  TD_LR: 0.005           # soft target-network updates
+  buffer_util: 1         # What fraction of the buffer to use (Increasing reducing the gd_steps) ==== gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  # With the current settings when buffer is full it should do 40 gd_steps without the ceiling
+  gd_steps_ceil: 1      # hard cap on gradient steps per training call
+  grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
+
+training:
+  no_episodes: 500
+  target_network_update_steps: 2
+  train_frequency_steps: 2
+  use_episode_training: False   # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  solved_reward: -80        # Acrobot-v1 solved at avg reward >= -100
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  ep_freq: 50
+  # Each entry: `name` resolves to a callable in the notebook's ANALYSIS_METHODS
+  # registry; `kwargs` are the config-supplied args (agent/env are injected at
+  # call time by the training loop, so they are never listed here).
+  methods:
+    - name: hankel_rollout
+      kwargs:
+        seed: 52
+      outputs: [Hankel Q, Hankel V]
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        batch_size: 64
+      outputs: [Q-function]
+

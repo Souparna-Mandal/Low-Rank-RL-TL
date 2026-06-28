@@ -5,13 +5,33 @@ import numpy as np
 from tqdm import tqdm
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
-                      no_episodes: int, target_network_update_steps: int ,
-                      train_frequency_steps: int, warmup_steps: int = 0,
+                      no_episodes: int, target_network_update_steps: int,
+                      train_frequency_steps: int, use_episode_training: bool, solved_reward: int,
+                      warmup_steps: int = 0, early_stopping_patience_eps: int = 50,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict = {},
-                      DEBUG=False):
+                      DEBUG=False, atari= False):
+    """The default behaviour is that we wait for atleast train_frequency_steps between training. However this is only invoked after every
+    episode. This means that if after train_frequency_steps it will only update once the episode ends and not in between.
+
+    Args:
+        agent (q_agent.QAgent): _description_
+        env (gym.Env): _description_
+        no_episodes (int): _description_
+        target_network_update_steps (int): _description_
+        train_frequency_steps (int): _description_
+        use_episode_training (int): _description_
+        warmup_steps (int, optional): _description_. Defaults to 0.
+        np_seed (int, optional): _description_. Defaults to 52.
+        no_eps_to_avg (int, optional): _description_. Defaults to 10.
+        analysis_config (dict, optional): _description_. Defaults to {}.
+        DEBUG (bool, optional): _description_. Defaults to False.
+
+    Returns:
+        _type_: _description_
+    """
     state, info = env.reset(seed = np_seed)
-    j,k = 0,0
+    s_tn_upd, s_train, step_count = 0,0,0
     episode_rewards_training = []
     for episode in tqdm(range(no_episodes)):
         # Do a policy rollout and explore with the current agent
@@ -22,28 +42,45 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         while not (terminated or truncated):
             action = agent.pi(state)
             next_state, reward, terminated, truncated, info = env.step(action)
-            agent.update_buffer(state, action, reward, next_state, terminated)
+            agent.update_buffer(state, action, reward, next_state, terminated) if not atari else  agent.update_buffer_atari(state, action, reward, next_state, terminated)
             state = next_state
             epsiode_total_reward += reward
             
-            # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
-            j+= 1 
-            k+= 1
-            if j >= target_network_update_steps:
-                j = 0
+            if step_count > warmup_steps: # start the counters for training and updating target network
+                # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
+                agent.decay_epsilon()
+                s_tn_upd+= 1 
+                s_train+= 1
+            step_count += 1
+            
+            # Check if enough steps have passed to update the target network
+            if s_tn_upd >= target_network_update_steps:
+                s_tn_upd = 0
                 agent.update_target_network()
-            if k >= train_frequency_steps:
-                k = 0
+            
+            if s_train >= train_frequency_steps and not use_episode_training:
+                s_train = 0
                 # train the agent 
                 agent.train() # train every train_frequency_steps steps
 
         # reset the environment for next episode
         state, _ = env.reset()
         episode_rewards_training.append(epsiode_total_reward)
+        
+        # We will do the training only when the episode had ended... and ensure that at least train_frequency_steps have passed since the last training
+        # This is mainly relevant only when use_episode_training is True
+        if s_train >= train_frequency_steps:
+            s_train = 0
+            # train the agent 
+            agent.train() # train every train_frequency_steps steps
+        
+        # print training status
         if episode % no_eps_to_avg == 0:
-            ep_avg = sum(episode_rewards_training[-no_eps_to_avg:]) / float(no_eps_to_avg) 
+            window = episode_rewards_training[-no_eps_to_avg:]
+            ep_avg = sum(window) / len(window) 
             print(f"episode {episode} avg_rewarg: {ep_avg}")
         
+        # print more detailed training status 
         if DEBUG:
             print("**************************** DEBUG INFO START **********************************")
             print(f"Episode {episode} is complete with reward {epsiode_total_reward}")
@@ -59,15 +96,23 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                     results = (results,)
                 for matrix, name in zip(results, names):
                     print(f"****************************{name}****************************")
-                    r, sr, shape, irs, rc, nzc, nzr = rank.row_rank_property_check(matrix, name)
-                    # returns effective_rank, stable_rank, shape, irs (normalised top-r leverage per row),
-                    # rc = coherence of the rank-r row space ((m/rank)*max leverage, in [1, m/rank]),
-                    # nzc and nzr are the number of non zero columns and rows in the original matrix.
-                    print(f"eff_rank: {r}, stable_rank: {sr:.2f}, shape: {shape}, non-zero rows :{nzr}, non-zero cols:{nzc}")
-                    print(f"top-r leverage spread: min={irs.min():.4g} max={irs.max():.4g} (uniform would be {1.0/shape[0]:.4g})")
-                    print(f"row-space coherence score: {rc:.4g}")
+                    r, sr, spk, shape, irs, ics, rc, cc, nzr, nzc = rank.row_rank_property_check(matrix, name)
+                    # returns effective_rank, stable_rank, spikiness, shape, irs/ics (normalised top-r leverage
+                    # per row/col), rc/cc = coherence of the rank-r row/col space ((dim/rank)*max leverage, in
+                    # [1, dim/rank]), nzr and nzc are the number of non zero rows and columns in the original matrix.
+                    print(f"eff_rank: {r}, stable_rank: {sr:.2f}, spikiness: {spk:.2f}, shape: {shape}, non-zero rows :{nzr}, non-zero cols:{nzc}")
+                    print(f"top-r leverage spread: row min={irs.min():.4g} max={irs.max():.4g} (uniform {1.0/shape[0]:.4g}) | col min={ics.min():.4g} max={ics.max():.4g} (uniform {1.0/shape[1]:.4g})")
+                    print(f"coherence score: row={rc:.4g} col={cc:.4g}")
             # The Hankel analysis above rolls out `env` to termination, leaving it in a stale/terminated
             # state. Reset before the next training episode so we don't resume from a hijacked env.
             state, _ = env.reset()
+            
+        # Check for early stopping 
+        if episode > early_stopping_patience_eps:
+            ep_avg = sum(episode_rewards_training[-early_stopping_patience_eps:]) / float(early_stopping_patience_eps) 
+            if ep_avg > solved_reward:
+                print(f"Average trajectory (episode total) reward for {early_stopping_patience_eps} episodes is {ep_avg}")
+                print("Triggering Early Stopping !!")
+                break
 
     return episode_rewards_training

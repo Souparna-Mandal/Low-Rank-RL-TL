@@ -84,7 +84,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
         device="mps", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
-        double=False):
+        grad_clip_norm = 10.0, double=False):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
         function along with the replay buffer for sampling from prior experiences. 
@@ -105,6 +105,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             TD_LR (float, optional): _description_. Defaults to 0.1.
             buffer_util (int, optional): _description_. Defaults to 1.
             gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
+            grad_clip_norm (float, optional): max global L2 norm for gradient clipping per step. Defaults to 10.0
             Double (Bool, optional): If enabled it uses Double DQN for Q value target estimation
         """
         
@@ -126,6 +127,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.buffer_util = buffer_util
         self.double = double
         self.gd_steps_ceil = gd_steps_ceil
+        self.grad_clip_norm = grad_clip_norm
         
     def act_greedy(self, state: torch.tensor):
         """_summary_
@@ -155,8 +157,24 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             # For now I am just assuming a direct integer action but change this later 
             state = torch.tensor(state, dtype= torch.float32, device=self.device).unsqueeze(0)
             action = self.act_greedy(state)
-        self.decay_epsilon()
         return action
+    
+    def update_buffer_atari(self, state, action, reward, next_state, terminated):
+        """_summary_
+
+        Args:
+            state (_type_): _description_
+            action (_type_): _description_
+            reward (_type_): _description_
+            next_state (_type_): _description_
+            terminated (_type_): _description_
+        """
+        state = torch.tensor(state, dtype= torch.uint8).unsqueeze(0) # adding batches
+        action = torch.tensor([action], dtype= torch.long, device=self.device) # Don't make it floating point
+        reward = torch.tensor([reward], dtype= torch.float32, device=self.device)
+        next_state = torch.tensor(next_state, dtype= torch.uint8).unsqueeze(0) if not terminated else None # adding batches
+        
+        self.replay_buffer.push(state,action,next_state,reward) 
     
     def update_buffer(self, state, action, reward, next_state, terminated):
         """_summary_
@@ -189,17 +207,16 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             #   reward=(r1, r2, r3)
             # )
             # retriving the tensors from the transpose
-            states = torch.cat(batch.state)
-            rewards = torch.cat(batch.reward)
-            actions = torch.cat(batch.action)
+            states = torch.cat(batch.state).to(self.device)
+            rewards = torch.cat(batch.reward).to(self.device)
+            actions = torch.cat(batch.action).to(self.device)
             non_final_mask = torch.tensor([s is not None for s in batch.next_state], device=self.device)
-            
             
             Q_s_a = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1) # assuming the actions are integer and valid indices. We also have a batch dimension before
             Q_s_1_a = torch.zeros(self.batch_size, device=self.device)
             
             if non_final_mask.any():
-                next_state = torch.cat([s for s in batch.next_state if s is not None])
+                next_state = torch.cat([s for s in batch.next_state if s is not None]).to(self.device)
                 with torch.no_grad():
                     if self.double:
                         next_actions = self.policy_net(next_state).argmax(dim=1, keepdim=True) # Policy net chooses the next action (max)
@@ -210,6 +227,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             self.optimiser.zero_grad()
             loss = self.loss(Q_s_a, rewards, Q_s_1_a)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.grad_clip_norm)
             self.optimiser.step()
     
     def update_target_network(self,):

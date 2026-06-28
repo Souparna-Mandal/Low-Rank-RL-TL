@@ -62,18 +62,26 @@ def row_rank_property_check(matrix: np.ndarray, matrix_name: str,
     # Stable rank: energy-based (sum sigma_i^2 / sigma_1^2), in [1, min(m,n)].
     stable_rank = float((s_vals**2).sum() / s_vals[0]**2)
 
-    # Restrict to the top-r left-singular subspace; everything below is a property of THAT subspace.
-    U_r = U[:, :rank]
-    leverage = np.linalg.norm(U_r, axis=1)**2       # row leverage scores ||u_i||^2, sum to rank
-    irs = leverage / leverage.sum()                 # normalised leverage (sums to 1): row i's share of the structure
+    # Restrict to the top-r singular subspaces; leverage/coherence are properties of THOSE subspaces.
+    row_leverage = np.linalg.norm(U[:, :rank], axis=1)**2   # ||u_i||^2, sums to rank
+    col_leverage = np.linalg.norm(Vt[:rank], axis=0)**2     # ||v_j||^2, sums to rank
+    irs = row_leverage / row_leverage.sum()                 # row i's share of the structure (sums to 1)
+    ics = col_leverage / col_leverage.sum()                 # col j's share of the structure (sums to 1)
 
-    # Coherence of the rank-r row space: mu in [1, m/rank]. ~1 => structure spread evenly across rows
-    # (delocalised, completion-friendly Koopman modes); >>1 => a few rows/time-indices carry it (spiky).
-    row_coherence = (m/rank) * leverage.max()
+    # Coherence: mu in [1, dim/rank]. ~1 => structure spread evenly across rows/cols >>1 => a few rows/cols carry it.
+    row_coherence = (m/rank) * row_leverage.max()
+    col_coherence = (n/rank) * col_leverage.max()
+
+    # Spikiness: ||M||_inf / (||M||_F / sqrt(mn)), max entry vs rms entry. ~1 => energy spread evenly
+    # across entries, >>1 => a few entries dominate. Magnitude-aware (unlike coherence) so it bounds
+    # entrywise (l_inf) recoverability directly.
+    spikiness = np.abs(matrix).max() / (np.linalg.norm(matrix) / np.sqrt(m*n))
 
     # Sparsity, counting non-zero rows and columns in the matrix
     tol = s_vals[0] * max(m,n) * np.finfo(matrix.dtype).eps
     nnz_rows = np.count_nonzero(np.abs(matrix).sum(axis=1) > tol)
     nnz_cols = np.count_nonzero(np.abs(matrix).sum(axis=0) > tol)
 
-    return rank, stable_rank, (m,n), irs, row_coherence, nnz_cols, nnz_rows
+    return (rank, stable_rank, spikiness, (m,n),
+            irs, ics, row_coherence, col_coherence,
+            nnz_rows, nnz_cols)
