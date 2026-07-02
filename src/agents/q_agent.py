@@ -1,4 +1,5 @@
 from .base_agent import BaseAgent, EpsilonGreedyExplorer
+from utils.device import resolve_device
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
@@ -83,7 +84,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         env: gym.Env,
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
-        device="mps", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
+        device="auto", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
         grad_clip_norm = 10.0, double=False):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
@@ -101,7 +102,9 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             decay_rate (float): _description_
             discount_factor (float): _description_
             base_loss (_type_, optional): _description_. Defaults to nn.HuberLoss.
-            device (str, optional): _description_. Defaults to "mps".
+            device (str, optional): "auto", "cuda", "mps" or "cpu". "auto" and any
+                unavailable choice resolve in priority order cuda > mps > cpu.
+                Defaults to "auto".
             TD_LR (float, optional): _description_. Defaults to 0.1.
             buffer_util (int, optional): _description_. Defaults to 1.
             gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
@@ -112,7 +115,8 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         BaseAgent.__init__(self, env)
         EpsilonGreedyExplorer.__init__(self, eps_start, eps_min, decay_rate)
         self.replay_buffer = ReplayBuffer(replay_buffer_capacity)
-        
+        device = resolve_device(device)
+
         # Preparing the Neural networks for DQN
         self.policy_net = q_network(**nn_extra_kwargs).to(device)
         self.target_net = q_network(**nn_extra_kwargs).to(device)
