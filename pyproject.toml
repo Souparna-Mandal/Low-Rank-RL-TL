@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "torch>=2.2",
-    "gymnasium[atari,classic-control]>=0.29",
+    "gymnasium[atari,classic-control,other]>=0.29",
     "numpy>=1.26",
     "pyyaml>=6.0",
     "matplotlib>=3.8",
@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.17.1",
     "ale-py>=0.12.0",
     "opencv-python>=4.13.0.92",
+    "nbconvert>=7.16",
 ]
 
 [tool.uv]
