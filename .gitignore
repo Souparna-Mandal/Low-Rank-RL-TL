@@ -49,3 +49,5 @@ Thumbs.db
 # AI developed experimental stuff 
 .claude
 claude
+
+results_viewer_app/
