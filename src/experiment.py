@@ -50,8 +50,11 @@ def build_env(cfg: dict, render_mode=None):
     return make_environment(env_name, **env_cfg)
 
 
-def build_agent(cfg: dict, env, q_network, nn_extra_kwargs: dict):
-    return QAgent(
+def build_agent(cfg: dict, env, q_network, nn_extra_kwargs: dict, agent_cls=QAgent):
+    """Build the agent from cfg["agent"]. Pass agent_cls=RainbowDQNAgent (from
+    agents.rainbow_agent) to build the Rainbow benchmark instead of the default
+    QAgent. The config keys under `agent` must match that class's constructor."""
+    return agent_cls(
         **cfg["agent"],
         q_network=q_network,
         nn_extra_kwargs=nn_extra_kwargs,
