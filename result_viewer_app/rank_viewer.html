@@ -209,7 +209,7 @@ const METRICS=[
   ["nnz_rows","Non-zero rows","count of rows with non-negligible energy"],
   ["nnz_cols","Non-zero columns","count of columns with non-negligible energy"],
 ];
-const SUB_RE=/^(.+)-sub(\d{6})$/, ROLL_RE=/^(.+)-rollout(\d+)$/;
+const SUB_RE=/^(.+)-sub(\d{6})(-heatmap)?$/, ROLL_RE=/^(.+)-rollout(\d+)$/;
 
 const fmtN=x=>{if(x==null||!isFinite(x))return "–";
   const a=Math.abs(x);
@@ -470,7 +470,7 @@ function splitFigSlugs(){
   const subs={},main=[];
   for(const slug of Object.keys(STATE.data.figures)){
     const m=SUB_RE.exec(slug);
-    if(m)(subs[m[1]]=subs[m[1]]||[]).push({len:+m[2],slug});
+    if(m)(subs[m[1]]=subs[m[1]]||[]).push({len:+m[2],slug,heat:!!m[3]});
     else main.push(slug);
   }
   for(const b in subs)subs[b].sort((a,c)=>a.len-c.len);
@@ -718,23 +718,29 @@ function subSpectraSection(subs,ep){
       el("small",{text:`   ${STATE.tauIdx+1} / ${taus.length}`}));
     host.innerHTML="";
     const wrap=el("div",{class:"figs"});
-    for(const b of bases){
-      const entry=subs[b].find(s=>s.len===L&&STATE.data.figures[s.slug].episodes.includes(ep));
-      const name=pretty(b);
-      const panel=el("div",{class:"fig"});
-      const cap=el("div",{class:"cap"});
+    const panel=(name,cap,entry,noneText)=>{
+      const p=el("div",{class:"fig"});
+      const head=el("div",{class:"cap"});
       const dot=el("span",{class:"dot"}); dot.style.background=cssv(STATE.colors[name]||"--accent");
-      cap.append(dot,el("span",{text:`${name} · 0→${L}`}));
-      panel.append(cap);
+      head.append(dot,el("span",{text:cap}));
+      p.append(head);
       if(entry){
-        const img=el("img",{loading:"lazy",alt:`${name} spectrum at τ=${L}`,
+        const img=el("img",{loading:"lazy",alt:cap,
           src:`/fig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(`ep${pad6(ep)}_${entry.slug}.png`)}`});
-        panel.append(img);
-        makeZoomable(panel,img,`${name} · 0→${L} · episode ${ep.toLocaleString()}`);
+        p.append(img);
+        makeZoomable(p,img,`${cap} · episode ${ep.toLocaleString()}`);
       }else{
-        panel.append(el("div",{class:"none",text:"no figure at this τ"}));
+        p.append(el("div",{class:"none",text:noneText}));
       }
-      wrap.append(panel);
+      return p;
+    };
+    for(const b of bases){
+      const name=pretty(b);
+      const at=heat=>subs[b].find(s=>s.len===L&&!!s.heat===heat
+        &&STATE.data.figures[s.slug].episodes.includes(ep));
+      wrap.append(panel(name,`${name} · 0→${L}`,at(false),"no figure at this τ"));
+      if(subs[b].some(s=>s.heat))
+        wrap.append(panel(name,`${name} · heatmap · 0→${L}`,at(true),"no heatmap at this τ"));
     }
     host.append(wrap);
   }

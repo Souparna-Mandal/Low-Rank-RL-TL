@@ -267,6 +267,13 @@ So this benchmark unlocks a real Hankel-A signal for the low-rank study.
   mixin is initialised inert (`ε ≡ 0`) purely so the shared loop's `decay_epsilon()`
   call and DEBUG `agent.epsilon` read keep working. Tune exploration via
   `noisy_sigma0`, not an ε schedule.
+- **Scale unclipped Atari rewards.** Canonical Rainbow clips Atari scores to [-1, 1];
+  raw scores (Seaquest: 20..1000+) make the PER priorities heavy-tailed and crush the
+  max-normalised IS weights, silently shrinking the effective learning rate. The fix
+  is environment-level, not an agent knob: set `reward: {scale: 0.01}` in the config's
+  `environment` block ([`ScaleReward`](../environments/wrappers/reward_wrappers.py)).
+  The wrapper keeps the raw score in `info["raw_reward"]`, which the training loop
+  logs — so reward curves and `solved_reward` stay in raw game units.
 - **Target updates are soft, not hard.** We reuse `QAgent.update_target_network`
   (a Polyak step controlled by `TD_LR`), matching the rest of the codebase rather
   than the hard periodic copy in the original Rainbow paper.

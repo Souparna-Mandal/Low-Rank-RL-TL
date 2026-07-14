@@ -76,10 +76,10 @@ def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
     )
 
 
-def make_run_logger(cfg: dict):
+def make_run_logger(cfg: dict, config_path: str = "config.yaml"):
     """A RunLogger under runs/<timestamp>/ when experiment.save_artifacts is set,
-    else None (analysis renders inline). Imported lazily"""
+    else None (analysis renders inline). Imported lazily. Pass config_path"""
     from analysis.run_logger import RunLogger
     if cfg["experiment"].get("save_artifacts", True):
-        return RunLogger(pathlib.Path.cwd(), config_path="config.yaml")
+        return RunLogger(pathlib.Path.cwd(), config_path=config_path)
     return None

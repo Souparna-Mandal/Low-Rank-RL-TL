@@ -40,28 +40,28 @@ network:
   fc_hidden: 512
 
 agent:
-  replay_buffer_capacity: 500000
+  replay_buffer_capacity: 250000
   batch_size: 128
   nn_learning_rate: 0.0001
   eps_start: 1.0
   eps_min: 0.01
   # Decay tuned so eps ~ 0.01 after ~250k env steps: 0.01 ** (1/250000) ~ 0.999982
-  decay_rate: 0.999912
-  discount_factor: 0.99
-  TD_LR: 0.005
+  decay_rate: 0.999998
+  discount_factor: 0.98
+  TD_LR: 0.33
   buffer_util: 4
-  gd_steps_ceil: 40
-  grad_clip_norm: 10.0
+  gd_steps_ceil: 100
+  grad_clip_norm: 20.0
   double: True
 
 training:
   no_episodes: 15000
-  target_network_update_steps: 100
-  train_frequency_steps: 100
+  target_network_update_steps: 150
+  train_frequency_steps: 150
   use_episode_training: false
   # DQN typically reaches 1000-2500 on Ms. Pac-Man; set high to disable early stop.
   solved_reward: 2000
-  warmup_steps: 50000
+  warmup_steps: 100000
   early_stopping_patience_eps: 50
   no_eps_to_avg: 10
 
