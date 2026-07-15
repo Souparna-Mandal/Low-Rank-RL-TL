@@ -1,0 +1,96 @@
+experiment:
+  name: dqn_cartpole_rainbow
+  seed: 52
+  device: cuda
+  save_artifacts: true
+
+environment:
+  # Identical to the DQN CartPole baseline (config.yaml) so the two runs are
+  # measured on exactly the same observations.
+  name: CartPole-v1
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state:
+      min: [-4.8, -10, -0.41887903, -10]
+      max: [4.8, 10, 0.41887903, 10]
+  clip:
+    action: false
+    state:
+      min: [null, -100, null, -100]
+      max: [null, 100, null, 100]
+
+network:
+  # Encoder only — the MLP trunk defined in exp1_rainbow.ipynb. The dueling +
+  # noisy + IQN head lives inside RainbowDQNAgent (width = agent.head_hidden);
+  # the agent infers feature_dim and n_actions itself.
+  hidden_sizes: [128, 128]
+
+agent:
+  # Baseline values kept where they still apply. eps_start / eps_min /
+  # decay_rate are gone — exploration is noisy-nets only (noisy_sigma0).
+  replay_buffer_capacity: 100000
+  batch_size: 128
+  nn_learning_rate: 0.0005
+  discount_factor: 0.99
+
+  # --- multi-step returns ---
+  n_step: 3
+
+  # --- distributional head (IQN) ---
+  n_quantiles: 32
+  n_quantiles_target: 32
+  n_quantiles_act: 32
+  n_cos: 64
+  head_hidden: 128       # matches the baseline hidden width
+  huber_kappa: 1.0
+
+  # --- dueling + noisy + double ---
+  dueling: true
+  noisy_sigma0: 0.5
+  double: true
+
+  # --- prioritised experience replay ---
+  per_alpha: 0.5
+  per_beta_start: 0.4
+  # ~60k gradient steps (1500 eps x gd_steps_ceil) to anneal beta to 1.0.
+  per_beta_increment: 0.00001
+  per_eps: 0.00001
+
+  # --- optimisation / target updates (baseline values) ---
+  TD_LR: 0.3
+  buffer_util: 1
+  gd_steps_ceil: 40
+  grad_clip_norm: 10.0
+
+training:
+  # Identical schedule to the DQN baseline so the comparison is apples-to-apples.
+  no_episodes: 1500
+  target_network_update_steps: 100
+  train_frequency_steps: 50
+  use_episode_training: true
+  solved_reward: 475
+  warmup_steps: 1500
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  ep_freq: 50
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 10
+    base_seed: 52
+    functions: [Hankel Q, Hankel V, Hankel A]   # dueling head => real V/A streams
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
