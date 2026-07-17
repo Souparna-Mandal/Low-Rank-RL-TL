@@ -30,6 +30,11 @@ def _discrete_state_gen(env, state_discretisation, batch_size):
     # We need to return all possible cartesian product in batches
     return batched(product(*state_space), n=batch_size)
 
+def q_matrix_tabular(agent, env: gym.Env = None):
+    """The tabular agent's own (n_states, n_actions) Q table — no probing needed.
+    `env` is unused; accepted because the analysis dispatch injects agent/env."""
+    return np.array(agent.Q, dtype=float)
+
 def q_matrix_dqn (agent: QAgent, state_discretisation: list , env: gym.Env, batch_size: int = 64):
     """
     """
