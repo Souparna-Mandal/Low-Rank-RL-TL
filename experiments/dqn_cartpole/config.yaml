@@ -1,7 +1,7 @@
 experiment:
   name: dqn_cartpole
   seed: 52
-  device: cuda
+  device: auto
   # Save run artifacts (spectra figures, rewards/rank/hankel_sweep CSVs, trajectories,
   # checkpoints) under runs/<timestamp>/ instead of rendering analysis figures inline.
   save_artifacts: true

@@ -9,6 +9,9 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       no_episodes: int, target_network_update_steps: int,
                       train_frequency_steps: int, use_episode_training: bool, solved_reward: int,
                       warmup_steps: int = 0, early_stopping_patience_eps: int = 50,
+                      no_episodes: int, target_network_update_steps: int,
+                      train_frequency_steps: int, use_episode_training: bool, solved_reward: int,
+                      warmup_steps: int = 0, early_stopping_patience_eps: int = 50,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict = {},
                       DEBUG=False, atari= False, run_logger=None):
@@ -91,6 +94,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                 run_logger.checkpoint(agent, "best")
         
         # print more detailed training status 
+        # print more detailed training status 
         if DEBUG:
             print("**************************** DEBUG INFO START **********************************")
             print(f"Episode {episode} is complete with reward {epsiode_total_reward}")
@@ -147,5 +151,3 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         run_logger.checkpoint(agent, "final")
         print(f"run artifacts saved under {run_logger.dir}")
     return episode_rewards_training
-
-
