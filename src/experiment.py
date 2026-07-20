@@ -13,15 +13,7 @@ import yaml
 from environments.base_env import make_environment
 from agents.q_agent import QAgent
 from training import dqn_training_loop
-
-
-def _resolve_device(name: str) -> str:
-    """Map a config device request to an available torch device."""
-    if name == "cuda":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if name == "mps":
-        return "mps" if torch.backends.mps.is_available() else "cpu"
-    return name
+from utils.device import resolve_device
 
 
 def load_config(path="config.yaml") -> dict:
@@ -29,7 +21,7 @@ def load_config(path="config.yaml") -> dict:
     device is stashed at cfg["experiment"]["_device"] for the builders to read."""
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    cfg["experiment"]["_device"] = _resolve_device(cfg["experiment"]["device"])
+    cfg["experiment"]["_device"] = resolve_device(cfg["experiment"]["device"])
     seed = cfg["experiment"]["seed"]
     torch.manual_seed(seed)
     np.random.seed(seed)
