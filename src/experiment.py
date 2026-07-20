@@ -1,11 +1,8 @@
-"""Thin config-driven builders so an experiment notebook is just wiring: change
-config.yaml and it flows through here without editing the notebook.
-
-Each builder passes a whole config section straight through with `**cfg[section]`,
-so the config keys ARE the function parameters — adding a hyperparameter under
+""" Each builder passes a whole config section straight through with `**cfg[section]` in the jupyter notebooks where experiments are run.
+So the config keys are the function parameters — adding a hyperparameter under
 `environment`/`agent`/`training` needs no notebook change. The only things the
-notebook still supplies are genuine code objects (the Q-network class and its
-derived nn_extra_kwargs), not config keys.
+notebook still supplies are objects like the Q-network class and its
+derived nn_extra_kwargs.
 """
 import pathlib
 
