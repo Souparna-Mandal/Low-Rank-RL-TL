@@ -2,6 +2,9 @@ experiment:
   name: dqn_enduro
   seed: 52
   device: auto
+  # Save run artifacts (spectra figures, rewards/rank CSVs, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
 
 environment:
   # ALE/Enduro-v5 is the canonical Gymnasium id (v0.28+).
@@ -11,7 +14,7 @@ environment:
   render_mode: null
   discrete_config: null
   # When `atari` is set, the Atari preprocessing branch in make_environment
-  # takes over and the clip / normalise blocks are skipped — keep them empty.
+  # takes over and the preprocessing blocks for clip / normalise are skipped
   normalise:
     action: {}
     state: {}
@@ -45,10 +48,9 @@ network:
 agent:
   # Atari replay buffers are memory-heavy: each (4,84,84) float32 transition
   # takes ~225 kB (state + next_state). 20k transitions ~ 4.5 GB on-device.
-  # Bump to 100k+ on a workstation; the Nature paper used 1M.
   replay_buffer_capacity: 100000
   batch_size: 32
-  nn_learning_rate: 0.0001          # Adam LR commonly used with Nature CNN
+  nn_learning_rate: 0.0001          # Adam LR commonly used
   eps_start: 1.0
   eps_min: 0.01
   # Multiplicative decay tuned so eps ~ 0.01 after ~250k env steps:
@@ -59,6 +61,7 @@ agent:
   buffer_util: 4                    # grad steps/ep ~ len(buffer) / (4 * batch)
   gd_steps_ceil: 10                 # hard cap on gradient steps per training call
   grad_clip_norm: 10.0              # max global L2 norm for gradient clipping per step
+  double: true                      # Double DQN target estimation
 
 training:
   no_episodes: 2000
@@ -72,10 +75,20 @@ training:
 
 analysis:
   ep_freq: 100
-  # q_matrix_dqn discretises observation dims -> meaningless for pixel inputs,
-  # so only hankel_rollout is enabled here (operates on the scalar Q-trace).
-  methods:
-    - name: hankel_rollout
-      kwargs:
-        seed: 52
-      outputs: [Hankel Q, Hankel V]
+  # q_matrix_dqn discretises observation dims -> meaningless for pixel inputs, so
+  # no generic per-matrix methods here. Hankel runs via hankel_sweep below.
+  methods: []
+  # Single-rollout, whole-episode Hankel — the old behaviour, now via the unified
+  # sweep path. Flip sub_trajectory.enabled / raise n_rollouts to opt into the
+  # richer multi-rollout + growing sub-trajectory analysis (see dqn_seaquest).
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5

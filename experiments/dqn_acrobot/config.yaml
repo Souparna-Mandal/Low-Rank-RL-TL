@@ -2,6 +2,9 @@ experiment:
   name: dqn_acrobot
   seed: 52
   device: auto
+  # Save run artifacts (spectra figures, rewards/rank/hankel_sweep CSVs, trajectories,
+  # checkpoints) under runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
 
 environment:
   name: Acrobot-v1
@@ -36,21 +39,37 @@ agent:
 training:
   no_episodes: 500
   target_network_update_steps: 2
-  train_frequency_steps: 2 
+  train_frequency_steps: 2
+  # Full set consumed by dqn_training_loop (Acrobot values mirror dqn_acrobot_2_revised).
+  use_episode_training: false
+  solved_reward: -80
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
 
 analysis:
   ep_freq: 50
-  # Each entry: `name` resolves to a callable in the notebook's ANALYSIS_METHODS
-  # registry; `kwargs` are the config-supplied args (agent/env are injected at
-  # call time by the training loop, so they are never listed here).
+  # Each entry: `name` resolves to a callable in analysis/registry.py; `kwargs`
+  # are the config-supplied args (agent/env are injected at call time by the
+  # training loop, so they are never listed here).
   methods:
-    - name: hankel_rollout
-      kwargs:
-        seed: 52
-      outputs: [Hankel Q, Hankel V]
     - name: q_matrix_dqn
       kwargs:
         state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
         batch_size: 64
       outputs: [Q-function]
+  # Single-rollout, whole-episode Hankel — the old behaviour, now via the unified
+  # sweep path. Flip sub_trajectory.enabled / raise n_rollouts for the richer
+  # multi-rollout + growing sub-trajectory analysis (see dqn_seaquest).
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5
 

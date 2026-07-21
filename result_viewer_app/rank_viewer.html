@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Low-rank evolution viewer</title>
+<style>
+:root{
+  --plane:#f9f9f7; --surface:#fcfcfb; --surface-2:#f4f3f0;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --accent:#2a78d6;
+  --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s4:#008300; --s5:#4a3aa7;
+  --s6:#e34948; --s7:#e87ba4; --s8:#eb6834;
+  --seq-early:199,219,241; --seq-late:19,63,119;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --plane:#0d0d0d; --surface:#1a1a19; --surface-2:#242422;
+    --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --accent:#3987e5;
+    --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300; --s5:#9085e9;
+    --s6:#e66767; --s7:#d55181; --s8:#d95926;
+    --seq-early:56,74,101; --seq-late:169,205,247;
+  }
+}
+:root[data-theme="light"]{
+  --plane:#f9f9f7; --surface:#fcfcfb; --surface-2:#f4f3f0;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --accent:#2a78d6;
+  --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s4:#008300; --s5:#4a3aa7;
+  --s6:#e34948; --s7:#e87ba4; --s8:#eb6834;
+  --seq-early:199,219,241; --seq-late:19,63,119;
+}
+:root[data-theme="dark"]{
+  --plane:#0d0d0d; --surface:#1a1a19; --surface-2:#242422;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --accent:#3987e5;
+  --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300; --s5:#9085e9;
+  --s6:#e66767; --s7:#d55181; --s8:#d95926;
+  --seq-early:56,74,101; --seq-late:169,205,247;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--plane); color:var(--ink);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 22px 80px}
+header.top{position:sticky;top:0;z-index:30;display:flex;align-items:flex-end;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;margin:0 -22px 20px;padding:16px 22px;
+  background:color-mix(in srgb,var(--plane) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+@supports not (background:color-mix(in srgb,red,blue)){header.top{background:var(--plane)}}
+h1{font-size:21px;font-weight:640;margin:0;letter-spacing:-.01em}
+.sub{color:var(--ink-2);font-size:13px;margin-top:3px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select,button,.btn{
+  font:inherit;color:var(--ink);background:var(--surface);
+  border:1px solid var(--border);border-radius:8px;padding:7px 11px;cursor:pointer;
+}
+select{padding-right:26px}
+button:hover,.btn:hover,select:hover{border-color:var(--axis)}
+button:disabled{opacity:.4;cursor:default}
+.live{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);
+  border-radius:8px;padding:7px 11px;cursor:pointer;user-select:none;color:var(--ink-2);font-size:13px}
+.live input{position:absolute;opacity:0;pointer-events:none}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.live.on .dot{background:#0ca30c;animation:pulse 1.8s ease-in-out infinite}
+.live.stale .dot{background:#fab219;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live.on .dot{animation:none}}
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:18px 18px 14px;margin-bottom:18px;
+}
+.card h2{font-size:14px;font-weight:620;margin:0 0 2px;letter-spacing:.01em}
+.card .desc{color:var(--muted);font-size:12px;margin:0 0 14px}
+.card .headrow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.tile .lab{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.tile .val{font-size:26px;font-weight:640;margin-top:4px;letter-spacing:-.02em}
+.tile .val.hero{font-size:40px}
+.tile .foot{color:var(--ink-2);font-size:12px;margin-top:2px}
+.legend{display:flex;gap:6px 16px;flex-wrap:wrap;margin-bottom:6px}
+.legend .item{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
+  color:var(--ink-2);font-size:12.5px;padding:2px 2px;border-radius:6px}
+.legend .item.off{opacity:.38}
+.legend .item.fixed{cursor:default}
+.legend .key{width:16px;height:0;border-top:2px solid currentColor;border-radius:2px;flex:none}
+.legend .key.dashed{border-top-style:dashed}
+.seqleg{display:inline-flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12px;flex-wrap:wrap}
+.seqleg .bar{width:110px;height:8px;border-radius:4px;
+  background:linear-gradient(90deg,rgb(var(--seq-early)),rgb(var(--seq-late)))}
+/* scrubber */
+.scrub-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.scrub-bar input[type=range]{flex:1;min-width:200px;accent-color:var(--accent);height:22px}
+.epch{font-variant-numeric:tabular-nums;font-weight:620;font-size:15px;min-width:150px}
+.epch small{color:var(--muted);font-weight:400}
+.iconbtn{padding:7px 12px;min-width:40px}
+.figs{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.fig{position:relative;border:1px solid var(--border);border-radius:10px;overflow:hidden;
+  background:var(--surface-2);transition:border-color .15s,box-shadow .15s}
+.fig:hover{border-color:var(--axis);box-shadow:0 4px 18px rgba(0,0,0,.10)}
+.fig .cap{padding:7px 11px;font-size:12.5px;font-weight:560;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px}
+.fig .cap .dot{width:9px;height:9px;border-radius:50%;flex:none;box-shadow:0 0 0 2px var(--surface)}
+.fig img{display:block;width:100%;height:auto;background:#fff;transition:opacity .15s}
+.fig:hover img{opacity:.93}
+.fig .none{padding:34px 12px;text-align:center;color:var(--muted);font-size:12px}
+.fig .zoombadge{position:absolute;right:8px;bottom:8px;width:26px;height:26px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1;pointer-events:none;
+  background:rgba(20,20,20,.62);color:#fff;opacity:0;transition:opacity .15s;backdrop-filter:blur(2px)}
+.fig:hover .zoombadge{opacity:1}
+/* lightbox */
+.lightbox{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  padding:34px;background:rgba(8,8,8,.84);backdrop-filter:blur(4px);cursor:zoom-out}
+.lightbox.show{display:flex}
+.lb-inner{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:96vw;max-height:92vh}
+.lb-img{max-width:96vw;max-height:84vh;border-radius:12px;background:#fff;cursor:default;
+  box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.lb-cap{color:#f2f2f0;font-size:13px;font-weight:560;text-align:center;font-variant-numeric:tabular-nums}
+.lb-close{position:fixed;top:18px;right:22px;width:40px;height:40px;font-size:22px;line-height:1;
+  border-radius:10px;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2)}
+.lb-close:hover{background:rgba(255,255,255,.22)}
+.subsec{border-top:1px dashed var(--border);margin-top:16px;padding-top:14px}
+.subsec h3{font-size:13px;font-weight:620;margin:0 0 2px}
+/* charts */
+.grid-charts{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.chart{position:relative}
+.chart .ct{font-size:12.5px;font-weight:600;margin:0 0 1px;display:flex;align-items:center;gap:7px}
+.chart .ct .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.chart .ch{color:var(--muted);font-size:11px;margin:0 0 6px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--border);
+  border-radius:9px;padding:8px 10px;font-size:12px;box-shadow:0 6px 22px rgba(0,0,0,.18);
+  opacity:0;transition:opacity .08s;z-index:5;min-width:130px}
+.tip .tep{color:var(--muted);font-size:11px;margin-bottom:5px;font-variant-numeric:tabular-nums}
+.tip .row{display:flex;align-items:center;gap:8px;margin:2px 0}
+.tip .row .k{width:14px;height:0;border-top:2px solid currentColor;border-radius:2px;flex:none}
+.tip .row .nm{color:var(--ink-2);flex:1}
+.tip .row .v{font-weight:640;font-variant-numeric:tabular-nums;color:var(--ink)}
+.axis-txt{fill:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
+.axis-lab{fill:var(--muted);font-size:10.5px}
+.end-lab{fill:var(--ink-2);font-size:10.5px;font-weight:560}
+details.cfg{margin-top:4px}
+details.cfg summary{cursor:pointer;color:var(--ink-2);font-size:13px;font-weight:560}
+details.cfg pre{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+  padding:14px;overflow:auto;font-size:12px;line-height:1.5;margin-top:10px}
+details.tbl{margin-top:10px}
+details.tbl summary{cursor:pointer;color:var(--ink-2);font-size:12.5px;font-weight:560}
+details.tbl .tblwrap{overflow-x:auto;margin-top:10px}
+details.tbl table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;min-width:340px}
+details.tbl th,details.tbl td{border:1px solid var(--grid);padding:4px 9px;text-align:right}
+details.tbl th{background:var(--surface-2);color:var(--ink-2);font-weight:600}
+details.tbl td:first-child,details.tbl th:first-child{text-align:left}
+.empty{color:var(--muted);text-align:center;padding:60px 20px}
+.muted-note{color:var(--muted);font-size:12px}
+.pill-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill-row label{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Low-rank evolution</h1>
+      <div class="sub">RunLogger spectra, Hankel sweep &amp; rank metrics over training</div>
+    </div>
+    <div class="controls">
+      <select id="runsel" aria-label="Run"></select>
+      <label class="live" id="livewrap" title="Auto-refresh while a run is still training">
+        <input type="checkbox" id="livechk" checked>
+        <span class="dot"></span><span id="livestat">Live</span>
+      </label>
+      <button id="refreshbtn" title="Refresh now">⟳</button>
+      <button id="themebtn" title="Toggle light / dark">◐</button>
+    </div>
+  </header>
+
+  <div id="app"></div>
+</div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const el=(t,a={},...kids)=>{const n=document.createElement(t);
+  for(const k in a){if(k==="class")n.className=a[k];else if(k==="text")n.textContent=a[k];
+    else n.setAttribute(k,a[k]);}
+  for(const c of kids)if(c!=null)n.append(c);return n;};
+const SLOTS=["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// curated numeric metrics shared by rank_stats.csv and hankel_sweep.csv
+const METRICS=[
+  ["eff_rank","Effective rank","singular values needed to capture 90% of the Frobenius energy — lower = more low-rank"],
+  ["stable_rank","Stable rank","‖M‖_F² / ‖M‖_2² — how many singular values carry the energy"],
+  ["spikiness","Spikiness","max entry vs RMS entry — a few dominant entries vs spread energy"],
+  ["row_coherence","Row coherence","alignment of the top-r row space with the standard basis — ~1 spread, ≫1 concentrated"],
+  ["col_coherence","Column coherence","alignment of the top-r column space with the standard basis"],
+  ["row_lev_max","Peak row score (irs)","largest individual row score — the single row carrying most of the top-r structure"],
+  ["col_lev_max","Peak col score (ics)","largest individual column score — the single column carrying most of the top-r structure"],
+  ["nnz_rows","Non-zero rows","count of rows with non-negligible energy"],
+  ["nnz_cols","Non-zero columns","count of columns with non-negligible energy"],
+];
+const SUB_RE=/^(.+)-sub(\d{6})$/, ROLL_RE=/^(.+)-rollout(\d+)$/;
+
+const fmtN=x=>{if(x==null||!isFinite(x))return "–";
+  const a=Math.abs(x);
+  if(a>=1000)return x.toLocaleString(undefined,{maximumFractionDigits:0});
+  if(a>=100)return x.toFixed(0);
+  if(a>=1)return x.toFixed(2);
+  return x.toPrecision(2);};
+const pretty=slug=>slug.split("-").map(w=>w.length<=2?w.toUpperCase():w[0].toUpperCase()+w.slice(1)).join(" ");
+const pad6=n=>String(n).padStart(6,"0");
+const mean=vs=>vs.reduce((a,b)=>a+b,0)/vs.length;
+// loop-based min/max — Math.min(...arr) overflows the call stack on the
+// 100k+-element arrays a long run produces (each element becomes an argument)
+const arrMin=(a,f)=>{let m=Infinity;for(const v of a){const x=f?f(v):v;if(x<m)m=x;}return m;};
+const arrMax=(a,f)=>{let m=-Infinity;for(const v of a){const x=f?f(v):v;if(x>m)m=x;}return m;};
+
+// sequential ramp (single hue): early = light/recessive, late = dark/prominent
+function seqColor(t){
+  const lo=cssv("--seq-early").split(",").map(Number);
+  const hi=cssv("--seq-late").split(",").map(Number);
+  const c=lo.map((a,i)=>Math.round(a+(hi[i]-a)*t));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+// ---- theme toggle ----
+(function(){
+  const saved=localStorage.getItem("rv-theme");
+  if(saved)document.documentElement.dataset.theme=saved;
+  $("#themebtn").onclick=()=>{
+    const cur=document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light");
+    const next=cur==="dark"?"light":"dark";
+    document.documentElement.dataset.theme=next;
+    localStorage.setItem("rv-theme",next);
+    if(STATE.data)rerender();
+  };
+})();
+
+const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
+  ep:null,tauIdx:null,playing:null,live:true,followLast:false,dragging:false,
+  sig:null,pending:null,metric:"eff_rank",sweepRows:null,trajEp:undefined,trajCache:{},
+  persistEp:null};
+
+function computeSig(d){
+  if(!d)return "";
+  if(d.sig)return d.sig;   // server-provided change signature
+  let nfig=0,lastEp=0;     // fallback for older backends without one
+  for(const k in d.figures){const e=d.figures[k].episodes;nfig+=e.length;
+    if(e.length)lastEp=Math.max(lastEp,e[e.length-1]);}
+  return [d.stats?d.stats.rows.length:0,d.sweep?d.sweep.rows.length:0,
+          d.rewards?d.rewards.length:0,(d.trajectories||[]).length,nfig,lastEp,
+          Object.keys(d.figures).length].join("|");
+}
+function baseOfSlug(slug){
+  const m=ROLL_RE.exec(slug); if(m)return m[1];
+  const s=SUB_RE.exec(slug); if(s)return s[1];
+  return slug;
+}
+function assignColors(data){
+  const names=new Set();
+  for(const table of [data.stats,data.sweep]){
+    if(!table)continue;
+    const mi=table.columns.indexOf("matrix");
+    if(mi>=0)for(const row of table.rows)names.add(row[mi]);
+  }
+  for(const slug in data.figures)names.add(pretty(baseOfSlug(slug)));
+  STATE.colors={};[...names].sort().forEach((n,i)=>STATE.colors[n]=SLOTS[i%SLOTS.length]);
+}
+function parseSweep(d){
+  const s=d.sweep; if(!s)return null;
+  const c=k=>s.columns.indexOf(k);
+  const ie=c("episode"),im=c("matrix"),ir=c("rollout"),isd=c("seed"),il=c("sub_len");
+  if(ie<0||im<0||il<0)return null;
+  const midx=METRICS.map(([k])=>[k,c(k)]);
+  const rows=[];
+  for(const r of s.rows){
+    const o={ep:+r[ie],m:r[im],ro:ir<0?0:+r[ir],seed:isd<0?null:+r[isd],len:+r[il]};
+    if(!isFinite(o.ep)||!isFinite(o.len))continue;
+    for(const [k,j] of midx)o[k]=j<0?NaN:parseFloat(r[j]);
+    rows.push(o);
+  }
+  return rows.length?rows:null;
+}
+function updateRunOptions(runs){
+  STATE.runs=runs; STATE.runsKey=runs.map(r=>r.exp+"/"+r.run).join(",");
+  const sel=$("#runsel"), cur=sel.value;
+  sel.disabled=!runs.length; sel.innerHTML="";
+  if(!runs.length){sel.append(el("option",{text:"(no runs)"}));return;}
+  for(const r of runs){
+    const o=el("option",{value:r.exp+" "+r.run});
+    o.textContent=r.exp+"  ·  "+r.run;
+    sel.append(o);
+  }
+  if([...sel.options].some(o=>o.value===cur))sel.value=cur;
+}
+async function tick(force){
+  if(!STATE.live&&!force)return;
+  try{
+    const runs=await (await fetch("/api/runs")).json();
+    if(runs.map(r=>r.exp+"/"+r.run).join(",")!==STATE.runsKey)updateRunOptions(runs);
+    if(!STATE.cur){if(runs.length)await loadRun(runs[0].exp,runs[0].run);setLiveUI(true);return;}
+    const {exp,run}=STATE.cur;
+    // Cheap change probe first — the full payload is tens of MB on long runs,
+    // so only re-download it when the run's artifacts actually changed.
+    const sigResp=await fetch(`/api/sig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
+    if(sigResp.ok){
+      const {sig}=await sigResp.json();
+      if(sig===STATE.sig){setLiveUI(true);setUpdated();return;}
+    }
+    const data=await (await fetch(`/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`)).json();
+    const sig=computeSig(data);
+    if(sig!==STATE.sig){
+      if(STATE.dragging||STATE.playing)STATE.pending=data;
+      else applyData(data);
+    }
+    setLiveUI(true);
+  }catch(e){setLiveUI(false);}
+}
+function applyData(data){
+  STATE.data=data; STATE.sig=computeSig(data);
+  STATE.sweepRows=parseSweep(data);
+  assignColors(data);
+  rerender();
+  setUpdated();
+}
+function rerender(){const y=window.scrollY; render(); window.scrollTo(0,y);}
+function setLiveUI(ok){
+  const w=$("#livewrap");
+  w.classList.toggle("on",STATE.live&&ok!==false);
+  w.classList.toggle("stale",STATE.live&&ok===false);
+  $("#livestat").textContent=STATE.live?(ok===false?"Reconnecting":"Live"):"Paused";
+}
+function setUpdated(){
+  if(STATE.live)$("#livestat").textContent="Live  "+new Date().toLocaleTimeString();
+}
+
+async function boot(){
+  $("#runsel").onchange=e=>loadRun(...e.target.value.split(" "));
+  $("#refreshbtn").onclick=()=>tick(true);
+  $("#livechk").onchange=e=>{STATE.live=e.target.checked;setLiveUI();if(STATE.live)tick(true);};
+  setLiveUI();
+  const runs=await (await fetch("/api/runs")).json();
+  updateRunOptions(runs);
+  if(!runs.length){
+    $("#app").innerHTML="";
+    $("#app").append(el("div",{class:"empty"},
+      "No runs found yet. Point the server at a directory containing ",
+      el("code",{},"<exp>/runs/<run_id>/"),
+      " trees with ", el("code",{},"--root"),
+      ". This view auto-refreshes, so a run appears here once it starts logging."));
+    setInterval(tick,4000);
+    return;
+  }
+  await loadRun(runs[0].exp,runs[0].run);
+  setInterval(tick,4000);
+}
+
+async function loadRun(exp,run){
+  STATE.cur={exp,run};
+  STATE.hidden=new Set(); STATE.ep=null; STATE.tauIdx=null; STATE.followLast=false;
+  STATE.pending=null; STATE.trajEp=undefined; STATE.trajCache={}; STATE.persistEp=null;
+  stopPlay();
+  $("#app").innerHTML='<div class="empty">Loading... (long runs can be a few MB over a tunnel)</div>';
+  try{
+    const resp=await fetch(`/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
+    if(!resp.ok)throw new Error(`server returned ${resp.status}`);
+    const data=await resp.json();
+    STATE.data=data; STATE.sig=computeSig(data);
+    STATE.sweepRows=parseSweep(data);
+    assignColors(data);
+    render();
+    setUpdated();
+  }catch(e){
+    const app=$("#app"); app.innerHTML="";
+    const retry=el("button",{text:"Retry"});
+    retry.onclick=()=>loadRun(exp,run);
+    app.append(el("div",{class:"empty"},
+      el("div",{text:`Failed to load ${exp}/${run}: ${e.message||e}`}),
+      el("div",{style:"margin-top:12px"},retry)));
+    setLiveUI(false);
+  }
+}
+
+// ---- data helpers ----
+function statSeries(colKey){
+  const d=STATE.data.stats; if(!d)return [];
+  const ci=d.columns.indexOf(colKey), mi=d.columns.indexOf("matrix"), ei=d.columns.indexOf("episode");
+  if(ci<0)return [];
+  const by={};
+  for(const row of d.rows){
+    const m=row[mi]; const x=+row[ei]; const y=parseFloat(row[ci]);
+    if(!isFinite(y))continue;
+    (by[m]=by[m]||[]).push([x,y]);
+  }
+  return Object.keys(by).sort().map(m=>({name:m,color:STATE.colors[m],
+    pts:by[m].sort((a,b)=>a[0]-b[0])}));
+}
+// full-rollout rows: for each (ep, matrix, rollout) the longest sub_len is the whole episode
+function sweepFullRows(){
+  const rows=STATE.sweepRows; if(!rows)return [];
+  const maxLen={};
+  for(const r of rows){const k=r.ep+"|"+r.m+"|"+r.ro;
+    if(!(k in maxLen)||r.len>maxLen[k])maxLen[k]=r.len;}
+  return rows.filter(r=>r.len===maxLen[r.ep+"|"+r.m+"|"+r.ro]);
+}
+// evolution: per matrix, mean across rollouts at full length + min–max band
+function sweepEvolution(metric){
+  const acc={};
+  for(const r of sweepFullRows()){
+    const v=r[metric]; if(!isFinite(v))continue;
+    ((acc[r.m]=acc[r.m]||{})[r.ep]=acc[r.m][r.ep]||[]).push(v);
+  }
+  return Object.keys(acc).sort().map(m=>{
+    const eps=Object.keys(acc[m]).map(Number).sort((a,b)=>a-b);
+    const pts=[],band=[];
+    for(const e of eps){const vs=acc[m][e];
+      pts.push([e,mean(vs)]);band.push([e,Math.min(...vs),Math.max(...vs)]);}
+    return {name:m,color:STATE.colors[m],pts,band};
+  });
+}
+// persistence profiles: matrix -> episode -> [[sub_len, mean across rollouts],...]
+function sweepProfiles(metric){
+  const acc={};
+  for(const r of STATE.sweepRows||[]){
+    const v=r[metric]; if(!isFinite(v))continue;
+    const a=(acc[r.m]=acc[r.m]||{}), b=(a[r.ep]=a[r.ep]||{});
+    (b[r.len]=b[r.len]||[]).push(v);
+  }
+  const out={};
+  for(const m in acc){out[m]={};
+    for(const e in acc[m]){
+      out[m][+e]=Object.keys(acc[m][e]).map(Number).sort((x,y)=>x-y)
+        .map(L=>[L,mean(acc[m][e][L])]);
+    }}
+  return out;
+}
+// metric-vs-τ profile for a single episode: one series per matrix, line = mean
+// across rollouts at each τ, band = min–max spread across rollouts
+function persistSeriesAt(metric,ep){
+  const acc={};
+  for(const r of STATE.sweepRows||[]){
+    if(r.ep!==ep)continue;
+    const v=r[metric]; if(!isFinite(v))continue;
+    ((acc[r.m]=acc[r.m]||{})[r.len]=acc[r.m][r.len]||[]).push(v);
+  }
+  return Object.keys(acc).sort().map(m=>{
+    const lens=Object.keys(acc[m]).map(Number).sort((a,b)=>a-b);
+    const pts=[],band=[];
+    for(const L of lens){const vs=acc[m][L];
+      pts.push([L,mean(vs)]); band.push([L,Math.min(...vs),Math.max(...vs)]);}
+    return {name:m,color:STATE.colors[m],pts,band};
+  });
+}
+// episodes present in the sweep (where the metric-vs-τ profiles live)
+function sweepEpisodes(){
+  return [...new Set((STATE.sweepRows||[]).map(r=>r.ep))].sort((a,b)=>a-b);
+}
+function splitFigSlugs(){
+  const subs={},main=[];
+  for(const slug of Object.keys(STATE.data.figures)){
+    const m=SUB_RE.exec(slug);
+    if(m)(subs[m[1]]=subs[m[1]]||[]).push({len:+m[2],slug});
+    else main.push(slug);
+  }
+  for(const b in subs)subs[b].sort((a,c)=>a.len-c.len);
+  return {main:main.sort(),subs};
+}
+function scrubEpisodes(){
+  const s=new Set();
+  const {main}=splitFigSlugs();
+  for(const k of main)for(const e of STATE.data.figures[k].episodes)s.add(e);
+  if(!s.size)for(const k in STATE.data.figures)
+    for(const e of STATE.data.figures[k].episodes)s.add(e);
+  return [...s].sort((a,b)=>a-b);
+}
+function nearest(arr,v){let best=arr[0];
+  for(const x of arr)if(Math.abs(x-v)<Math.abs(best-v))best=x;return best;}
+
+// ---- lightbox: click any spectrum to inspect it full-screen ----
+function openLightbox(src,label){
+  let lb=$("#lightbox");
+  if(!lb){
+    lb=el("div",{id:"lightbox",class:"lightbox"});
+    const close=el("button",{class:"lb-close",title:"Close (Esc)","aria-label":"Close"},"×");
+    const img=el("img",{class:"lb-img",id:"lb-img",alt:""});
+    const cap=el("div",{class:"lb-cap",id:"lb-cap"});
+    lb.append(close,el("div",{class:"lb-inner"},img,cap));
+    document.body.append(lb);
+    const hide=()=>lb.classList.remove("show");
+    lb.onclick=e=>{if(e.target!==$("#lb-img"))hide();};
+    document.addEventListener("keydown",e=>{if(e.key==="Escape")hide();});
+  }
+  $("#lb-img").src=src; $("#lb-img").alt=label||"";
+  $("#lb-cap").textContent=label||"";
+  lb.classList.add("show");
+}
+// attach a click-to-enlarge handler + zoom badge to a figure panel
+function makeZoomable(panel,img,label){
+  img.style.cursor="zoom-in";
+  img.addEventListener("click",()=>openLightbox(img.src,label));
+  panel.append(el("span",{class:"zoombadge","aria-hidden":"true",text:"⤢"}));
+}
+
+// ================= RENDER =================
+function render(){
+  CHARTS.length=0; EP_HOOKS.length=0;
+  const app=$("#app"); app.innerHTML="";
+  const d=STATE.data;
+
+  app.append(tiles());
+
+  const eps=scrubEpisodes();
+  if(eps.length||Object.keys(d.figures).length) app.append(scrubberCard(eps));
+
+  if(STATE.sweepRows){
+    app.append(sweepEvolutionCard());
+    // any (matrix, episode) with more than one τ sampled means there's a
+    // sub-trajectory sweep worth plotting metric-vs-τ for
+    const prof=sweepProfiles(STATE.metric);
+    const hasCurves=Object.values(prof).some(byEp=>Object.values(byEp).some(p=>p.length>1));
+    if(hasCurves)app.append(sweepPersistenceCard());
+  }
+  if((d.trajectories||[]).length) app.append(tracesCard());
+
+  if(d.stats) app.append(metricsCard());
+  if(d.rewards&&d.rewards.length) app.append(rewardCard());
+
+  if(d.config){
+    const det=el("details",{class:"cfg"},el("summary",{text:"config.yaml"}));
+    det.append(el("pre",{text:d.config}));
+    app.append(el("div",{class:"card"},det));
+  }
+  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config)
+    app.append(el("div",{class:"empty"},"This run has no artifacts yet."));
+}
+
+function tiles(){
+  const d=STATE.data, box=el("div",{class:"tiles"});
+  const rw=d.rewards||[];
+  if(rw.length){
+    const best=arrMax(rw,r=>r[1]), last=rw[rw.length-1][1];
+    box.append(tile("Best reward",fmtN(best),`over ${rw.length.toLocaleString()} episodes`,true));
+    box.append(tile("Final reward",fmtN(last),`episode ${rw[rw.length-1][0].toLocaleString()}`));
+  }
+  if(STATE.sweepRows){
+    const rows=STATE.sweepRows;
+    const ros=new Set(rows.map(r=>r.ro));
+    const ticksN=new Set(rows.map(r=>r.ep)).size;
+    box.append(tile("Rollouts / tick",String(ros.size),`${ticksN} analysis ticks`));
+    box.append(tile("τ sweep",`${arrMin(rows,r=>r.len)}–${arrMax(rows,r=>r.len)}`,
+      `${rows.length.toLocaleString()} sweep points`));
+  }else if(d.stats){
+    const mi=d.stats.columns.indexOf("matrix"),ei=d.stats.columns.indexOf("episode");
+    const mats=new Set(d.stats.rows.map(r=>r[mi]));
+    const ticksN=new Set(d.stats.rows.map(r=>+r[ei]));
+    box.append(tile("Matrices tracked",String(mats.size),[...mats].join(", ")));
+    box.append(tile("Analysis ticks",String(ticksN.size),"rank snapshots during training"));
+  }
+  return box;
+}
+function tile(lab,val,foot,hero){
+  return el("div",{class:"tile"},
+    el("div",{class:"lab",text:lab}),
+    el("div",{class:"val"+(hero?" hero":""),text:val}),
+    foot?el("div",{class:"foot",text:foot}):null);
+}
+
+// ---------- legend (shared toggle across metric charts) ----------
+function legendBar(names){
+  const bar=el("div",{class:"legend"});
+  for(const n of names){
+    const item=el("span",{class:"item"+(STATE.hidden.has(n)?" off":"")});
+    item.style.color=cssv(STATE.colors[n]);
+    item.append(el("span",{class:"key"}),el("span",{class:"nm",text:n}));
+    item.querySelector(".nm").style.color="var(--ink-2)";
+    item.onclick=()=>{STATE.hidden.has(n)?STATE.hidden.delete(n):STATE.hidden.add(n);rerender();};
+    bar.append(item);
+  }
+  return bar;
+}
+function metricSelect(){
+  const sel=el("select",{"aria-label":"Metric"});
+  for(const [k,label] of METRICS)
+    sel.append(el("option",{value:k,text:label}));
+  sel.value=STATE.metric;
+  sel.onchange=()=>{STATE.metric=sel.value;rerender();};
+  return el("div",{class:"pill-row"},el("label",{text:"Metric"}),sel);
+}
+
+// ================= SCRUBBER =================
+function scrubberCard(eps){
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Spectra over training"}),
+    el("p",{class:"desc",text:"Step through the singular-value spectra episode by episode — watch the low-rank structure emerge."}));
+
+  const {main,subs}=splitFigSlugs();
+  if(!eps.length){
+    card.append(el("p",{class:"muted-note",text:"Only post-training figures available."}));
+    card.append(figRow(main,null,true));
+    return card;
+  }
+  if(STATE.ep==null||!eps.includes(STATE.ep))STATE.ep=eps[0];
+  if(STATE.followLast)STATE.ep=eps[eps.length-1];
+  let idx=eps.indexOf(STATE.ep);
+
+  const epLabel=el("span",{class:"epch"});
+  const range=el("input",{type:"range",min:"0",max:String(eps.length-1),value:String(idx),
+    step:"1","aria-label":"Episode"});
+  const playBtn=el("button",{class:"iconbtn",title:"Play / pause"},"▶");
+  const prev=el("button",{class:"iconbtn",title:"Previous"},"‹");
+  const next=el("button",{class:"iconbtn",title:"Next"},"›");
+  const figHost=el("div",{});
+  const subHost=el("div",{});
+
+  function paint(){
+    STATE.ep=eps[idx];
+    range.value=String(idx);
+    epLabel.innerHTML="";
+    epLabel.append(document.createTextNode("Episode "+eps[idx].toLocaleString()),
+      el("small",{text:`   ${idx+1} / ${eps.length}`}));
+    figHost.innerHTML=""; figHost.append(figRow(main,eps[idx],false));
+    subHost.innerHTML="";
+    const sub=subSpectraSection(subs,eps[idx]); if(sub)subHost.append(sub);
+    prev.disabled=idx===0; next.disabled=idx===eps.length-1;
+    STATE.followLast=(idx===eps.length-1);
+    syncMarkers(eps[idx]);
+  }
+  range.oninput=()=>{idx=+range.value;paint();};
+  range.addEventListener("pointerdown",()=>{STATE.dragging=true;});
+  range.onchange=()=>{STATE.dragging=false;
+    if(STATE.pending&&!STATE.playing){const d=STATE.pending;STATE.pending=null;applyData(d);}};
+  prev.onclick=()=>{if(idx>0){idx--;paint();}};
+  next.onclick=()=>{if(idx<eps.length-1){idx++;paint();}};
+  playBtn.onclick=()=>{
+    if(STATE.playing){stopPlay();playBtn.textContent="▶";}
+    else{playBtn.textContent="❚❚";
+      STATE.playing=setInterval(()=>{
+        idx=(idx+1)%eps.length;paint();
+        if(idx===eps.length-1){stopPlay();playBtn.textContent="▶";}
+      },700);}
+  };
+
+  card.append(el("div",{class:"scrub-bar"},prev,playBtn,next,range,epLabel));
+  card.append(figHost);
+  card.append(subHost);
+  paint();
+  return card;
+}
+function stopPlay(){if(STATE.playing){clearInterval(STATE.playing);STATE.playing=null;}
+  if(STATE.pending&&!STATE.dragging){const d=STATE.pending;STATE.pending=null;applyData(d);}}
+
+function figRow(slugs,ep,finalOnly){
+  const wrap=el("div",{class:"figs"});
+  const {exp,run}=STATE.cur;
+  for(const slug of slugs){
+    const info=STATE.data.figures[slug];
+    const base=baseOfSlug(slug), name=pretty(base);
+    const rollM=ROLL_RE.exec(slug);
+    const label=rollM&&rollM[2]!=="0"?`${name} · rollout ${rollM[2]}`:name;
+    let file=null;
+    if(finalOnly){ if(info.final)file=`final_${slug}.png`; }
+    else if(info.episodes.includes(ep)) file=`ep${pad6(ep)}_${slug}.png`;
+    else if(info.final) file=`final_${slug}.png`;
+    const panel=el("div",{class:"fig"});
+    const cap=el("div",{class:"cap"});
+    const dot=el("span",{class:"dot"}); dot.style.background=cssv(STATE.colors[name]||"--accent");
+    cap.append(dot,el("span",{text:label}));
+    panel.append(cap);
+    if(file){
+      const img=el("img",{loading:"lazy",alt:`${label} spectrum`,
+        src:`/fig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(file)}`});
+      panel.append(img);
+      makeZoomable(panel,img,label+(ep!=null?` · episode ${ep.toLocaleString()}`:""));
+    }else{
+      panel.append(el("div",{class:"none",text:"no figure at this episode"}));
+    }
+    wrap.append(panel);
+  }
+  return wrap;
+}
+
+// sub-trajectory milestone spectra at the scrubbed episode, with a τ slider
+function subSpectraSection(subs,ep){
+  const bases=Object.keys(subs).sort();
+  if(!bases.length)return null;
+  // τ values available at this episode (union across bases)
+  const lens=new Set();
+  for(const b of bases)for(const s of subs[b])
+    if(STATE.data.figures[s.slug].episodes.includes(ep))lens.add(s.len);
+  const taus=[...lens].sort((a,b)=>a-b);
+  if(!taus.length)return null;
+  if(STATE.tauIdx==null||STATE.tauIdx>=taus.length)STATE.tauIdx=taus.length-1;
+
+  const sec=el("div",{class:"subsec"});
+  sec.append(el("h3",{text:"Sub-trajectory spectra"}),
+    el("p",{class:"desc",text:"Spectrum of the Hankel built from only the first τ steps of the rollout — slide τ to see when the structure locks in."}));
+  const lab=el("span",{class:"epch"});
+  const range=el("input",{type:"range",min:"0",max:String(taus.length-1),
+    value:String(STATE.tauIdx),step:"1","aria-label":"Prefix length τ"});
+  const host=el("div",{});
+  const {exp,run}=STATE.cur;
+
+  function paintTau(){
+    const L=taus[STATE.tauIdx];
+    lab.innerHTML="";
+    lab.append(document.createTextNode("τ = "+L),
+      el("small",{text:`   ${STATE.tauIdx+1} / ${taus.length}`}));
+    host.innerHTML="";
+    const wrap=el("div",{class:"figs"});
+    for(const b of bases){
+      const entry=subs[b].find(s=>s.len===L&&STATE.data.figures[s.slug].episodes.includes(ep));
+      const name=pretty(b);
+      const panel=el("div",{class:"fig"});
+      const cap=el("div",{class:"cap"});
+      const dot=el("span",{class:"dot"}); dot.style.background=cssv(STATE.colors[name]||"--accent");
+      cap.append(dot,el("span",{text:`${name} · 0→${L}`}));
+      panel.append(cap);
+      if(entry){
+        const img=el("img",{loading:"lazy",alt:`${name} spectrum at τ=${L}`,
+          src:`/fig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(`ep${pad6(ep)}_${entry.slug}.png`)}`});
+        panel.append(img);
+        makeZoomable(panel,img,`${name} · 0→${L} · episode ${ep.toLocaleString()}`);
+      }else{
+        panel.append(el("div",{class:"none",text:"no figure at this τ"}));
+      }
+      wrap.append(panel);
+    }
+    host.append(wrap);
+  }
+  range.oninput=()=>{STATE.tauIdx=+range.value;paintTau();};
+  sec.append(el("div",{class:"scrub-bar"},range,lab));
+  sec.append(host);
+  paintTau();
+  return sec;
+}
+
+// ================= SWEEP: EVOLUTION OVER TRAINING =================
+function sweepEvolutionCard(){
+  const card=el("div",{class:"card"});
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Low-rankness over training"}),
+    el("p",{class:"desc",text:"Full-rollout Hankel metric per analysis tick — line is the mean across rollouts, band is the min–max spread. A tight band means the rank estimate is robust to the rollout seed."})),
+    metricSelect());
+  card.append(head);
+
+  const series=sweepEvolution(STATE.metric);
+  const names=series.map(s=>s.name);
+  card.append(legendBar(names));
+  const visible=series.filter(s=>!STATE.hidden.has(s.name));
+  const [,label,hint]=METRICS.find(m=>m[0]===STATE.metric);
+  card.append(lineChart({title:label,hint,series:visible,wide:true,episodeAxis:true,
+    xLabel:"episode"}));
+
+  // accessible table view + raw data link
+  const det=el("details",{class:"tbl"},el("summary",{text:"Data table (mean across rollouts)"}));
+  const eps=[...new Set(series.flatMap(s=>s.pts.map(p=>p[0])))].sort((a,b)=>a-b);
+  const tbl=el("table",{});
+  const hr=el("tr",{},el("th",{text:"episode"}));
+  for(const s of series)hr.append(el("th",{text:s.name}));
+  tbl.append(hr);
+  for(const e of eps){
+    const tr=el("tr",{},el("td",{text:String(e)}));
+    for(const s of series){
+      const p=s.pts.find(q=>q[0]===e);
+      tr.append(el("td",{text:p?fmtN(p[1]):"–"}));
+    }
+    tbl.append(tr);
+  }
+  det.append(el("div",{class:"tblwrap"},tbl));
+  const {exp,run}=STATE.cur;
+  det.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/hankel_sweep.csv`,
+      download:"hankel_sweep.csv",text:"hankel_sweep.csv"})));
+  card.append(det);
+  return card;
+}
+
+// ================= SWEEP: PERSISTENCE ACROSS SUB-TRAJECTORY LENGTHS =================
+// One episode at a time: metric vs prefix length τ, one line per matrix (mean
+// across rollouts, min–max band). Pick the episode from the dropdown, or just
+// scrub above — this chart follows the episode you're looking at.
+function sweepPersistenceCard(){
+  const card=el("div",{class:"card"});
+  const eps=sweepEpisodes();
+  if(!eps.length)return card;
+  if(STATE.persistEp==null||!eps.includes(STATE.persistEp))
+    STATE.persistEp=STATE.ep!=null?nearest(eps,STATE.ep):eps[eps.length-1];
+
+  // episode picker (kept in sync with the scrubber)
+  const epSel=el("select",{"aria-label":"Episode"});
+  for(const e of eps)epSel.append(el("option",{value:String(e),text:"episode "+e.toLocaleString()}));
+  epSel.value=String(STATE.persistEp);
+  const epPicker=el("div",{class:"pill-row"},el("label",{text:"Episode"}),epSel);
+
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Persistence across sub-trajectory lengths"}),
+    el("p",{class:"desc",text:"For one episode, the chosen metric of the Hankel built from only the first τ steps of the rollout. A flat line means the low-rank structure is already present in short prefixes; a climb means new dynamics keep entering as the episode unfolds. Line = mean across rollouts, shaded band = min–max spread."})),
+    el("div",{class:"pill-row"},metricSelect(),epPicker));
+  card.append(head);
+
+  const names=[...new Set((STATE.sweepRows||[]).map(r=>r.m))].sort();
+  if(names.length>1)card.append(legendBar(names));
+  const host=el("div",{});
+  card.append(host);
+  const [,label]=METRICS.find(m=>m[0]===STATE.metric);
+
+  function paint(){
+    host.innerHTML="";
+    const ep=STATE.persistEp;
+    const series=persistSeriesAt(STATE.metric,ep).filter(s=>!STATE.hidden.has(s.name));
+    if(!series.some(s=>s.pts.length>1)){
+      host.append(el("p",{class:"muted-note",text:"No sub-trajectory sweep at this episode."}));
+      return;
+    }
+    host.append(lineChart({title:label,hint:`${label} vs prefix length τ  ·  episode ${ep.toLocaleString()}`,
+      series,wide:true,xLabel:"τ (steps)",xPrefix:"τ = "}));
+  }
+  epSel.onchange=()=>{STATE.persistEp=+epSel.value;paint();};
+  // follow the scrubber: moving it snaps this chart to the nearest sweep episode
+  EP_HOOKS.push(scEp=>{
+    if(scEp==null)return;
+    const near=nearest(eps,scEp);
+    if(near!==STATE.persistEp){STATE.persistEp=near;epSel.value=String(near);paint();}
+  });
+  paint();
+  return card;
+}
+
+// ================= TRAJECTORY TRACES =================
+function tracesCard(){
+  const card=el("div",{class:"card"});
+  const trajs=STATE.data.trajectories;
+  const eps=[...new Set(trajs.map(t=>t.episode))].sort((a,b)=>(a??1e15)-(b??1e15));
+  if(STATE.trajEp===undefined||!eps.includes(STATE.trajEp))
+    STATE.trajEp=eps[eps.length-1];
+
+  const epSel=el("select",{"aria-label":"Trajectory episode"});
+  for(const e of eps)
+    epSel.append(el("option",{value:String(e),text:e==null?"final":"episode "+e}));
+  epSel.value=String(STATE.trajEp);
+
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Trajectory traces"}),
+    el("p",{class:"desc",text:"The raw per-step Q/V/A sequences the Hankel matrices are built from (one line per rollout seed) — spot where the value signal picks up new dynamics."})),
+    el("div",{class:"pill-row"},el("label",{text:"Tick"}),epSel));
+  card.append(head);
+  const host=el("div",{});
+  card.append(host);
+
+  async function paint(){
+    host.innerHTML="";
+    host.append(el("p",{class:"muted-note",text:"Loading trajectories…"}));
+    const {exp,run}=STATE.cur;
+    const files=trajs.filter(t=>t.episode===STATE.trajEp);
+    const fetched=await Promise.all(files.map(async t=>{
+      const key=exp+"/"+run+"/"+t.file;
+      if(!STATE.trajCache[key]){
+        STATE.trajCache[key]=await (await fetch(
+          `/api/traj/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(t.file)}`)).json();
+      }
+      return {seed:t.seed,data:STATE.trajCache[key]};
+    }));
+    host.innerHTML="";
+    if(!fetched.length){host.append(el("p",{class:"muted-note",text:"No trajectories at this tick."}));return;}
+    // legend: one entry per seed, fixed slot order
+    const seeds=fetched.map(f=>f.seed).sort((a,b)=>a-b);
+    const seedColor={}; seeds.forEach((s,i)=>seedColor[s]=SLOTS[i%SLOTS.length]);
+    const leg=el("div",{class:"legend"});
+    for(const s of seeds){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(seedColor[s]);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"seed "+s}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      leg.append(item);
+    }
+    host.append(leg);
+    const keys=[...new Set(fetched.flatMap(f=>Object.keys(f.data)))].sort();
+    const grid=el("div",{class:"grid-charts"});
+    for(const k of keys){
+      const series=fetched
+        .sort((a,b)=>a.seed-b.seed)
+        .filter(f=>f.data[k])
+        .map(f=>({name:"seed "+f.seed,color:seedColor[f.seed],
+          pts:f.data[k].map((v,i)=>[i,v]),endLabel:false}));
+      const name=pretty(k);
+      grid.append(lineChart({title:name,titleColor:STATE.colors[name],
+        hint:"value along the rollout",series,xLabel:"t (steps)",xPrefix:"t = "}));
+    }
+    host.append(grid);
+  }
+  epSel.onchange=()=>{STATE.trajEp=epSel.value==="null"?null:+epSel.value;paint();};
+  paint();
+  return card;
+}
+
+// ================= METRIC CHARTS (rank_stats, generic methods) =================
+function metricsCard(){
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Rank metrics over training"}),
+    el("p",{class:"desc",text:"Generic per-matrix analysis methods (rank_stats.csv). One line per matrix; toggle in the legend; the dashed marker tracks the episode selected above."}));
+  const allNames=statSeries("eff_rank").map(s=>s.name);
+  if(allNames.length>1)card.append(legendBar(allNames));
+  const grid=el("div",{class:"grid-charts"});
+  for(const [key,label,hint] of METRICS){
+    const all=statSeries(key);
+    if(!all.length)continue;
+    const series=all.filter(s=>!STATE.hidden.has(s.name));
+    grid.append(lineChart({title:label,hint,series,episodeAxis:true,xLabel:"episode"}));
+  }
+  card.append(grid);
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/rank_stats.csv`,
+      download:"rank_stats.csv",text:"rank_stats.csv"})));
+  return card;
+}
+function rewardCard(){
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Episode reward"}),
+    el("p",{class:"desc",text:"Training reward per episode."}));
+  const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
+  card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
+    episodeAxis:true,xLabel:"episode"}));
+  return card;
+}
+
+// registry so the scrubber can move every episode-axis chart's marker,
+// and re-paint the episode-synced cards
+const CHARTS=[];
+const EP_HOOKS=[];
+function syncMarkers(ep){for(const c of CHARTS)c.marker(ep);for(const h of EP_HOOKS)h(ep);}
+
+function lineChart(opts){
+  const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix}=opts;
+  const W=wide?960:440, H=wide?300:230;
+  const anyEnd=!noEndLabel&&series.some(s=>s.endLabel!==false);
+  const m={l:56,r:anyEnd?70:16,t:12,b:34};
+  const box=el("div",{class:"chart"});
+  if(title){
+    const ct=el("p",{class:"ct"});
+    if(titleColor){const dot=el("span",{class:"dot"});dot.style.background=cssv(titleColor);ct.append(dot);}
+    ct.append(document.createTextNode(title));
+    box.append(ct);
+  }
+  if(hint)box.append(el("p",{class:"ch",text:hint}));
+  const tip=el("div",{class:"tip"});
+
+  const all=series.flatMap(s=>s.pts);
+  if(!all.length){box.append(el("p",{class:"muted-note",text:"no data"}));return box;}
+  let xmin=arrMin(all,p=>p[0]), xmax=arrMax(all,p=>p[0]);
+  let ymin=arrMin(all,p=>p[1]), ymax=arrMax(all,p=>p[1]);
+  for(const s of series)if(s.band)for(const b of s.band){
+    ymin=Math.min(ymin,b[1]);ymax=Math.max(ymax,b[2]);}
+  if(xmax===xmin)xmax=xmin+1;
+  if(ymax===ymin){ymax+=1;ymin-=1;}
+  const pad=(ymax-ymin)*0.08; ymax+=pad; ymin-=pad;
+  if(ymin>0&&ymin-pad<0)ymin=Math.max(0,ymin);
+  const X=v=>m.l+(v-xmin)/(xmax-xmin)*(W-m.l-m.r);
+  const Y=v=>H-m.b-(v-ymin)/(ymax-ymin)*(H-m.t-m.b);
+
+  const NS="http://www.w3.org/2000/svg";
+  const svg=document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const mk=(t,a)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);return n;};
+  const col=s=>s.color&&s.color.startsWith("--")?cssv(s.color):s.color;
+
+  // y gridlines + ticks
+  const yt=ticks(ymin,ymax,4);
+  for(const v of yt){
+    svg.append(mk("line",{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),stroke:"var(--grid)","stroke-width":1}));
+    const t=mk("text",{x:m.l-8,y:Y(v)+3,"text-anchor":"end",class:"axis-txt"});t.textContent=fmtN(v);svg.append(t);
+  }
+  // x ticks + axis label
+  for(const v of ticks(xmin,xmax,wide?6:4)){
+    const t=mk("text",{x:X(v),y:H-16,"text-anchor":"middle",class:"axis-txt"});
+    t.textContent=v>=1000?(v/1000).toFixed(v%1000?1:0)+"k":String(Math.round(v));svg.append(t);
+  }
+  if(xLabel){
+    const t=mk("text",{x:W-m.r,y:H-2,"text-anchor":"end",class:"axis-lab"});
+    t.textContent=xLabel;svg.append(t);
+  }
+  svg.append(mk("line",{x1:m.l,x2:W-m.r,y1:H-m.b,y2:H-m.b,stroke:"var(--axis)","stroke-width":1}));
+
+  // marker line (synced to scrubber; only meaningful on episode-axis charts)
+  const marker=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)",
+    "stroke-width":1.5,"stroke-dasharray":"4 4",opacity:.9});
+  svg.append(marker);
+
+  // min–max bands first (under the lines)
+  for(const s of series){
+    if(!s.band||s.band.length<2)continue;
+    const c=col(s);
+    let d="";
+    s.band.forEach((b,i)=>{d+=(i?"L":"M")+X(b[0]).toFixed(1)+" "+Y(b[2]).toFixed(1)+" ";});
+    for(let i=s.band.length-1;i>=0;i--)d+="L"+X(s.band[i][0]).toFixed(1)+" "+Y(s.band[i][1]).toFixed(1)+" ";
+    svg.append(mk("path",{d:d+"Z",fill:c,opacity:.13,stroke:"none"}));
+  }
+
+  // series paths + end dots/labels
+  const ends=[];
+  for(const s of series){
+    const c=col(s);
+    let dstr="";
+    s.pts.forEach((p,i)=>{dstr+=(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)+" ";});
+    const attrs={d:dstr,fill:"none",stroke:c,"stroke-width":s.width??2,
+      "stroke-linejoin":"round","stroke-linecap":"round"};
+    if(s.opacity!=null)attrs.opacity=s.opacity;
+    if(s.dash)attrs["stroke-dasharray"]=s.dash;
+    svg.append(mk("path",attrs));
+    if(s.pts.length===1){ // single-point series still gets a visible mark
+      svg.append(mk("circle",{cx:X(s.pts[0][0]),cy:Y(s.pts[0][1]),r:3.5,fill:c,
+        opacity:s.opacity??1}));
+    }
+    if(!noEndLabel&&s.endLabel!==false){
+      const last=s.pts[s.pts.length-1];
+      ends.push({s,x:X(last[0]),y:Y(last[1]),col:c});
+    }
+  }
+  ends.sort((a,b)=>a.y-b.y);
+  let prevY=-1e9;
+  for(const e of ends){
+    svg.append(mk("circle",{cx:e.x,cy:e.y,r:4,fill:e.col,stroke:"var(--surface)","stroke-width":2}));
+    let ly=e.y+3; if(ly-prevY<12)ly=prevY+12; prevY=ly;
+    const t=mk("text",{x:e.x+8,y:ly,class:"end-lab"});t.textContent=e.s.name;svg.append(t);
+  }
+
+  // hover crosshair + tooltip (hover-enabled series only)
+  const hoverSeries=series.filter(s=>s.hover!==false);
+  const cross=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)","stroke-width":1,opacity:0});
+  svg.append(cross);
+  const hoverDots=mk("g",{});svg.append(hoverDots);
+  const overlay=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"});
+  svg.append(overlay);
+
+  const xs=[...new Set(hoverSeries.flatMap(s=>s.pts.map(p=>p[0])))].sort((a,b)=>a-b);
+  function move(ev){
+    if(!xs.length)return;
+    const r=svg.getBoundingClientRect();
+    const px=(ev.clientX-r.left)/r.width*W;
+    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
+    let near=xs[0]; for(const x of xs)if(Math.abs(x-xv)<Math.abs(near-xv))near=x;
+    cross.setAttribute("x1",X(near));cross.setAttribute("x2",X(near));cross.setAttribute("opacity",.7);
+    hoverDots.innerHTML="";
+    const rows=[];
+    for(const s of hoverSeries){
+      const p=s.pts.find(q=>q[0]===near); if(!p)continue;
+      const c=col(s);
+      hoverDots.append(mk("circle",{cx:X(near),cy:Y(p[1]),r:4,fill:c,
+        stroke:"var(--surface)","stroke-width":2}));
+      let extra="";
+      if(s.band){const b=s.band.find(q=>q[0]===near);
+        if(b)extra=`  (${fmtN(b[1])}–${fmtN(b[2])})`;}
+      rows.push({name:s.name,color:c,v:fmtN(p[1])+extra});
+    }
+    tip.innerHTML="";
+    tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))+near.toLocaleString()}));
+    for(const rw of rows){
+      const row=el("div",{class:"row"});row.style.color=rw.color;
+      row.append(el("span",{class:"k"}),
+        el("span",{class:"nm",text:rw.name}),
+        el("span",{class:"v",text:rw.v}));
+      row.querySelector(".nm").style.color="var(--ink-2)";
+      tip.append(row);
+    }
+    tip.style.opacity=1;
+    let tx=(X(near)/W)*r.width+12; if(tx>r.width-150)tx=(X(near)/W)*r.width-150;
+    tip.style.left=Math.max(0,tx)+"px"; tip.style.top="6px";
+  }
+  overlay.addEventListener("pointermove",move);
+  overlay.addEventListener("pointerleave",()=>{cross.setAttribute("opacity",0);hoverDots.innerHTML="";tip.style.opacity=0;});
+
+  box.append(svg,tip);
+  if(episodeAxis)
+    CHARTS.push({marker:ep=>{if(ep>=xmin&&ep<=xmax){marker.setAttribute("x1",X(ep));marker.setAttribute("x2",X(ep));}
+      else{marker.setAttribute("x1",-99);marker.setAttribute("x2",-99);}}});
+  return box;
+}
+
+function ticks(lo,hi,n){
+  const span=hi-lo, step0=span/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag; let step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
+  const out=[]; for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(6));
+  return out;
+}
+
+boot();
+</script>
+</body>
+</html>

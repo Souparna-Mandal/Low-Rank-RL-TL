@@ -109,6 +109,8 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             buffer_util (int, optional): _description_. Defaults to 1.
             gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
             grad_clip_norm (float, optional): max global L2 norm for gradient clipping per step. Defaults to 10.0
+            gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
+            grad_clip_norm (float, optional): max global L2 norm for gradient clipping per step. Defaults to 10.0
             Double (Bool, optional): If enabled it uses Double DQN for Q value target estimation
         """
         
