@@ -1,11 +1,8 @@
-"""Thin config-driven builders so an experiment notebook is just wiring: change
-config.yaml and it flows through here without editing the notebook.
-
-Each builder passes a whole config section straight through with `**cfg[section]`,
-so the config keys ARE the function parameters — adding a hyperparameter under
+""" Each builder passes a whole config section straight through with `**cfg[section]` in the jupyter notebooks where experiments are run.
+So the config keys are the function parameters — adding a hyperparameter under
 `environment`/`agent`/`training` needs no notebook change. The only things the
-notebook still supplies are genuine code objects (the Q-network class and its
-derived nn_extra_kwargs), not config keys.
+notebook still supplies are objects like the Q-network class and its
+derived nn_extra_kwargs.
 """
 import pathlib
 
@@ -16,15 +13,7 @@ import yaml
 from environments.base_env import make_environment
 from agents.q_agent import QAgent
 from training import dqn_training_loop
-
-
-def _resolve_device(name: str) -> str:
-    """Map a config device request to an available torch device."""
-    if name == "cuda":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if name == "mps":
-        return "mps" if torch.backends.mps.is_available() else "cpu"
-    return name
+from utils.device import resolve_device
 
 
 def load_config(path="config.yaml") -> dict:
@@ -32,7 +21,7 @@ def load_config(path="config.yaml") -> dict:
     device is stashed at cfg["experiment"]["_device"] for the builders to read."""
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    cfg["experiment"]["_device"] = _resolve_device(cfg["experiment"]["device"])
+    cfg["experiment"]["_device"] = resolve_device(cfg["experiment"]["device"])
     seed = cfg["experiment"]["seed"]
     torch.manual_seed(seed)
     np.random.seed(seed)
