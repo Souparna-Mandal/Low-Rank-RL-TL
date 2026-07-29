@@ -8,17 +8,17 @@ import numpy as np
 
 class RunLogger:
     """Collects everything one training run produces under
-    <exp_dir>/runs/<run_id>/ (already gitignored via `runs/`):
+    <exp_dir>/runs/<run_id>/:
 
-        config.yaml     frozen copy of the config the run was launched with
-        rewards.csv     episode, reward — rewritten at every analysis tick and at the end
+        config.yaml     copy of the config the run was launched with
+        rewards.csv     episode, reward — rewritten at every analysis tick and at the end.
         rank_stats.csv  one row per (episode, matrix) from row_rank_property_check,
-                        so rank-vs-training-progress can be plotted after the fact
+                        so rank-vs-training-progress can be plotted after the fact this can be any statistic that's tracked and not just rank
         figures/        epNNNNNN_<matrix>.png spectra during training, final_* after
         checkpoints/    latest.pt (rolling), best.pt (best reward window), final.pt
 
     Pass an instance to `dqn_training_loop(run_logger=...)`; everything else is
-    optional convenience for notebook cells (figure_path, checkpoint).
+    Optional convenience for notebook cells (figure_path, checkpoint).
     """
 
     def __init__(self, exp_dir, config_path=None, run_id: str | None = None):

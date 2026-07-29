@@ -94,6 +94,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                 run_logger.checkpoint(agent, "best")
         
         # print more detailed training status 
+        # print more detailed training status 
         if DEBUG:
             print("**************************** DEBUG INFO START **********************************")
             print(f"Episode {episode} is complete with reward {epsiode_total_reward}")
@@ -150,5 +151,3 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         run_logger.checkpoint(agent, "final")
         print(f"run artifacts saved under {run_logger.dir}")
     return episode_rewards_training
-
-
