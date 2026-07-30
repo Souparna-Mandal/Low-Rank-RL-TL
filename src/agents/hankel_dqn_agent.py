@@ -146,7 +146,7 @@ class HankelDQNAgent(QAgent):
                  ramp_grad_steps: int = 0, decay_grad_steps: int = 0,
                  penalize_terminal_windows: bool = False,
                  td_source: str = "iid", hankel_signal: str = "q",
-                 hankel_jitter: float = 0.0,
+                 hankel_jitter: float = 0.0, td_gate_scale: float | None = None,
                  window_half_life: float | None = None, **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         assert td_source in ("iid", "windows")
@@ -162,6 +162,7 @@ class HankelDQNAgent(QAgent):
         self.ramp_grad_steps = ramp_grad_steps
         self.decay_grad_steps = decay_grad_steps
         self.hankel_signal = hankel_signal
+        self.td_gate_scale = td_gate_scale
         self.hankel_penalty = HankelRankPenalty(hankel_order, gate_threshold,
                                                 jitter=hankel_jitter)
         self._grad_steps = 0
@@ -232,7 +233,8 @@ class HankelDQNAgent(QAgent):
         lam = self._lambda_eff()
         diag = {"td_loss": float(loss.detach()), "lambda_eff": lam,
                 "penalty_raw": np.nan, "penalty_weighted": 0.0, "gate_frac": np.nan,
-                "converged_frac": np.nan, "batch_eff_rank": np.nan, "rel_tail": np.nan,
+                "converged_frac": np.nan, "ext_gate_frac": np.nan,
+                "batch_eff_rank": np.nan, "rel_tail": np.nan,
                 "nan_skips": self.nan_skips}
         if self.hankel_weight > 0:
             win = self.replay_buffer.sample_windows(
@@ -240,14 +242,29 @@ class HankelDQNAgent(QAgent):
                 exclude_terminal=not self.penalize_terminal_windows,
                 half_life=self.window_half_life)
             if win is not None:
-                w_states, w_actions, _ = win
+                w_states, w_actions, w_rewards = win
                 n, T = w_actions.shape
                 # λ=0 (warm-up): diagnostics only, keep the SVD out of the graph.
                 with torch.enable_grad() if lam > 0 else torch.no_grad():
                     out = self.policy_net(w_states.reshape(n * T, -1))
                     seq = (out.max(dim=1).values if self.hankel_signal == "v" else
                            out.gather(1, w_actions.reshape(n * T, 1)).squeeze(1)).view(n, T)
-                    penalty, pdiag = self.hankel_penalty(seq)
+                    keep_mask = None
+                    if self.td_gate_scale is not None:
+                        # Regularise only windows whose own bootstrap residual is
+                        # already small — i.e. where TD locally agrees with Q.
+                        with torch.no_grad():
+                            q_sa = out.gather(1, w_actions.reshape(n * T, 1)).view(n, T)
+                            nxt = w_states[:, 1:].reshape(n * (T - 1), -1)
+                            if self.double:
+                                na = self.policy_net(nxt).argmax(dim=1, keepdim=True)
+                                qn = self.target_net(nxt).gather(1, na).squeeze(1)
+                            else:
+                                qn = self.target_net(nxt).max(dim=1).values
+                            resid = (q_sa[:, :-1] - w_rewards[:, :-1]
+                                     - self.loss.gamma * qn.view(n, T - 1)).abs().mean(dim=1)
+                            keep_mask = resid <= self.td_gate_scale * float(loss.detach())
+                    penalty, pdiag = self.hankel_penalty(seq, keep_mask=keep_mask)
                 diag.update(pdiag)
                 diag["penalty_weighted"] = lam * pdiag["penalty_raw"]
                 if lam > 0:

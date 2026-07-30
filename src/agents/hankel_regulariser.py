@@ -32,13 +32,15 @@ class HankelRankPenalty(nn.Module):
         self.detach_denominator = detach_denominator
         self.jitter = jitter
 
-    def forward(self, value_seqs: torch.Tensor):
+    def forward(self, value_seqs: torch.Tensor, keep_mask: torch.Tensor | None = None):
         """value_seqs: (B, T) predicted values along episode-contiguous windows.
-        Returns (penalty, diagnostics dict)."""
+        keep_mask: optional (B,) bool — external per-window gate (e.g. TD
+        consistency) ANDed with the internal ones. Returns (penalty, diag)."""
         B, T = value_seqs.shape
         L = (T + 1) // 2
         diag = {"penalty_raw": 0.0, "gate_frac": 0.0, "converged_frac": 0.0,
-                "batch_eff_rank": float("nan"), "rel_tail": float("nan")}
+                "ext_gate_frac": 0.0, "batch_eff_rank": float("nan"),
+                "rel_tail": float("nan")}
         if min(T - L + 1, L) <= self.order:
             return value_seqs.new_zeros(()), diag
 
@@ -58,7 +60,12 @@ class HankelRankPenalty(nn.Module):
         converged = rel_tail <= 1e-6   # already at rank <= order
         gated = (rel_tail > self.gate_threshold if self.gate_threshold is not None
                  else torch.zeros_like(converged))
-        keep = (~converged & ~gated).to(svals.dtype)
+        keep_b = ~converged & ~gated
+        if keep_mask is not None:
+            ext = keep_mask.to(keep_b.device)
+            diag["ext_gate_frac"] = float(1.0 - ext.float().mean())
+            keep_b = keep_b & ext
+        keep = keep_b.to(svals.dtype)
         denom = total.detach() if self.detach_denominator else total
         # Dropped windows get zero cotangents on their σs; svdvals' backward
         # (U diag(g) Vᵀ) stays finite even for their degenerate spectra, so

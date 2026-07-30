@@ -199,6 +199,26 @@ def test_lambda_schedules_and_v_signal():
     assert v.nan_skips == 0
 
 
+def test_td_consistency_gate():
+    # keep_mask plumbing: all-False mask kills the penalty and reports ext_gate_frac.
+    pen = HankelRankPenalty(order=2)
+    torch.manual_seed(6)
+    x = torch.randn(6, 16, requires_grad=True)
+    p, d = pen(x, keep_mask=torch.zeros(6, dtype=torch.bool))
+    assert float(p.detach()) == 0.0 and d["ext_gate_frac"] == 1.0
+    p, d = pen(x, keep_mask=torch.ones(6, dtype=torch.bool))
+    assert float(p.detach()) > 0 and d["ext_gate_frac"] == 0.0
+    # Agent-level: huge scale keeps everything, zero scale masks everything.
+    a = _make_agent(0.01, seed=4, td_gate_scale=1e9)
+    _fill_agent(a)
+    d = a.train()
+    assert d["ext_gate_frac"] == 0.0
+    b = _make_agent(0.01, seed=4, td_gate_scale=0.0)
+    _fill_agent(b)
+    d = b.train()
+    assert d["ext_gate_frac"] == 1.0 and d["penalty_raw"] == 0.0
+
+
 def test_windows_td_includes_terminal_anchor():
     a = _make_agent(0.01, seed=1, td_source="windows")
     _fill_agent(a, n_eps=2, ep_len=12)  # episode 0 terminates

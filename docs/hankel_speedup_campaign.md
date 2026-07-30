@@ -49,3 +49,26 @@ Variants: `gated_order1` (r=1, λ=1e-2, warm-up 2000 + ramp 2000, ρ=0.25),
 `gated_strong` (λ=5e-2, same schedule), `vseq_decay` (signal=v, λ=1e-2, warm-up
 1000, decay 6000 — accelerate then release), `tdgate_hi` (λ=1e-2, no warm-up,
 TD-consistency gate scale 1.0).
+
+| variant | solve-ep (4 seeds) | mean | AUC600 | eval20 |
+|---|---|---|---|---|
+| baseline | [608, 545, 841, 557] | 638 | 163.5 | 490.0 ± 14.2 |
+| **gated_order1** | **[540, 734, 500, 662]** | **609** | **191.2** | **493.9 ± 10.5** |
+| gated_strong | [700, 717, 484, 1500] | 850 | 173.9 | 371.1 ± 206.0 |
+| vseq_decay | [526, 1500, 1500, 715] | 1060 | 170.3 | 279.6 ± 223.1 |
+| tdgate_hi | [859, 735, 1500, 1500] | 1148 | 144.9 | 288.6 ± 215.1 |
+
+**Verdict: first clean win.** `gated_order1` — target rank 1 on the proven warm-up+
+ramp schedule — beats baseline on *every* metric with no pathological seed: −29
+episodes mean solve, tighter worst case (734 vs 841), +17% AUC600, better final
+eval. λ=5e-2 is too strong even mid-schedule; the V-signal keeps collapsing seeds;
+the TD-consistency gate misfires when engaged from step 0 (same early-engagement
+disease). Rank-1 reading: at convergence the on-policy value sequence saturates at
+energy-rank 1, so r=1 pulls toward the *actual* solution manifold rather than the
+looser r=2 shell — a harder, better-aimed pull once TD has shaped Q.
+
+## Round 3 — branch `dqn/hankel-regularisation-speedup-2` (replication + tuning, no new code)
+
+N=10 seeds for `baseline` and `gated_order1` (seeds 0–9), plus local tuning at 4
+seeds each: `gated_order1_l2` (λ=2e-2) and `gated_order1_early` (warm-up 1000 +
+ramp 1000 — engage the rank-1 pull one phase earlier).
