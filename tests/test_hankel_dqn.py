@@ -179,6 +179,26 @@ def test_recency_biased_windows():
     assert from_new_uniform < 500, f"uniform drew {from_new_uniform}/1000 from newest 3"
 
 
+def test_lambda_schedules_and_v_signal():
+    a = _make_agent(0.05, decay_grad_steps=100)
+    a._grad_steps = 0
+    assert abs(a._lambda_eff() - 0.05) < 1e-12
+    a._grad_steps = 50
+    assert abs(a._lambda_eff() - 0.025) < 1e-9
+    a._grad_steps = 200
+    assert a._lambda_eff() == 0.0
+    b = _make_agent(0.05, warmup=10, ramp_grad_steps=10, decay_grad_steps=100)
+    b._grad_steps = 5
+    assert b._lambda_eff() == 0.0
+    b._grad_steps = 20  # ramp done (k=10), decay factor 0.9
+    assert abs(b._lambda_eff() - 0.05 * 0.9) < 1e-9
+    v = _make_agent(0.01, seed=2, hankel_signal="v")
+    _fill_agent(v)
+    d = v.train()
+    assert d is not None and not np.isnan(d["batch_eff_rank"])
+    assert v.nan_skips == 0
+
+
 def test_windows_td_includes_terminal_anchor():
     a = _make_agent(0.01, seed=1, td_source="windows")
     _fill_agent(a, n_eps=2, ep_len=12)  # episode 0 terminates
