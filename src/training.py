@@ -82,7 +82,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         while not (terminated or truncated):
             action = agent.pi(state)
             next_state, reward, terminated, truncated, info = env.step(action)
-            agent.update_buffer(state, action, reward, next_state, terminated) if not atari else  agent.update_buffer_atari(state, action, reward, next_state, terminated)
+            agent.update_buffer(state, action, reward, next_state, terminated, truncated) if not atari else  agent.update_buffer_atari(state, action, reward, next_state, terminated, truncated)
             state = next_state
             # A ScaleReward-wrapped env trains the agent on scaled rewards but exposes
             # the raw game score in info — log raw so reward curves and solved_reward
@@ -103,8 +103,10 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             
             if s_train >= train_frequency_steps and not use_episode_training:
                 s_train = 0
-                # train the agent 
-                agent.train() # train every train_frequency_steps steps
+                # train the agent
+                diag = agent.train() # train every train_frequency_steps steps
+                if diag is not None and run_logger is not None:
+                    run_logger.log_train_diagnostics(episode, **diag)
 
         # reset the environment for next episode
         state, _ = env.reset()
@@ -114,8 +116,10 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         # This is mainly relevant only when use_episode_training is True
         if s_train >= train_frequency_steps:
             s_train = 0
-            # train the agent 
-            agent.train() # train every train_frequency_steps steps
+            # train the agent
+            diag = agent.train() # train every train_frequency_steps steps
+            if diag is not None and run_logger is not None:
+                run_logger.log_train_diagnostics(episode, **diag)
         
         # print training status
         if episode % no_eps_to_avg == 0:

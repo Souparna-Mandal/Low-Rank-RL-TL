@@ -100,6 +100,19 @@ class RunLogger:
         np.savez_compressed(path, **rollouts)
         return path
 
+    def log_train_diagnostics(self, episode, **metrics) -> None:
+        """Append one row of agent.train() diagnostics (td_loss, penalty terms,
+        rank/gate stats, ...) to train_diagnostics.csv. Columns come from the
+        metric keys on first write, so any agent's diagnostics dict fits."""
+        path = self.dir / "train_diagnostics.csv"
+        header_needed = not path.exists()
+        keys = sorted(metrics)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if header_needed:
+                writer.writerow(["episode"] + keys)
+            writer.writerow([episode] + [f"{metrics[k]:.6g}" for k in keys])
+
     def log_rewards(self, rewards) -> None:
         with open(self.dir / "rewards.csv", "w", newline="") as f:
             writer = csv.writer(f)

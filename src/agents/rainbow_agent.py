@@ -409,15 +409,17 @@ class RainbowDQNAgent(QAgent):
         return self.act_greedy(state_t)  # inherited: policy_net(state).argmax(1).item()
 
     # --------------------------------------------------------------- buffering
-    def _ingest(self, state_t, action_t, reward, next_state_t, terminated):
+    def _ingest(self, state_t, action_t, reward, next_state_t, terminated, truncated=False):
         """Feed one env transition into the n-step accumulator, emitting aggregated
-        n-step transitions into the prioritised buffer as windows complete."""
+        n-step transitions into the prioritised buffer as windows complete. On
+        truncation the tail windows are flushed too (bootstrapping from the stored
+        next_state, not marked terminal) so no window spans the episode reset."""
         self._nstep.append((state_t, action_t, float(reward), next_state_t, terminated))
-        if len(self._nstep) < self.n_step and not terminated:
+        if len(self._nstep) < self.n_step and not (terminated or truncated):
             return
         self._emit_front()
-        if terminated:
-            # Flush the shorter tail windows that end in this terminal transition.
+        if terminated or truncated:
+            # Flush the shorter tail windows that end in this final transition.
             while len(self._nstep) > 1:
                 self._nstep.popleft()
                 self._emit_front()
@@ -438,19 +440,19 @@ class RainbowDQNAgent(QAgent):
         self.replay_buffer.push(
             NStepTransition(s0, a0, None if term else next_state, reward_t, disc))
 
-    def update_buffer(self, state, action, reward, next_state, terminated):
+    def update_buffer(self, state, action, reward, next_state, terminated, truncated=False):
         state_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         action_t = torch.tensor([action], dtype=torch.long, device=self.device)
         next_state_t = (None if terminated else
                         torch.tensor(next_state, dtype=torch.float32, device=self.device).unsqueeze(0))
-        self._ingest(state_t, action_t, reward, next_state_t, terminated)
+        self._ingest(state_t, action_t, reward, next_state_t, terminated, truncated)
 
-    def update_buffer_atari(self, state, action, reward, next_state, terminated):
+    def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
         state_t = torch.tensor(state, dtype=torch.uint8).unsqueeze(0)
         action_t = torch.tensor([action], dtype=torch.long, device=self.device)
         next_state_t = (None if terminated else
                         torch.tensor(next_state, dtype=torch.uint8).unsqueeze(0))
-        self._ingest(state_t, action_t, reward, next_state_t, terminated)
+        self._ingest(state_t, action_t, reward, next_state_t, terminated, truncated)
 
     # --------------------------------------------------------------- learning
     def _quantile_huber(self, td, taus):
