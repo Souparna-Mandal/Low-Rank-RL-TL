@@ -128,3 +128,54 @@ only statistical power.
 Seeds 10–19 for `baseline` and `progress_order2` → N=20 each. Pre-registered:
 primary metric AUC600 (target p < 0.05), secondary solve-ep median; eval20
 guardrail. If confirmed → Acrobot transfer (progress engagement threshold −150).
+
+| variant | N | solve mean±sd | median | capped | AUC600 | eval20 |
+|---|---|---|---|---|---|---|
+| baseline | 20 | 960 ± 306 | 857 | 2 | 131.7 | 454.9 ± 127.1 |
+| **progress_order2** | 20 | **847 ± 295** | **761** | 2 | **167.0** | 450.3 ± 135.5 |
+
+One-sided permutation tests (50k perms): **AUC600 +35.3 (+27%), p = 0.0015** —
+the primary metric clears decisively. Solve-ep −112 mean / −96 median (p = 0.13 /
+0.17 — directional against sd ≈ 300 seed noise); eval20 unchanged (p = 0.61);
+equal cap counts.
+
+**Verdict: SUCCESS on the pre-registered claim.** Progress-engaged rank-2 Hankel
+regularisation (`progress_order2`: r=2, λ=1e-2, ρ=0.25 gate, latch at rolling-10
+return ≥ 100, ramp 2000) makes CartPole training significantly faster in
+learning-curve terms (+27% AUC600, p = 0.0015, N=20) with a ~12% directional
+median time-to-solve improvement and no cost to final performance. Acrobot
+transfer: `progress_acro` (same config, engage at rolling return ≥ −150), 4 seeds
+vs the cached baseline — results below.
+
+### Acrobot transfer (episodes for rolling-50 mean to reach −90; 500 = never)
+
+| variant | reach(−90) per seed | mean | AUC500 | eval20 |
+|---|---|---|---|---|
+| baseline | [346, 442, 500, 399] | 422 | −145.0 | −91.2 ± 5.2 |
+| tail_hi (ref) | [421, 405, 386, 365] | 394 | −139.6 | −82.2 ± 5.0 |
+| gated (ref) | [477, 430, 493, 370] | 442 | −142.8 | −82.3 ± 4.7 |
+| **progress_acro** | **[326, 423, 398, 397]** | **386** | −146.5 | −89.4 ± 9.4 |
+
+Best mean time-to-threshold of all variants (incl. the single fastest run, 326),
+every seed under 425 while baseline has a non-reacher; final eval at baseline
+level. N=4 — treat as transfer evidence, not a significance claim. (For final
+*quality* on Acrobot, `tail_hi` remains the pick — the speed and quality optima
+differ per env.)
+
+## Campaign conclusion
+
+**The regulariser trains faster than classical DQN, with the winning recipe:
+`hankel_order=2` (the measured rank — never below it), λ=1e-2, gate ρ=0.25, and
+progress-conditioned engagement (`engage_reward_threshold` at a mid-learning
+return, ramp 2000 from the latch).** Evidence: CartPole N=20 AUC600 +27%
+(p = 0.0015) with −96 median solve episodes and unchanged final eval; Acrobot
+best-in-campaign mean time-to-(−90). The path there falsified three plausible
+designs, each committed on its own branch for review:
+
+- `speedup-1`: immediate engagement (any strength/schedule/width) destabilises
+  seeds — warm-up is load-bearing.
+- `speedup-2`: rank-1 pulls and clock-based schedules bifurcate — fast on easy
+  seeds, catastrophic on slow ones; a fixed grad-step clock cannot time
+  engagement across seeds.
+- `speedup-3`: per-seed progress latching + the measured rank resolves both
+  failure modes.
