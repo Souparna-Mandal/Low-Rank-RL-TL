@@ -128,8 +128,11 @@ class HankelDQNAgent(QAgent):
     Extra kwargs over QAgent (all mappable to config agent: keys):
         hankel_weight: λ. hankel_order: target rank r. window_len/n_windows:
         penalty batch shape. gate_threshold: skip windows with relative tail
-        energy above this (None = no gate). warmup_grad_steps/ramp_grad_steps:
-        λ is 0 for the first warmup steps then ramps linearly over ramp steps.
+        energy above this (None = no gate). warmup/ramp/decay_grad_steps: λ is
+        0 for the first warmup steps, ramps linearly over ramp steps, and/or
+        decays linearly to 0 over decay steps.
+        hankel_signal: "q" penalises Q(s_t,a_t) along the window, "v" penalises
+        max_a Q(s_t,·) — the sequence that drives the greedy policy.
         penalize_terminal_windows: allow windows ending on a terminal step.
         td_source: "iid" (default) or "windows" (TD pairs taken from inside the
         penalty windows — correlated batches, kept for ablation).
@@ -140,11 +143,14 @@ class HankelDQNAgent(QAgent):
     def __init__(self, *, hankel_weight: float = 0.0, hankel_order: int = 2,
                  window_len: int = 16, n_windows: int = 8,
                  gate_threshold: float | None = None, warmup_grad_steps: int = 0,
-                 ramp_grad_steps: int = 0, penalize_terminal_windows: bool = False,
-                 td_source: str = "iid", hankel_jitter: float = 0.0,
+                 ramp_grad_steps: int = 0, decay_grad_steps: int = 0,
+                 penalize_terminal_windows: bool = False,
+                 td_source: str = "iid", hankel_signal: str = "q",
+                 hankel_jitter: float = 0.0,
                  window_half_life: float | None = None, **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         assert td_source in ("iid", "windows")
+        assert hankel_signal in ("q", "v")
         self.replay_buffer = EpisodicReplayBuffer(q_agent_kwargs["replay_buffer_capacity"])
         self.hankel_weight = hankel_weight
         self.window_len = window_len
@@ -154,6 +160,8 @@ class HankelDQNAgent(QAgent):
         self.window_half_life = window_half_life
         self.warmup_grad_steps = warmup_grad_steps
         self.ramp_grad_steps = ramp_grad_steps
+        self.decay_grad_steps = decay_grad_steps
+        self.hankel_signal = hankel_signal
         self.hankel_penalty = HankelRankPenalty(hankel_order, gate_threshold,
                                                 jitter=hankel_jitter)
         self._grad_steps = 0
@@ -177,9 +185,13 @@ class HankelDQNAgent(QAgent):
         k = self._grad_steps
         if k < self.warmup_grad_steps:
             return 0.0
+        k -= self.warmup_grad_steps
+        factor = 1.0
         if self.ramp_grad_steps > 0:
-            return self.hankel_weight * min(1.0, (k - self.warmup_grad_steps) / self.ramp_grad_steps)
-        return self.hankel_weight
+            factor *= min(1.0, k / self.ramp_grad_steps)
+        if self.decay_grad_steps > 0:
+            factor *= max(0.0, 1.0 - k / self.decay_grad_steps)
+        return self.hankel_weight * factor
 
     def _td_batch(self):
         """(states, actions, rewards, next_states-list) for the TD loss."""
@@ -232,9 +244,10 @@ class HankelDQNAgent(QAgent):
                 n, T = w_actions.shape
                 # λ=0 (warm-up): diagnostics only, keep the SVD out of the graph.
                 with torch.enable_grad() if lam > 0 else torch.no_grad():
-                    q_seq = self.policy_net(w_states.reshape(n * T, -1)) \
-                        .gather(1, w_actions.reshape(n * T, 1)).view(n, T)
-                    penalty, pdiag = self.hankel_penalty(q_seq)
+                    out = self.policy_net(w_states.reshape(n * T, -1))
+                    seq = (out.max(dim=1).values if self.hankel_signal == "v" else
+                           out.gather(1, w_actions.reshape(n * T, 1)).squeeze(1)).view(n, T)
+                    penalty, pdiag = self.hankel_penalty(seq)
                 diag.update(pdiag)
                 diag["penalty_weighted"] = lam * pdiag["penalty_raw"]
                 if lam > 0:
