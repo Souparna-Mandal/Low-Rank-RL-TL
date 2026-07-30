@@ -1,4 +1,5 @@
 import random
+from collections import deque
 
 import numpy as np
 import torch
@@ -133,6 +134,9 @@ class HankelDQNAgent(QAgent):
         decays linearly to 0 over decay steps.
         hankel_signal: "q" penalises Q(s_t,a_t) along the window, "v" penalises
         max_a Q(s_t,·) — the sequence that drives the greedy policy.
+        engage_reward_threshold/engage_reward_window: latch the penalty on only
+        once the rolling mean episode return crosses the threshold (per-seed
+        timing; replaces the grad-step warm-up; ramp runs from engagement).
         penalize_terminal_windows: allow windows ending on a terminal step.
         td_source: "iid" (default) or "windows" (TD pairs taken from inside the
         penalty windows — correlated batches, kept for ablation).
@@ -147,6 +151,8 @@ class HankelDQNAgent(QAgent):
                  penalize_terminal_windows: bool = False,
                  td_source: str = "iid", hankel_signal: str = "q",
                  hankel_jitter: float = 0.0, td_gate_scale: float | None = None,
+                 engage_reward_threshold: float | None = None,
+                 engage_reward_window: int = 10,
                  window_half_life: float | None = None, **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         assert td_source in ("iid", "windows")
@@ -163,6 +169,10 @@ class HankelDQNAgent(QAgent):
         self.decay_grad_steps = decay_grad_steps
         self.hankel_signal = hankel_signal
         self.td_gate_scale = td_gate_scale
+        self.engage_reward_threshold = engage_reward_threshold
+        self._ep_returns = deque(maxlen=engage_reward_window)
+        self._open_return = 0.0
+        self._engaged_at: int | None = None
         self.hankel_penalty = HankelRankPenalty(hankel_order, gate_threshold,
                                                 jitter=hankel_jitter)
         self._grad_steps = 0
@@ -175,8 +185,15 @@ class HankelDQNAgent(QAgent):
         next_state = (None if terminated else
                       torch.tensor(next_state, dtype=torch.float32, device=self.device).unsqueeze(0))
         self.replay_buffer.append(state, action, reward, next_state)
+        self._open_return += float(reward[0])
         if terminated or truncated:
             self.replay_buffer.close(terminated)
+            self._ep_returns.append(self._open_return)
+            self._open_return = 0.0
+            if (self._engaged_at is None and self.engage_reward_threshold is not None
+                    and len(self._ep_returns) == self._ep_returns.maxlen
+                    and float(np.mean(self._ep_returns)) >= self.engage_reward_threshold):
+                self._engaged_at = self._grad_steps  # latch: ramp runs from here
 
     def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
         raise NotImplementedError(
@@ -184,9 +201,15 @@ class HankelDQNAgent(QAgent):
 
     def _lambda_eff(self) -> float:
         k = self._grad_steps
-        if k < self.warmup_grad_steps:
+        if self.engage_reward_threshold is not None:
+            # Progress-conditioned engagement replaces the grad-step warm-up.
+            if self._engaged_at is None:
+                return 0.0
+            k -= self._engaged_at
+        elif k < self.warmup_grad_steps:
             return 0.0
-        k -= self.warmup_grad_steps
+        else:
+            k -= self.warmup_grad_steps
         factor = 1.0
         if self.ramp_grad_steps > 0:
             factor *= min(1.0, k / self.ramp_grad_steps)
