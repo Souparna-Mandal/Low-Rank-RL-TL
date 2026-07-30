@@ -219,6 +219,22 @@ def test_td_consistency_gate():
     assert d["ext_gate_frac"] == 1.0 and d["penalty_raw"] == 0.0
 
 
+def test_progress_conditioned_engagement():
+    a = _make_agent(0.01, engage_reward_threshold=50.0, engage_reward_window=2)
+    _fill_agent(a, n_eps=2, ep_len=12)  # episode returns 12 < 50 -> stay off
+    assert a._engaged_at is None and a._lambda_eff() == 0.0
+    a._grad_steps = 500
+    _fill_agent(a, n_eps=2, ep_len=60)  # returns 60 -> rolling mean crosses
+    assert a._engaged_at == 500
+    assert a._lambda_eff() == 0.01  # no ramp: full weight from engagement
+    b = _make_agent(0.01, engage_reward_threshold=50.0, engage_reward_window=2,
+                    ramp_grad_steps=100)
+    _fill_agent(b, n_eps=2, ep_len=60)
+    assert b._engaged_at == 0 and abs(b._lambda_eff()) < 1e-12  # ramp starts at 0
+    b._grad_steps = 50
+    assert abs(b._lambda_eff() - 0.005) < 1e-9
+
+
 def test_windows_td_includes_terminal_anchor():
     a = _make_agent(0.01, seed=1, td_source="windows")
     _fill_agent(a, n_eps=2, ep_len=12)  # episode 0 terminates

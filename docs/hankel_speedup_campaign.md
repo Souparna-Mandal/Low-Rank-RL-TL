@@ -103,3 +103,28 @@ free, no training-loop changes.
 Variants (seeds 0–9 for power, vs cached N=10 baseline): `progress_order1`
 (r=1, λ=1e-2, engage@100/10eps, ramp 2000, ρ=0.25), `progress_order1_l2` (λ=2e-2),
 `progress_order2` (r=2 control for the rank choice).
+
+| variant | N | solve mean±sd | median | capped | AUC600 | eval20 |
+|---|---|---|---|---|---|---|
+| baseline | 10 | 938 ± 342 | 874 | 1 | 138.1 | 457.2 ± 115.4 |
+| progress_order1 | 10 | 1112 ± 355 | 1164 | 3 | 146.1 | 365.6 ± 205.9 |
+| progress_order1_l2 | 10 | 942 ± 393 | 936 | 2 | 161.3 | 406.0 ± 185.3 |
+| **progress_order2** | 10 | **833 ± 258** | **780** | 1 | **165.7** | 450.9 ± 147.3 |
+
+Permutation tests vs baseline: `progress_order2` solve −105 (p = 0.238), median
+−94 (p = 0.302), AUC600 +27.7 (**p = 0.051**); the order-1 variants are flat or
+worse.
+
+**Verdict: rank-1 was the villain, not (only) the clock.** Even with per-seed
+engagement, r=1 collapses hard seeds — pulling toward a rank-1 (≈ geometric) value
+sequence is over-compression that can destroy the policy mid-training (consistent
+with design caveat #3: do not penalise toward rank < measured). r=2 with
+progress-conditioned engagement is the campaign's most robust variant: better
+mean/median solve, no extra caps, +20% AUC at p = 0.051, eval preserved. Missing
+only statistical power.
+
+## Round 5 — branch `dqn/hankel-regularisation-speedup-3` (replication for power, no new code)
+
+Seeds 10–19 for `baseline` and `progress_order2` → N=20 each. Pre-registered:
+primary metric AUC600 (target p < 0.05), secondary solve-ep median; eval20
+guardrail. If confirmed → Acrobot transfer (progress engagement threshold −150).
