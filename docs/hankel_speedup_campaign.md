@@ -72,3 +72,34 @@ looser r=2 shell — a harder, better-aimed pull once TD has shaped Q.
 N=10 seeds for `baseline` and `gated_order1` (seeds 0–9), plus local tuning at 4
 seeds each: `gated_order1_l2` (λ=2e-2) and `gated_order1_early` (warm-up 1000 +
 ramp 1000 — engage the rank-1 pull one phase earlier).
+
+| variant | N | solve mean±sd | median | AUC600 | eval20 |
+|---|---|---|---|---|---|
+| baseline | 10 | 938 ± 342 | 874 | 138.1 | 457.2 ± 115.4 |
+| gated_order1 | 10 | 937 ± 385 | 800 | 165.8 | 364.1 ± 203.3 |
+| gated_order1_l2 | 4 | 826 ± 360 | 670 | 166.6 | 488.3 ± 20.3 |
+| gated_order1_early | 4 | 873 ± 370 | 728 | 183.8 | 394.5 ± 175.4 |
+
+Permutation tests (N=10 vs N=10): solve-ep diff ≈ 0 (p = 0.50); AUC600 +27.8
+(p = 0.081, suggestive only).
+
+**Verdict: the round-2 win does not replicate at N=10.** Seeds 4–9 are much harder
+for everyone (baseline mean jumps 638 → 938), and `gated_order1` bifurcates: it
+accelerates the easy seeds (500/540/662/694/734) but hits the 1500 cap with eval
+collapse on three hard seeds. Diagnosis: **clock-based engagement is the bug** — a
+fixed grad-step warm-up fires while slow seeds' Q is still wrong, and the rank-1
+pull then consolidates bad structure (the same disease as round 1, one phase
+later). Engagement must be conditioned on each run's own learning progress, not on
+a wall clock.
+
+## Round 4 — branch `dqn/hankel-regularisation-speedup-3` (progress-conditioned engagement)
+
+New feature: `engage_reward_threshold` / `engage_reward_window` — the agent tracks
+its own rolling episode returns (from the episodic buffer) and latches the penalty
+on only once the rolling mean crosses the threshold; the ramp then runs from the
+engagement point. Slow seeds engage late, fast seeds early — per-seed timing for
+free, no training-loop changes.
+
+Variants (seeds 0–9 for power, vs cached N=10 baseline): `progress_order1`
+(r=1, λ=1e-2, engage@100/10eps, ramp 2000, ρ=0.25), `progress_order1_l2` (λ=2e-2),
+`progress_order2` (r=2 control for the rank choice).
