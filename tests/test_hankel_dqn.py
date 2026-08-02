@@ -179,6 +179,62 @@ def test_recency_biased_windows():
     assert from_new_uniform < 500, f"uniform drew {from_new_uniform}/1000 from newest 3"
 
 
+def test_lambda_schedules_and_v_signal():
+    a = _make_agent(0.05, decay_grad_steps=100)
+    a._grad_steps = 0
+    assert abs(a._lambda_eff() - 0.05) < 1e-12
+    a._grad_steps = 50
+    assert abs(a._lambda_eff() - 0.025) < 1e-9
+    a._grad_steps = 200
+    assert a._lambda_eff() == 0.0
+    b = _make_agent(0.05, warmup=10, ramp_grad_steps=10, decay_grad_steps=100)
+    b._grad_steps = 5
+    assert b._lambda_eff() == 0.0
+    b._grad_steps = 20  # ramp done (k=10), decay factor 0.9
+    assert abs(b._lambda_eff() - 0.05 * 0.9) < 1e-9
+    v = _make_agent(0.01, seed=2, hankel_signal="v")
+    _fill_agent(v)
+    d = v.train()
+    assert d is not None and not np.isnan(d["batch_eff_rank"])
+    assert v.nan_skips == 0
+
+
+def test_td_consistency_gate():
+    # keep_mask plumbing: all-False mask kills the penalty and reports ext_gate_frac.
+    pen = HankelRankPenalty(order=2)
+    torch.manual_seed(6)
+    x = torch.randn(6, 16, requires_grad=True)
+    p, d = pen(x, keep_mask=torch.zeros(6, dtype=torch.bool))
+    assert float(p.detach()) == 0.0 and d["ext_gate_frac"] == 1.0
+    p, d = pen(x, keep_mask=torch.ones(6, dtype=torch.bool))
+    assert float(p.detach()) > 0 and d["ext_gate_frac"] == 0.0
+    # Agent-level: huge scale keeps everything, zero scale masks everything.
+    a = _make_agent(0.01, seed=4, td_gate_scale=1e9)
+    _fill_agent(a)
+    d = a.train()
+    assert d["ext_gate_frac"] == 0.0
+    b = _make_agent(0.01, seed=4, td_gate_scale=0.0)
+    _fill_agent(b)
+    d = b.train()
+    assert d["ext_gate_frac"] == 1.0 and d["penalty_raw"] == 0.0
+
+
+def test_progress_conditioned_engagement():
+    a = _make_agent(0.01, engage_reward_threshold=50.0, engage_reward_window=2)
+    _fill_agent(a, n_eps=2, ep_len=12)  # episode returns 12 < 50 -> stay off
+    assert a._engaged_at is None and a._lambda_eff() == 0.0
+    a._grad_steps = 500
+    _fill_agent(a, n_eps=2, ep_len=60)  # returns 60 -> rolling mean crosses
+    assert a._engaged_at == 500
+    assert a._lambda_eff() == 0.01  # no ramp: full weight from engagement
+    b = _make_agent(0.01, engage_reward_threshold=50.0, engage_reward_window=2,
+                    ramp_grad_steps=100)
+    _fill_agent(b, n_eps=2, ep_len=60)
+    assert b._engaged_at == 0 and abs(b._lambda_eff()) < 1e-12  # ramp starts at 0
+    b._grad_steps = 50
+    assert abs(b._lambda_eff() - 0.005) < 1e-9
+
+
 def test_windows_td_includes_terminal_anchor():
     a = _make_agent(0.01, seed=1, td_source="windows")
     _fill_agent(a, n_eps=2, ep_len=12)  # episode 0 terminates
