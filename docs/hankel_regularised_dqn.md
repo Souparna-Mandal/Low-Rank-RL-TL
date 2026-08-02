@@ -1,21 +1,25 @@
 # HR-DQN: Hankel-Rank-Regularised DQN
 
 A modification of the classical DQN loss that adds a differentiable penalty on the
-**Hankel rank of predicted Q-values along replayed sub-trajectories**. Implemented in
-[`src/agents/hankel_dqn_agent.py`](../src/agents/hankel_dqn_agent.py) (agent + episodic
-replay buffer) and [`src/agents/hankel_regulariser.py`](../src/agents/hankel_regulariser.py)
-(the penalty); benchmarked in `experiments/dqn_cartpole/exp1_hankel.ipynb` and
+**Hankel rank of predicted $Q_{\pi}(s,a)$ or $V_{\pi}(s)$ along replayed sub-trajectories**. 
+
+Changes are: 
+
+1. [`src/agents/hankel_dqn_agent.py`](../src/agents/hankel_dqn_agent.py) (agent + episodic
+replay buffer) 
+2. [`src/agents/hankel_regulariser.py`](../src/agents/hankel_regulariser.py)
+(the penalty)
+
+3. benchmarked in `experiments/dqn_cartpole/exp1_hankel.ipynb` and
 `experiments/dqn_acrobot_2_revised/exp1_hankel.ipynb`.
 
-## Motivation (empirical, not theory-first)
+## Motivation 
 
-The analysis runs in this repo show that Hankel matrices built from value/Q signals
-along rollouts of the *learned (near-optimal) policy* are consistently low-rank —
-CartPole ≈ rank 2 — and the same low rank shows up on **sub-trajectories**, so the
-property is local and measurable on short replay windows. HR-DQN bets on the converse
-direction: since the property holds at the solutions we find, *enforcing it during
-training* biases the search toward the region of function space where good solutions
-were observed to live. What the penalty means is plain linear algebra: Hankel rank ≤ r
+The analysis runs in this repo show that Hankel matrices built from value/Q signals along rollouts of the *learned  policy* are consistently low-rank —
+CartPole ≈ rank 1 — and the same low rank shows up on **sub-trajectories**, so the property is local and measurable on short replay windows. HR-DQN bets on the inverse direction, since the property holds upon convergence and during training we believe that *enforcing it during
+training* biases the search toward the region of function space where good solutions were observed to live. 
+
+What the penalty means is plain linear algebra: Hankel rank ≤ r
 ⟺ the sequence approximately obeys an order-r linear recurrence, i.e. the value
 signal is predictable from its own recent past. The claim is *biasing*, not a hard
 restriction of the function class.
