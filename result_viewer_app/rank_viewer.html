@@ -220,6 +220,10 @@ const fmtN=x=>{if(x==null||!isFinite(x))return "–";
 const pretty=slug=>slug.split("-").map(w=>w.length<=2?w.toUpperCase():w[0].toUpperCase()+w.slice(1)).join(" ");
 const pad6=n=>String(n).padStart(6,"0");
 const mean=vs=>vs.reduce((a,b)=>a+b,0)/vs.length;
+// trailing rolling mean over [x,y] points (window w) — the notebook's smoothing
+const rollMean=(pts,w)=>{const out=[];let s=0;
+  for(let i=0;i<pts.length;i++){s+=pts[i][1];if(i>=w)s-=pts[i-w][1];
+    if(i>=w-1)out.push([pts[i][0],s/w]);}return out;};
 // loop-based min/max — Math.min(...arr) overflows the call stack on the
 // 100k+-element arrays a long run produces (each element becomes an argument)
 const arrMin=(a,f)=>{let m=Infinity;for(const v of a){const x=f?f(v):v;if(x<m)m=x;}return m;};
@@ -259,7 +263,8 @@ function computeSig(d){
   for(const k in d.figures){const e=d.figures[k].episodes;nfig+=e.length;
     if(e.length)lastEp=Math.max(lastEp,e[e.length-1]);}
   return [d.stats?d.stats.rows.length:0,d.sweep?d.sweep.rows.length:0,
-          d.rewards?d.rewards.length:0,(d.trajectories||[]).length,nfig,lastEp,
+          d.rewards?d.rewards.length:0,d.train?d.train.total:0,
+          d.evals?d.evals.length:0,(d.trajectories||[]).length,nfig,lastEp,
           Object.keys(d.figures).length].join("|");
 }
 function baseOfSlug(slug){
@@ -535,13 +540,14 @@ function render(){
 
   if(d.stats) app.append(metricsCard());
   if(d.rewards&&d.rewards.length) app.append(rewardCard());
+  if(d.train&&d.train.rows.length) app.append(trainCard());
 
   if(d.config){
     const det=el("details",{class:"cfg"},el("summary",{text:"config.yaml"}));
     det.append(el("pre",{text:d.config}));
     app.append(el("div",{class:"card"},det));
   }
-  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config)
+  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!d.train&&!eps.length&&!d.config)
     app.append(el("div",{class:"empty"},"This run has no artifacts yet."));
 }
 
@@ -552,6 +558,12 @@ function tiles(){
     const best=arrMax(rw,r=>r[1]), last=rw[rw.length-1][1];
     box.append(tile("Best reward",fmtN(best),`over ${rw.length.toLocaleString()} episodes`,true));
     box.append(tile("Final reward",fmtN(last),`episode ${rw[rw.length-1][0].toLocaleString()}`));
+  }
+  if(d.evals&&d.evals.length){
+    const m=mean(d.evals);
+    const sd=Math.sqrt(mean(d.evals.map(v=>(v-m)*(v-m))));
+    box.append(tile("Greedy eval",`${fmtN(m)} ± ${fmtN(sd)}`,
+      `${d.evals.length} greedy episodes after training`));
   }
   if(STATE.sweepRows){
     const rows=STATE.sweepRows;
@@ -937,10 +949,65 @@ function metricsCard(){
 function rewardCard(){
   const card=el("div",{class:"card"});
   card.append(el("h2",{text:"Episode reward"}),
-    el("p",{class:"desc",text:"Training reward per episode."}));
-  const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
+    el("p",{class:"desc",text:"Training reward per episode (faint) with a rolling mean of 10 (bold) — the learning curve."}));
+  const raw=STATE.data.rewards.map(r=>[r[0],r[1]]);
+  const smooth=raw.length>=10?rollMean(raw,10):null;
+  const series=[{name:"reward",color:"--accent",pts:raw,
+    opacity:smooth?.32:1,width:smooth?1.2:2,hover:!smooth}];
+  if(smooth)series.push({name:"mean of 10",color:"--accent",pts:smooth});
   card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
     episodeAxis:true,xLabel:"episode"}));
+  return card;
+}
+
+// ================= TRAINING DIAGNOSTICS (train_diagnostics.csv) =================
+// The regulariser forensics: one small-multiple per diagnostic the agent's
+// train() reports — TD loss, raw/weighted penalty, λ schedule, gate fractions.
+const DIAG_LABELS={
+  td_loss:["TD loss","Huber TD error — does the penalty fight the TD objective?"],
+  penalty_raw:["Raw penalty","relative singular-value tail beyond the target rank r"],
+  penalty_weighted:["Weighted penalty","λ_eff × raw penalty — its contribution to the loss"],
+  lambda_eff:["λ effective","penalty weight after warm-up / ramp / progress latch"],
+  batch_eff_rank:["Penalty-batch eff-rank","energy-rank(0.9) of the sampled window batch"],
+  rel_tail:["Relative tail","mean tail / total singular energy of sampled windows"],
+  gate_frac:["Gate fraction","windows dropped: relative tail above ρ (off-manifold)"],
+  converged_frac:["Converged fraction","windows already at rank ≤ r (nothing to optimise)"],
+  ext_gate_frac:["External gate fraction","windows dropped by the TD-consistency gate"],
+  nan_skips:["NaN skips","cumulative non-finite loss/grad updates skipped"],
+};
+const DIAG_ORDER=Object.keys(DIAG_LABELS);
+function trainCard(){
+  const t=STATE.data.train, card=el("div",{class:"card"});
+  const cover=t.rows.length<t.total
+    ?`showing ${t.rows.length.toLocaleString()} of ${t.total.toLocaleString()} train() calls (downsampled for display — the raw CSV has every row)`
+    :`${t.total.toLocaleString()} train() calls`;
+  card.append(el("h2",{text:"Training diagnostics"}),
+    el("p",{class:"desc",text:"Per-train()-call agent diagnostics (regulariser forensics). Faint = raw, bold = rolling mean. "+cover+"."}));
+  const ci=t.columns.indexOf("call");
+  const keys=[...DIAG_ORDER.filter(k=>t.columns.includes(k)),
+              ...t.columns.filter(c=>!DIAG_ORDER.includes(c)&&c!=="call"&&c!=="episode")];
+  const grid=el("div",{class:"grid-charts"});
+  for(const k of keys){
+    const j=t.columns.indexOf(k); if(j<0)continue;
+    const pts=[];
+    for(const r of t.rows){
+      const v=parseFloat(r[j]);
+      if(isFinite(v))pts.push([+r[ci],v]);
+    }
+    if(!pts.length)continue;  // e.g. penalty columns are all-NaN on a λ=0 baseline
+    const [label,hint]=DIAG_LABELS[k]||[pretty(k.replace(/_/g,"-")),""];
+    const w=Math.min(25,Math.max(1,Math.round(pts.length/60)));
+    const smooth=w>1&&pts.length>=3*w?rollMean(pts,w):null;
+    const series=[{name:label,color:"--accent",pts,endLabel:false,
+      opacity:smooth?.3:1,width:smooth?1.1:2,hover:!smooth}];
+    if(smooth)series.push({name:`mean of ${w}`,color:"--accent",pts:smooth,endLabel:false});
+    grid.append(lineChart({title:label,hint,series,xLabel:"train() call",xPrefix:"call "}));
+  }
+  card.append(grid);
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/train_diagnostics.csv`,
+      download:"train_diagnostics.csv",text:"train_diagnostics.csv"})));
   return card;
 }
 

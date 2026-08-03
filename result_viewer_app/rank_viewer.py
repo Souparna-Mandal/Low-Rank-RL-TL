@@ -46,7 +46,8 @@ def scan_runs(root: pathlib.Path) -> list[dict]:
     out = []
     for stats in sorted(root.glob("*/runs/*/")):
         artifacts = [p for p in (stats / "rank_stats.csv", stats / "rewards.csv",
-                                 stats / "hankel_sweep.csv")
+                                 stats / "hankel_sweep.csv",
+                                 stats / "train_diagnostics.csv", stats / "eval.csv")
                      if p.exists()]
         has_figs = (stats / "figures").is_dir() and any((stats / "figures").glob("*.png"))
         if not artifacts and not has_figs:
@@ -80,7 +81,8 @@ def run_sig(run_dir: pathlib.Path) -> str:
     figures/trajectories dir mtimes (which bump when a file is added). The
     frontend polls this instead of re-downloading the multi-MB payload."""
     parts = []
-    for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv"):
+    for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv",
+                 "train_diagnostics.csv", "eval.csv"):
         p = run_dir / name
         if p.exists():
             st = p.stat()
@@ -95,7 +97,8 @@ def run_sig(run_dir: pathlib.Path) -> str:
 def load_run(run_dir: pathlib.Path) -> dict:
     """Parse one run directory into the JSON payload the frontend renders."""
     payload: dict = {"config": None, "stats": None, "sweep": None,
-                     "rewards": None, "figures": {}, "trajectories": [],
+                     "rewards": None, "train": None, "evals": None,
+                     "figures": {}, "trajectories": [],
                      "sig": run_sig(run_dir)}
 
     cfg = run_dir / "config.yaml"
@@ -136,6 +139,32 @@ def load_run(run_dir: pathlib.Path) -> dict:
                 except (ValueError, IndexError):
                     continue  # torn last line during a rewrite
         payload["rewards"] = pts
+
+    # per-train()-call agent diagnostics (td_loss, penalty terms, gate stats, ...)
+    train = _csv_table(run_dir / "train_diagnostics.csv")
+    if train and train["rows"]:
+        total = len(train["rows"])
+        # A high-frequency run logs one row per train() call — decimate for the
+        # payload (the raw CSV link keeps everything). "call" preserves each
+        # kept row's original index so the x-axis stays honest after striding.
+        step = max(1, total // 6000)
+        rows = [[i] + r for i, r in enumerate(train["rows"])][::step]
+        payload["train"] = {"columns": ["call"] + train["columns"],
+                            "rows": rows, "total": total}
+
+    # final greedy evaluation episodes (eval.csv: episode, reward)
+    evalcsv = run_dir / "eval.csv"
+    if evalcsv.exists():
+        vals = []
+        with open(evalcsv, newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)
+            for row in reader:
+                try:
+                    vals.append(float(row[1]))
+                except (ValueError, IndexError):
+                    continue
+        payload["evals"] = vals or None
 
     figdir = run_dir / "figures"
     if figdir.is_dir():

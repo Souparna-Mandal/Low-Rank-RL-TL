@@ -48,10 +48,13 @@ class HankelRankPenalty(nn.Module):
         if self.jitter > 0:
             seqs = seqs + self.jitter * seqs.detach().std().clamp_min(1e-8) * torch.randn_like(seqs)
         H = seqs.unfold(dimension=1, size=L, step=1)  # (B, T-L+1, L)
-        # float64 for a stable svdvals backward; MPS has no float64, so hop to
-        # CPU first, then widen (the combined .to(cpu, float64) is rejected on
-        # MPS, and so is its backward replay — autograd flows across both hops).
-        H = H.to("cpu").double() if H.device.type == "mps" else H.double()
+        # float64 for a stable svdvals backward. The Hankel blocks are tiny
+        # (~11x10), where batched GPU SVD is pure launch/workspace overhead —
+        # CPU LAPACK is ~15x faster fwd+bwd — so every non-CPU device hops to
+        # CPU (autograd flows across the hops). On MPS the hop must also
+        # precede widening: no float64 there, and the combined
+        # .to(cpu, float64) is rejected, as is its backward replay.
+        H = H.double() if H.device.type == "cpu" else H.to("cpu").double()
         svals = torch.linalg.svdvals(H)  # (B, min(T-L+1, L))
         tail = svals[:, self.order:].sum(dim=1)
         total = svals.sum(dim=1).clamp_min(1e-12)

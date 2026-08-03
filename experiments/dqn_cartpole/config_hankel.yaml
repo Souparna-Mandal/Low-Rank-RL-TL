@@ -29,31 +29,31 @@ network:
 agent:
   replay_buffer_capacity: 100000
   batch_size: 128
-  nn_learning_rate: 0.0005
+  nn_learning_rate: 0.00025
   eps_start: 1.0
-  eps_min: 0.01
+  eps_min: 0.05
   decay_rate: 0.99992
   discount_factor: 0.99
-  TD_LR: 0.3           # soft target-network updates
+  TD_LR: 0.005          # soft target-network updates
   buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
-  gd_steps_ceil: 40     # hard cap on gradient steps per training call
-  grad_clip_norm: 10.0  # max global L2 norm for gradient clipping per step
+  gd_steps_ceil: 1     # hard cap on gradient steps per training call
+  grad_clip_norm: 60.0  # max global L2 norm for gradient clipping per step
   double: True
   # --- Hankel low-rank regulariser (HankelDQNAgent; hankel_weight 0 => exact QAgent) ---
-  hankel_weight: 0.01       # lambda on the truncated singular-value tail
-  hankel_order: 2           # target Hankel rank r (measured rank on CartPole)
+  hankel_weight: 1       # lambda on the truncated singular-value tail
+  hankel_order: 1           # target Hankel rank r (measured rank on CartPole)
   window_len: 16            # sub-trajectory window T; Hankel is 9x8
-  n_windows: 8              # penalty windows per gradient step
-  gate_threshold: 0.25      # skip windows with relative tail energy above this
-  warmup_grad_steps: 2000   # lambda = 0 for the first grad steps ...
-  ramp_grad_steps: 2000     # ... then ramps linearly to hankel_weight
-  window_half_life: null    # episodes; set (e.g. 20) to recency-bias penalty windows
+  n_windows: 16              # penalty windows per gradient step
+  gate_threshold: null      # skip windows with relative tail energy above this
+  warmup_grad_steps: 0   # lambda = 0 for the first grad steps ...
+  ramp_grad_steps: 1     # ... then ramps linearly to hankel_weight
+  window_half_life: 20    # episodes; set (e.g. 20) to recency-bias penalty windows
 
 training:
   no_episodes: 1500
-  target_network_update_steps: 100
-  train_frequency_steps: 50
-  use_episode_training: True   # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  target_network_update_steps: 10
+  train_frequency_steps: 10
+  use_episode_training: False   # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
   solved_reward: 475         # CartPole-v1 solved at >= 475 avg reward
   warmup_steps: 1500
   early_stopping_patience_eps: 50

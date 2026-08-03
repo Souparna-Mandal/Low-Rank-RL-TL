@@ -32,7 +32,8 @@ class EpisodicReplayBuffer:
         self._open_rewards.append(reward)
         self._pending_next = next_state
         while self._closed_len + len(self._open_states) > self.capacity and self._episodes:
-            self._closed_len -= len(self._episodes.pop(0)["states"])
+            # You can easily refactor which _closed_len + _open_len into an overall current capacity of the buffer, its much simpler to follow
+            self._closed_len -= len(self._episodes.pop(0)["states"]) # we are evicting the earlier episodes..however 2 side effects via one line
 
     def close(self, terminated: bool) -> None:
         """Seal the in-progress episode (call on terminated OR truncated)."""
@@ -72,11 +73,29 @@ class EpisodicReplayBuffer:
         next_states) with next_states a list of (1, obs) tensors or None."""
         lengths = [len(ep["states"]) for ep in self._episodes] + [len(self._open_states)]
         cum = np.cumsum([0] + lengths)
-        flat = random.sample(range(cum[-1]), batch_size)
+        flat = np.array(random.sample(range(int(cum[-1])), batch_size))
+        ep_idx = np.searchsorted(cum, flat, side="right") - 1
+        ts = flat - cum[ep_idx]
+        # Gather episode-by-episode (one index op per touched episode instead of
+        # four slices per transition, and one host->device copy for all indices);
+        # batch order is grouped by episode, which is fine — the TD loss is
+        # order-invariant within a batch.
+        groups = [(int(e), ts[ep_idx == e]) for e in np.unique(ep_idx)]
+        open_ts = groups.pop()[1] if groups and groups[-1][0] == len(self._episodes) else []
         states, actions, rewards, nexts = [], [], [], []
-        for f in flat:
-            ep_idx = int(np.searchsorted(cum, f, side="right")) - 1
-            s, a, r, nxt = self._transition(ep_idx, f - cum[ep_idx])
+        if groups:
+            idx_all = torch.as_tensor(np.concatenate([t for _, t in groups]),
+                                      device=self._episodes[0]["states"].device)
+            for (e, t), idx in zip(groups, torch.split(idx_all, [len(t) for _, t in groups])):
+                ep = self._episodes[e]
+                states.append(ep["states"][idx])
+                actions.append(ep["actions"][idx])
+                rewards.append(ep["rewards"][idx])
+                last = len(ep["states"]) - 1
+                nexts += [ep["states"][ti + 1:ti + 2] if ti < last else ep["final_next_state"]
+                          for ti in t]
+        for ti in open_ts:  # open episode lives in per-step python lists
+            s, a, r, nxt = self._transition(len(self._episodes), int(ti))
             states.append(s); actions.append(a); rewards.append(r); nexts.append(nxt)
         return torch.cat(states), torch.cat(actions), torch.cat(rewards), nexts
 
