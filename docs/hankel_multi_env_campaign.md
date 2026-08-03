@@ -65,3 +65,12 @@ despite ≥90% ε-greedy training success) and is recorded as observation only.
 Noted: on frozenlake_det the Hankel variants produce cycle-free greedy
 policies more often than baseline (2/4 vs 0/4) — possible structure effect,
 not a claim.
+
+## Round 2 results
+
+| env | verdict |
+|---|---|
+| LunarLander (N=10/arm) | **null**: tail_lo AUC +4.3 (p=0.16), eval −3.0 (p=0.67). Both arms mid-learning at 1200 eps — no detectable effect at this budget. |
+| CliffWalking (N=6/arm, training-AUC primary) | directional only: progress +37.9 (p=0.28), tail_lo +31.7 (p=0.32) against σ≈140 bimodal seed noise; resolving Δ≈35 would need N≈100/arm — not pursued. |
+| FrozenLake slippery vs det | boundary condition locked (see contrast section above). |
+| Pendulum | baseline healthy after retune (eval −536 ± 226 at N=2); final grid launched — deterministic, dense, physically second-order: the premise's best-case regime among the new envs. |
