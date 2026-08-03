@@ -57,7 +57,10 @@ def make_environment(env_name: str, render_mode = None,
             env = ScaleReward(env, reward_cfg['scale'])
         return env
 
-    env = gym.make(env_name, render_mode=render_mode)
+    # Extra constructor kwargs forwarded verbatim to gym.make
+    # (e.g. FrozenLake's is_slippery). config: gym_kwargs: {...}.
+    env = gym.make(env_name, render_mode=render_mode,
+                   **(env_kwargs.get('gym_kwargs') or {}))
 
     # Episode cap for envs registered without one (CliffWalking wanders
     # unboundedly under a random policy). config: time_limit: <steps>.
