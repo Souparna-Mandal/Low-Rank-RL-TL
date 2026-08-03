@@ -19,12 +19,12 @@ network:
   hidden_sizes: [128, 128]
 
 agent:
-  replay_buffer_capacity: 20000
+  replay_buffer_capacity: 50000
   batch_size: 128
   nn_learning_rate: 0.0003
   eps_start: 1.0
-  eps_min: 0.05
-  decay_rate: 0.99997     # slower decay: sparse reward needs sustained exploration
+  eps_min: 0.1
+  decay_rate: 0.99999   # per-step; sustained exploration for the sparse goal
   discount_factor: 0.99
   TD_LR: 0.005
   buffer_util: 1
@@ -39,12 +39,12 @@ agent:
   ramp_grad_steps: 0
 
 training:
-  no_episodes: 1500
+  no_episodes: 2500
   target_network_update_steps: 100
-  train_frequency_steps: 50
-  use_episode_training: True
+  train_frequency_steps: 16
+  use_episode_training: False   # train every train_frequency_steps
   solved_reward: -110       # MountainCar-v0 convention
-  warmup_steps: 1500
+  warmup_steps: 2000
   early_stopping_patience_eps: 50
   no_eps_to_avg: 10
 

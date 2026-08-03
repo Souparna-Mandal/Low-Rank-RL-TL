@@ -5,7 +5,7 @@ experiment:
   save_artifacts: true
 
 environment:
-  name: FrozenLake8x8-v1
+  name: FrozenLake-v1   # 4x4, slippery: 8x8 is beyond eps-greedy DQN's reach
   one_hot_obs: true
   render_mode: null
   discrete_config: null
@@ -25,7 +25,7 @@ agent:
   nn_learning_rate: 0.0003
   eps_start: 1.0
   eps_min: 0.05
-  decay_rate: 0.99997     # slower decay: sparse reward needs sustained exploration
+  decay_rate: 0.9999
   discount_factor: 0.99
   TD_LR: 0.005
   buffer_util: 1
@@ -40,11 +40,11 @@ agent:
   ramp_grad_steps: 0
 
 training:
-  no_episodes: 2500
+  no_episodes: 3000
   target_network_update_steps: 100
-  train_frequency_steps: 50
-  use_episode_training: True
-  solved_reward: 0.70
+  train_frequency_steps: 16
+  use_episode_training: False   # train every train_frequency_steps
+  solved_reward: 0.60   # eps-greedy training rate; greedy eval higher
   warmup_steps: 1500
   early_stopping_patience_eps: 50
   no_eps_to_avg: 10

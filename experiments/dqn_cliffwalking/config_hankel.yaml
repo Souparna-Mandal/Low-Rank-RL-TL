@@ -41,10 +41,10 @@ agent:
   ramp_grad_steps: 0
 
 training:
-  no_episodes: 600
+  no_episodes: 800
   target_network_update_steps: 100
-  train_frequency_steps: 50
-  use_episode_training: True
+  train_frequency_steps: 16
+  use_episode_training: False   # train every train_frequency_steps
   solved_reward: -25
   warmup_steps: 1500
   early_stopping_patience_eps: 50

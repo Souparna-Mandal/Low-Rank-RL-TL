@@ -6,6 +6,8 @@ experiment:
 
 environment:
   name: Pendulum-v1
+  reward:
+    scale: 0.05   # tame Q magnitudes; raw returns still logged via info
   discrete_action_bins: 9
   render_mode: null
   discrete_config: null
@@ -42,8 +44,8 @@ agent:
 training:
   no_episodes: 800
   target_network_update_steps: 100
-  train_frequency_steps: 50
-  use_episode_training: True
+  train_frequency_steps: 16
+  use_episode_training: False   # train every train_frequency_steps
   solved_reward: -200
   warmup_steps: 1500
   early_stopping_patience_eps: 50
