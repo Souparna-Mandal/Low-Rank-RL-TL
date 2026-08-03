@@ -104,3 +104,18 @@ Cell: Acrobot `argae_a25` seeds 4–19 (N=16) vs cached `baseline` same seeds.
 **Primary metric: final eval20 mean, one-sided permutation p < 0.05.**
 Secondary: non-learner count (eval < −120), AUC (directional only).
 Also: CartPole `argae_a25` seeds 0–7 as an exploratory transfer probe.
+
+## Round E — pre-registered collapse-prevention test (registered before launch)
+
+Failure-mode analysis of rounds A–D: baseline PPO's Acrobot deficit is
+entirely **rare early policy collapse** (2/20 seeds stuck at −500 for ≥ half
+of training; healthy baseline seeds match argae exactly). argae (α = 0.5) has
+0 bad outcomes in 20; all α ≥ 0.5 filter variants pooled: 0 in 38. The
+greedy-eval "failures" (train fine, argmax bad) are an evaluation-protocol
+artifact orthogonal to learning, so the registered metric is training-based.
+
+**Primary: bad-outcome rate — final-quarter mean training return < −150 —
+`argae` (α=0.5) vs `baseline`, fresh seeds 20–79 (N=60/arm), one-sided
+Fisher exact, p < 0.05.** Secondary: final-quarter mean (permutation,
+directional); sensitivity: pooled with seeds 0–19. Also launching: LunarLander
+baseline-vs-argae probe (4 seeds) as an exploratory second-env check.
