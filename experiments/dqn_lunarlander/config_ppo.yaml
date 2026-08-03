@@ -1,0 +1,46 @@
+experiment:
+  name: ppo_lunarlander_hankel
+  seed: 52
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: LunarLander-v3
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: False, state: []}
+
+network:
+  hidden_sizes: [64, 64]
+
+agent:
+  nn_learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 2048
+  minibatch_size: 256
+  update_epochs: 10
+  clip_eps: 0.2
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  # Hankel/AR structure knobs (variants override)
+  hankel_weight: 0.0
+  hankel_order: 2
+  window_len: 16
+  n_windows: 8
+  gate_threshold: 0.25
+  ramp_updates: 10
+  engage_reward_threshold: null
+  engage_reward_window: 10
+  ar_filter: null
+  ar_order: 2
+  ar_alpha: 0.5
+  ar_tail_bootstrap: false
+
+training:
+  no_episodes: 1000
+  solved_reward: 200
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
