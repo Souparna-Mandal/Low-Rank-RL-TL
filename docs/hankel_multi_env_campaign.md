@@ -48,3 +48,20 @@ exploration-bound.)
 
 ## Round 2 (launched): FrozenLake grid, CliffWalking grid, LunarLander
 tail_lo confirmation (seeds 4–9), Pendulum train_freq 8 + lr 5e-4 probe.
+
+## FrozenLake stochasticity contrast (committed before CliffWalking grid lands)
+
+Slippery (stochastic): every Hankel variant harms — baseline AUC 0.25 vs
+tail_hi 0.03. Deterministic twin (`dqn_frozenlake_det`, is_slippery=false),
+N=4: **parity** — baseline 0.17, tail_lo 0.17, tail_hi 0.14. Stochastic
+transitions are isolated as the factor that invalidates the trajectory-rank
+premise (a realized value path under slips is a Markov sample path, not a
+near-recurrence).
+
+**Metric rule for tabular envs, stated before the CliffWalking grid returns:**
+primary = training AUC. Greedy eval20 on deterministic gridworlds is
+argmax-cycle-fragile (a greedy loop hits the step cap and scores 0/−200
+despite ≥90% ε-greedy training success) and is recorded as observation only.
+Noted: on frozenlake_det the Hankel variants produce cycle-free greedy
+policies more often than baseline (2/4 vs 0/4) — possible structure effect,
+not a claim.
