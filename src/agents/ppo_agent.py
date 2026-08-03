@@ -33,7 +33,8 @@ class PPOAgent:
                  gate_threshold=0.25, ramp_updates=10,
                  engage_reward_threshold=None, engage_reward_window=10,
                  ar_filter=None, ar_order=2, ar_alpha=0.5,
-                 ar_tail_bootstrap=False):
+                 ar_tail_bootstrap=False,
+                 denoise_targets_rank=None, denoise_beta=0.5):
         obs_dim = env.observation_space.shape[0]
         n_act = env.action_space.n
         self.device = torch.device(device)
@@ -69,6 +70,8 @@ class PPOAgent:
         self.ar_order = ar_order
         self.ar_alpha = ar_alpha
         self.ar_tail_bootstrap = ar_tail_bootstrap
+        self.denoise_targets_rank = denoise_targets_rank
+        self.denoise_beta = denoise_beta
         self.diag = {}
 
     # -- acting ------------------------------------------------------------
@@ -182,6 +185,11 @@ class PPOAgent:
         T = len(values)
         adv = gae_pass(base_vals, self.ar_tail_bootstrap)
         returns = gae_pass(values, False) + values
+        if self.denoise_targets_rank:
+            for a0, b0 in seg_bounds:
+                returns[a0:b0] = cadzow_denoise(returns[a0:b0],
+                                                self.denoise_targets_rank,
+                                                self.denoise_beta)
         adv_t = torch.as_tensor(adv, dtype=torch.float32, device=self.device)
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
         ret_t = torch.as_tensor(returns, dtype=torch.float32, device=self.device)
@@ -223,3 +231,22 @@ class PPOAgent:
         self._updates += 1
         self.diag = {"lambda_eff": lam_eff, "penalty_raw": pen_raw,
                      "ar_c": coeffs.tolist() if coeffs is not None else None}
+
+
+def cadzow_denoise(seq, rank, beta):
+    """One Cadzow step toward the rank-r Hankel manifold: Hankel lift, SVD
+    truncation, anti-diagonal averaging; returns (1-beta)*seq + beta*proj."""
+    n = len(seq)
+    if n < max(2 * rank + 2, 6):
+        return seq
+    L = n // 2 + 1
+    H = np.lib.stride_tricks.sliding_window_view(seq, L)  # (n-L+1, L)
+    U, s, Vt = np.linalg.svd(H, full_matrices=False)
+    Hr = (U[:, :rank] * s[:rank]) @ Vt[:rank]
+    proj = np.zeros(n)
+    counts = np.zeros(n)
+    for i in range(Hr.shape[0]):
+        proj[i:i + L] += Hr[i]
+        counts[i:i + L] += 1
+    proj /= counts
+    return (1 - beta) * seq + beta * proj

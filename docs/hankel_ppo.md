@@ -139,3 +139,26 @@ every 2048-step rollout exercises the truncation machinery).
 **Primary: final-quarter mean training return, one-sided permutation
 p < 0.05.** Secondary: eval20 mean; guardrail: no new failure mode.
 Exploratory riders: `argae_tail` and `hr` on LunarLander, seeds 4–7.
+
+## Round F result — LunarLander claim REFUTED (reversed)
+
+Fresh seeds 4–15 (N=12/arm): baseline final-quarter **+73.0 ± 87.2** vs argae
+−1.6 ± 76.2 (primary p = 0.98); eval likewise. The N=4 probe was seed noise —
+LunarLander PPO outcomes carry σ ≈ 90 across seeds. Running tally: every
+small-N PPO effect (CartPole hr, Acrobot argae, LunarLander argae) has died
+on pre-registered replication. Mechanism-level reading: on these envs PPO's
+seed variance is exploration-driven; critic-side interventions don't touch it.
+
+## Round G — Hankel-denoised value targets (HD-PPO), pre-registered
+
+New algorithm, last mechanism of the campaign: project each segment's
+λ-return sequence onto the rank-r Hankel manifold (one Cadzow step: Hankel
+lift → SVD truncate → anti-diagonal average), blend β, regress the critic on
+the denoised targets. Actor advantages stay raw — pure target-side denoising,
+no SVD backward. Attacks return noise directly rather than critic wobble.
+
+**Pre-registration: `hd` (r=2, β=0.5) vs `baseline`, CartPole seeds 20–31 and
+LunarLander seeds 16–27 (N=12/arm each). Primary: final-quarter mean training
+return per env, one-sided permutation p < 0.05. If null on both: the PPO
+chapter concludes negative** — the Hankel inductive bias is first-order in
+value-based control, second-order as a policy-gradient baseline shaper.
