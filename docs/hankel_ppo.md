@@ -61,3 +61,46 @@ in the DQN campaigns: solve-ep, AUC over the episode budget, final-eval
 guardrail; N ≥ 4 seeds per cell, permutation tests on the primary metric.
 Success = a Hankel-structure variant beating PPO baseline on AUC/solve with
 eval intact.
+
+## Round A (4 seeds, CartPole 600-ep / Acrobot 500-ep budgets)
+
+| env | variant | AUC | eval20 | note |
+|---|---|---|---|---|
+| CartPole | baseline | 171.1 | 497.2 ± 3.4 | |
+| CartPole | **hr** | **185.9** | **500.0 ± 0.0** | +9% AUC, perfect eval |
+| CartPole | argae | 165.7 | 463.4 ± 63.4 | |
+| CartPole | hr_argae | 163.6 | 339.6 ± 160.8 | combo hurts |
+| Acrobot | baseline | −225.0 | −161.6 ± 124.0 | 2/4 seeds fail to learn |
+| Acrobot | **argae** | **−159.8** | **−87.9 ± 6.5** | 4/4 learn — rescues PPO |
+| Acrobot | argae_tail | −169.2 | −85.4 ± 2.7 | best final eval |
+| Acrobot | hr | −225.8 | −163.4 ± 122.9 | ≡ baseline (latch never fires on failing seeds) |
+
+Provisional reading: the two mechanisms specialise — the critic penalty helps
+where PPO already learns (CartPole polish + speed), the AR filter helps where
+the critic is the bottleneck (Acrobot variance/failure seeds). They do not
+compose. Round B (running): seeds 4–9 on the five decisive cells → N=10,
+permutation tests before any claim.
+
+## Rounds B–C (replication to N=20 + alpha probe)
+
+| cell | N | AUC (Δ vs base, p) | eval20 | non-learners |
+|---|---|---|---|---|
+| Acrobot baseline | 20 | −176.8 | −134.1 ± 105.6 | 4/20 |
+| Acrobot argae (α=0.5) | 20 | −144.9 (+31.9, p=0.098) | −103.1 ± 41.9 | 3/20 |
+| Acrobot argae_a25 | 4 | −150.3 | **−83.8 ± 2.8** | **0/4** |
+| Acrobot argae_a75 | 4 | −159.6 | −97.6 ± 9.7 | 0/4 |
+| CartPole baseline | 20 | 147.2 | 429.0 ± 93.5 | |
+| CartPole hr | 20 | 152.3 (+5.1, p=0.27) | 429.5 ± 94.3 | |
+
+Verdicts: the CartPole critic-penalty effect **does not replicate** (round A was
+seed luck — recorded as a negative result). The Acrobot AR-filter effect is
+robustness-shaped, not AUC-shaped: baseline PPO fails 20% of seeds and the
+filter's value concentrates in eliminating those failures and tightening final
+quality; α = 0.25 (light blend) looks strongest.
+
+## Round D — pre-registered confirmation (registered before launch)
+
+Cell: Acrobot `argae_a25` seeds 4–19 (N=16) vs cached `baseline` same seeds.
+**Primary metric: final eval20 mean, one-sided permutation p < 0.05.**
+Secondary: non-learner count (eval < −120), AUC (directional only).
+Also: CartPole `argae_a25` seeds 0–7 as an exploratory transfer probe.
