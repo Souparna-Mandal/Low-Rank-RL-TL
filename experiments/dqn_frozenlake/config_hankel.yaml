@@ -26,7 +26,7 @@ agent:
   eps_start: 1.0
   eps_min: 0.05
   decay_rate: 0.9999
-  discount_factor: 0.99
+  discount_factor: 0.95   # short paths; sharper propagation
   TD_LR: 0.005
   buffer_util: 1
   gd_steps_ceil: 1
@@ -40,9 +40,9 @@ agent:
   ramp_grad_steps: 0
 
 training:
-  no_episodes: 3000
+  no_episodes: 6000
   target_network_update_steps: 100
-  train_frequency_steps: 16
+  train_frequency_steps: 8
   use_episode_training: False   # train every train_frequency_steps
   solved_reward: 0.60   # eps-greedy training rate; greedy eval higher
   warmup_steps: 1500
