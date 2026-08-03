@@ -74,3 +74,37 @@ not a claim.
 | CliffWalking (N=6/arm, training-AUC primary) | directional only: progress +37.9 (p=0.28), tail_lo +31.7 (p=0.32) against σ≈140 bimodal seed noise; resolving Δ≈35 would need N≈100/arm — not pursued. |
 | FrozenLake slippery vs det | boundary condition locked (see contrast section above). |
 | Pendulum | baseline healthy after retune (eval −536 ± 226 at N=2); final grid launched — deterministic, dense, physically second-order: the premise's best-case regime among the new envs. |
+
+## Final round: Pendulum grid (retuned config)
+
+Null. baseline AUC −1031.3 ± 43.9 (N=6); tail_lo −6.4 (p=0.60), tail_hi
+−35.0 (p=0.90), progress −13.4 (p=0.68); eval likewise flat. Baseline is
+still budget-limited (eval −435 vs −200 solved) — as with LunarLander, both
+arms are mid-learning and the regulariser neither helps nor hurts.
+
+## Campaign conclusion
+
+No new-env sample-efficiency win was found at feasible budgets; the campaign
+instead produced a **scoping map** of the Hankel-trajectory prior:
+
+- **Where it wins (previously established, unchanged):** dense-reward,
+  deterministic classic control with healthy baselines and budgets that reach
+  competence — CartPole (+27% AUC, p = 0.0015, N = 20) and Acrobot (final
+  quality −82 vs −91). Both replicate under this campaign's infrastructure.
+- **Where it is inert:** budget-limited regimes where the baseline never
+  reaches competence within the run (LunarLander 1200 eps, Pendulum 1000 eps,
+  CliffWalking) — small directional effects (up to +10% AUC) that do not
+  clear seed noise at feasible N. The regulariser never hurt in these cells.
+- **Where it is harmful:** stochastic-transition envs (slippery FrozenLake,
+  8× training-AUC collapse). Isolated causally via the deterministic twin
+  (parity at N=4): under stochastic dynamics the realized value path is a
+  Markov sample path, not a near-recurrence — the premise itself fails.
+- **Out of scope:** exploration-bound envs (MountainCar) — no value signal,
+  nothing for a value-structure prior to shape.
+
+Cross-reference: the PPO campaign (branch ppo/hankel-structures-1,
+docs/hankel_ppo.md) reached the complementary conclusion — the same prior
+that is first-order in value-based control is second-order-to-harmful as a
+policy-gradient baseline shaper. Together: **the Hankel low-rank prior is a
+value-function-shaping mechanism for bootstrapped learning under
+(near-)deterministic dynamics — not a universal variance reducer.**
