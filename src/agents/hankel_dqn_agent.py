@@ -221,7 +221,7 @@ class HankelDQNAgent(QAgent):
         diag = {"td_loss": float(loss.detach()), "lambda_eff": lam,
                 "penalty_raw": np.nan, "penalty_weighted": 0.0, "gate_frac": np.nan,
                 "converged_frac": np.nan, "batch_eff_rank": np.nan, "rel_tail": np.nan,
-                "nan_skips": self.nan_skips}
+                "grad_norm": np.nan, "nan_skips": self.nan_skips}
         if self.hankel_weight > 0:
             win = self.replay_buffer.sample_windows(
                 self.n_windows, self.window_len,
@@ -248,6 +248,7 @@ class HankelDQNAgent(QAgent):
         self.optimiser.zero_grad()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.grad_clip_norm)
+        diag["grad_norm"] = float(grad_norm)  # total gradient L2 norm before clipping
         if not torch.isfinite(grad_norm):
             self.nan_skips += 1
             diag["nan_skips"] = self.nan_skips
