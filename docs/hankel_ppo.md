@@ -162,3 +162,29 @@ LunarLander seeds 16–27 (N=12/arm each). Primary: final-quarter mean training
 return per env, one-sided permutation p < 0.05. If null on both: the PPO
 chapter concludes negative** — the Hankel inductive bias is first-order in
 value-based control, second-order as a policy-gradient baseline shaper.
+
+## Round G result and CAMPAIGN CONCLUSION
+
+CartPole: null (q4 +3.5, p = 0.44). LunarLander: **strongly negative** — HD
+targets destroy learning on all 12 seeds (q4 −91.1 ± 14.9 vs +94.1 ± 57.0).
+Mechanism: LunarLander's return sequence carries sharp landing/crash events —
+high-rank temporal structure — and the rank-2 Cadzow projection smears them,
+corrupting the critic's targets. The low-rank prior is signal-dependent, not
+universal.
+
+**Campaign conclusion (negative, well-powered).** Four mechanisms (critic
+tail penalty, AR-filtered GAE baseline, AR tail bootstrap, Hankel-denoised
+targets), three envs, ~410 runs, every headline effect pre-registered and
+replicated: none survived. Findings worth keeping:
+
+1. Every small-N PPO "win" (CartPole hr +9% AUC, Acrobot argae 4/4 rescue,
+   LunarLander argae +140) died on fresh seeds — classic-control PPO seed
+   variance (σ ≈ 60–90) is *exploration-dominated*, and value-side structure
+   interventions do not touch exploration.
+2. The Hankel low-rank prior is first-order where the value function IS the
+   policy (HR-DQN: +27% AUC p = 0.0015) and second-order-to-harmful where it
+   only shapes a baseline — and it is invalid outright for spiky-return
+   signals (LunarLander HD-PPO).
+3. Contrast for the thesis: same structure, same envs, opposite outcomes by
+   algorithm family — evidence the DQN wins act through *value-function
+   shaping during bootstrapped learning*, not generic variance reduction.
