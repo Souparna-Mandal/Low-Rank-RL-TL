@@ -119,3 +119,23 @@ artifact orthogonal to learning, so the registered metric is training-based.
 Fisher exact, p < 0.05.** Secondary: final-quarter mean (permutation,
 directional); sensitivity: pooled with seeds 0–19. Also launching: LunarLander
 baseline-vs-argae probe (4 seeds) as an exploratory second-env check.
+
+## Round E result — Acrobot claim REFUTED, LunarLander signal found
+
+Fresh seeds 20–79: bad outcomes 1/60 (argae) vs 1/60 (baseline), Fisher
+p = 0.75; final-quarter means identical. The seeds 0–19 baseline collapse
+rate was small-N luck. **Conclusion after 248 Acrobot runs: the AR filter has
+no detectable effect on Acrobot PPO — recorded as a negative result.**
+
+The LunarLander probe (N=4/arm) showed the largest effect of the campaign:
+baseline final-quarter −53.8 ± 37.6, eval −69.8 ± 43.6; argae **+86.1 ±
+65.2**, eval **+67.4 ± 54.2** — consistent with the mechanism's design
+(long episodes, shaped noisy rewards, critic-variance-dominated learning;
+every 2048-step rollout exercises the truncation machinery).
+
+## Round F — pre-registered LunarLander confirmation (registered before launch)
+
+`argae` (α=0.5) vs `baseline`, fresh seeds 4–15 (N=12/arm).
+**Primary: final-quarter mean training return, one-sided permutation
+p < 0.05.** Secondary: eval20 mean; guardrail: no new failure mode.
+Exploratory riders: `argae_tail` and `hr` on LunarLander, seeds 4–7.
