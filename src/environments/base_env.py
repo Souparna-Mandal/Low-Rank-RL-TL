@@ -6,9 +6,10 @@ import yaml
 import pathlib
 import numpy as np
 
+from .wrappers.action_wrappers import DiscretiseActionWrapper
 from .wrappers.discrete_wrappers import DiscreteStateWrapper
 from .wrappers.generative_wrappers import GenerativeStateWrapper
-from .wrappers.observation_wrappers import UnderlyingStateWrapper
+from .wrappers.observation_wrappers import OneHotObservationWrapper, UnderlyingStateWrapper
 from .wrappers.reward_wrappers import ScaleReward
 
 environments = {}
@@ -57,6 +58,21 @@ def make_environment(env_name: str, render_mode = None,
         return env
 
     env = gym.make(env_name, render_mode=render_mode)
+
+    # Episode cap for envs registered without one (CliffWalking wanders
+    # unboundedly under a random policy). config: time_limit: <steps>.
+    if env_kwargs.get('time_limit'):
+        env = gym.wrappers.TimeLimit(env, max_episode_steps=env_kwargs['time_limit'])
+
+    # Discrete(n) observations -> one-hot vectors for MLP agents.
+    # config: one_hot_obs: true.
+    if env_kwargs.get('one_hot_obs'):
+        env = OneHotObservationWrapper(env)
+
+    # 1-D Box action space -> Discrete(n) evenly spaced actions (Pendulum).
+    # config: discrete_action_bins: <n>.
+    if env_kwargs.get('discrete_action_bins'):
+        env = DiscretiseActionWrapper(env, env_kwargs['discrete_action_bins'])
 
     # Generative-model access (teleport to arbitrary states). Innermost so
     # teleport's reset clears the TimeLimit/termination bookkeeping.

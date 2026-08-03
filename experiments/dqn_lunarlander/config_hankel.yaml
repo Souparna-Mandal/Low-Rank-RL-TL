@@ -1,0 +1,53 @@
+experiment:
+  name: dqn_lunarlander_hankel
+  seed: 52
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: LunarLander-v3
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: False
+    state: []
+
+network:
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 20000
+  batch_size: 128
+  nn_learning_rate: 0.0003
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99995
+  discount_factor: 0.99
+  TD_LR: 0.005
+  buffer_util: 1
+  gd_steps_ceil: 1
+  grad_clip_norm: 20.0
+  hankel_weight: 0.0      # variants override
+  hankel_order: 2
+  window_len: 16
+  n_windows: 8
+  gate_threshold: 0.25
+  warmup_grad_steps: 0
+  ramp_grad_steps: 0
+
+training:
+  no_episodes: 1000
+  target_network_update_steps: 100
+  train_frequency_steps: 50
+  use_episode_training: True
+  solved_reward: 200
+  warmup_steps: 1500
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  ep_freq: 1000000000
+  methods: []
