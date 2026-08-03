@@ -24,7 +24,7 @@ network:
 agent:
   replay_buffer_capacity: 20000
   batch_size: 128
-  nn_learning_rate: 0.0003
+  nn_learning_rate: 0.0005
   eps_start: 1.0
   eps_min: 0.05
   decay_rate: 0.99995
@@ -42,9 +42,9 @@ agent:
   ramp_grad_steps: 0
 
 training:
-  no_episodes: 800
+  no_episodes: 1000
   target_network_update_steps: 100
-  train_frequency_steps: 16
+  train_frequency_steps: 8
   use_episode_training: False   # train every train_frequency_steps
   solved_reward: -200
   warmup_steps: 1500

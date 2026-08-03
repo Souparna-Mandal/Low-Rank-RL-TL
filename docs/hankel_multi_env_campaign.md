@@ -31,3 +31,20 @@ choosing `hankel_order` — never penalise below the measured rank.
 ## Round 0 — baseline sanity (2 seeds/env)
 
 (running)
+
+(round 0: all five baselines dead under per-episode training — retuned to
+mid-episode cadence. Round 0b: Pendulum/LunarLander learn; CliffWalking/
+FrozenLake weak → 0c tunes; MountainCar flatlined twice → excluded,
+exploration-bound.)
+
+## Round 1 (variant grids on healthy envs + 0c probes)
+
+| env | takeaway |
+|---|---|
+| Pendulum | grid flat at N=4 (AUC spread 2.7%, eval σ≈150) — baseline never reaches −200 in 800 eps; needs denser training before variants can differentiate |
+| LunarLander | tail_lo +11 AUC over baseline (−40.8 vs −51.8), eval intact — directional, confirmation launched |
+| CliffWalking (0c) | bimodal: 1/2 seeds learns (eval −107.5 ± 92.5) — grid launched to test whether the regulariser moves the flakiness |
+| FrozenLake (0c) | γ=0.95 + denser training: seed 0 SOLVES (ep 2202), eval 0.57 — grid launched |
+
+## Round 2 (launched): FrozenLake grid, CliffWalking grid, LunarLander
+tail_lo confirmation (seeds 4–9), Pendulum train_freq 8 + lr 5e-4 probe.
