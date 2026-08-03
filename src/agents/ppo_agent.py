@@ -157,25 +157,31 @@ class PPOAgent:
         base_vals, coeffs = (self._filter_values(values, seg_bounds)
                              if self.ar_filter == "blend" else (values, None))
 
-        # GAE over segments (each ends at terminal or rollout cut)
+        def gae_pass(vals, ar_tail):
+            out = np.zeros(len(vals), dtype=np.float64)
+            for (a, b), terminal, boot_v in zip(seg_bounds, buf["seg_terminal"],
+                                                buf["seg_boot_value"]):
+                if terminal:
+                    next_v = 0.0
+                elif ar_tail and coeffs is not None and b - a > self.ar_order:
+                    # forecast from RAW lags: coeffs were fit on raw values
+                    next_v = float(coeffs @ values[b - self.ar_order:b][::-1])
+                else:
+                    next_v = boot_v
+                gae = 0.0
+                for t in range(b - 1, a - 1, -1):
+                    delta = buf["rews"][t] + self.gamma * next_v - vals[t]
+                    gae = delta + self.gamma * self.lam * gae
+                    out[t] = gae
+                    next_v = vals[t]
+            return out
+
+        # Actor advantages come from the filtered baseline; the critic always
+        # regresses on the raw lambda-return (the filter shapes the baseline,
+        # not what the critic learns).
         T = len(values)
-        adv = np.zeros(T, dtype=np.float64)
-        for (a, b), terminal, boot_v in zip(seg_bounds, buf["seg_terminal"],
-                                            buf["seg_boot_value"]):
-            if terminal:
-                next_v = 0.0
-            elif (self.ar_tail_bootstrap and coeffs is not None
-                  and b - a > self.ar_order):
-                next_v = float(coeffs @ base_vals[b - self.ar_order:b][::-1])
-            else:
-                next_v = boot_v
-            gae = 0.0
-            for t in range(b - 1, a - 1, -1):
-                delta = buf["rews"][t] + self.gamma * next_v - base_vals[t]
-                gae = delta + self.gamma * self.lam * gae
-                adv[t] = gae
-                next_v = base_vals[t]
-        returns = adv + base_vals  # value-regression target
+        adv = gae_pass(base_vals, self.ar_tail_bootstrap)
+        returns = gae_pass(values, False) + values
         adv_t = torch.as_tensor(adv, dtype=torch.float32, device=self.device)
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
         ret_t = torch.as_tensor(returns, dtype=torch.float32, device=self.device)
