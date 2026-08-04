@@ -84,10 +84,16 @@ def ppo_training_loop(agent, env, no_episodes, solved_reward,
     return episode_rewards[:no_episodes]
 
 
-def greedy_episode_return(agent, env, seed):
+def greedy_episode_return(agent, env, seed, max_steps=100_000):
+    """One argmax-policy episode's return. max_steps caps evaluation on envs
+    without an episode limit (see the time_limit config key)."""
     state, _ = env.reset(seed=seed)
     total, terminated, truncated = 0.0, False, False
+    steps = 0
     while not (terminated or truncated):
-        state, r, terminated, truncated, info = env.step(agent.act_greedy(state))
-        total += info.get("raw_reward", r)
+        state, r, terminated, truncated, _ = env.step(agent.act_greedy(state))
+        total += r
+        steps += 1
+        if steps >= max_steps:
+            break
     return total
