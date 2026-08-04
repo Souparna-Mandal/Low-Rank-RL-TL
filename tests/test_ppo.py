@@ -78,7 +78,7 @@ def test_config_flow_end_to_end():
     cfg["training"].update(no_episodes=3, no_eps_to_avg=2, solved_reward=1e9)
     env = build_env(cfg)
     agent = build_ppo_agent(cfg, env)
-    rewards = train_ppo(cfg, agent, env)
+    rewards = train_ppo(cfg, agent, env, progress=False)
     assert len(rewards) == 3 and all(np.isfinite(r) for r in rewards)
 
 

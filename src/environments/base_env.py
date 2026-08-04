@@ -59,8 +59,14 @@ def make_environment(env_name: str, render_mode = None,
         env = OneHotObservationWrapper(env)
 
     # 1-D Box action space -> Discrete(n) evenly spaced actions (Pendulum).
-    # config: discrete_action_bins: <n>.
+    # config: discrete_action_bins: <n>. The result is a Discrete space, so
+    # the Box-only action transforms downstream cannot follow it.
     if env_kwargs.get('discrete_action_bins'):
+        if env_kwargs.get('clip', {}).get('action') or \
+                env_kwargs.get('normalise', {}).get('action'):
+            raise ValueError(
+                "discrete_action_bins produces a Discrete action space and "
+                "cannot be combined with clip.action or normalise.action")
         env = DiscretiseActionWrapper(env, env_kwargs['discrete_action_bins'])
 
     # Discretise the State Action Space

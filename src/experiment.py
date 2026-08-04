@@ -74,15 +74,17 @@ def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
     )
 
 
-def train_ppo(cfg: dict, agent, env, DEBUG=False):
+def train_ppo(cfg: dict, agent, env, DEBUG=False, progress=True):
     """ppo_training_loop driven by cfg["training"] (no analysis/run_logger
-    hooks — PPO results land in the notebook or a results_ppo/ cache)."""
+    hooks — PPO results land in the notebook or a results_ppo/ cache).
+    progress=False silences the tqdm bar."""
     from ppo_training import ppo_training_loop
     return ppo_training_loop(
         agent, env,
         **cfg["training"],
         np_seed=cfg["experiment"]["seed"],
         DEBUG=DEBUG,
+        progress=progress,
     )
 
 
