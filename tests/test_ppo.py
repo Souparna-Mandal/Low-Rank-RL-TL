@@ -82,6 +82,29 @@ def test_config_flow_end_to_end():
     assert len(rewards) == 3 and all(np.isfinite(r) for r in rewards)
 
 
+class _NeverEndingEnv(gym.Env):
+    observation_space = gym.spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)
+    action_space = gym.spaces.Discrete(2)
+
+    def reset(self, seed=None, options=None):
+        return np.zeros(2, np.float32), {}
+
+    def step(self, action):
+        return np.zeros(2, np.float32), 0.0, False, False, {}
+
+
+def test_training_loop_raises_on_never_terminating_env():
+    _seed(5)
+    env = _NeverEndingEnv()
+    agent = _agent(env=env, rollout_steps=16)
+    try:
+        ppo_training_loop(agent, env, no_episodes=5, solved_reward=1e9,
+                          np_seed=1, progress=False)
+        raise AssertionError("expected RuntimeError for never-terminating env")
+    except RuntimeError as e:
+        assert "time_limit" in str(e)
+
+
 def test_training_loop_solved_early_stop():
     _seed(4)
     agent = _agent(rollout_steps=64)

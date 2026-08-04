@@ -50,11 +50,26 @@ def ppo_training_loop(agent, env, no_episodes, solved_reward,
     episode_rewards = []
     pbar = tqdm(total=no_episodes, disable=not progress)
     solved_streak = 0
+    empty_rollouts = 0
     while len(episode_rewards) < no_episodes:
         buf, state, ep_ret, finished = _collect_rollout(agent, env, state, ep_ret)
         agent.update(buf)
         episode_rewards.extend(finished)
         pbar.update(len(finished))
+        # Safety net for envs without an episode cap: a long streak of
+        # rollouts with no finished episode means the env never terminates.
+        if finished:
+            empty_rollouts = 0
+        else:
+            empty_rollouts += 1
+            if empty_rollouts >= 100:
+                pbar.close()
+                raise RuntimeError(
+                    f"no episode finished in {empty_rollouts} consecutive "
+                    f"rollouts ({empty_rollouts * agent.rollout_steps} steps); "
+                    "the environment appears to never terminate — cap it with "
+                    "the time_limit environment config key")
+            continue
         if len(episode_rewards) >= no_eps_to_avg:
             avg = np.mean(episode_rewards[-no_eps_to_avg:])
             if DEBUG:
