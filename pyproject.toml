@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "torch>=2.2",
-    "gymnasium[atari,classic-control,other]>=0.29",
+    "gymnasium[atari,box2d,classic-control,other]>=0.29",
     "numpy>=1.26",
     "pyyaml>=6.0",
     "matplotlib>=3.8",
