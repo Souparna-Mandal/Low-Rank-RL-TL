@@ -38,12 +38,12 @@ agent:
   # --- Hankel low-rank regulariser (HankelDQNAgent; hankel_weight 0 => exact QAgent) ---
   hankel_weight: 0.1       # lambda on the truncated singular-value tail
   hankel_order: 1           # target Hankel rank r
-  window_len: 20            # sub-trajectory window T; Hankel is 9x8
-  n_windows: 8              # penalty windows per gradient step
+  window_len: 30            # sub-trajectory window T; Hankel is 9x8
+  n_windows: 16              # penalty windows per gradient step
   gate_threshold: 1      # skip windows with relative tail energy above this
   warmup_grad_steps: 0   # lambda = 0 for the first grad steps ...
-  ramp_grad_steps: 0     # ... then ramps linearly to hankel_weight
-  window_half_life: 20    # episodes; set (e.g. 20) to recency-bias penalty windows
+  ramp_grad_steps: 1     # ... then ramps linearly to hankel_weight
+  window_half_life: 30    # episodes; set (e.g. 20) to recency-bias penalty windows
 
 training:
   no_episodes: 500
