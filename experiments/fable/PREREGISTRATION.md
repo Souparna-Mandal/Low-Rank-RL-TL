@@ -25,3 +25,21 @@ exploration, alpha 0.05).
 
 Anything that fails here is reported as "did not replicate". No hyperparameter
 changes between exploration and confirmation for these arms.
+
+---
+
+## Addendum 2 — registered before launch (round 2)
+
+Probe results (seeds 0–4): LunarLander-v3 ssm_critic vs baseline +23.9 AUC,
+5/5 paired wins, final-quarter +55.3. Acrobot rank sweep: effect robust for
+rank ∈ {2,4,8,16} (AUC −167…−152 vs baseline −199).
+
+**CONFIRMATION 2 — ssm_critic vs baseline on LunarLander-v3.** Fresh seeds
+100–119 (N=20/arm), 150 episodes, hyperparameters identical to the probe
+(defaults, rank 8). Primary: AUC, one-sided paired sign-flip permutation,
+alpha .05. Secondary: final-quarter mean. Failure is reported as
+non-replication.
+
+Exploration round 2 (seeds 0–4, NOT claims): {baseline, ssm_critic, ssm_auto}
+on Pendulum-v1 / MountainCar-v0 / CliffWalking-v1; ssm_auto on CartPole +
+Acrobot; gru_critic ablation on Acrobot.
