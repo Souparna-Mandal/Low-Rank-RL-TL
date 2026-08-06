@@ -53,3 +53,4 @@ claude
 results_viewer_app/
 # PPO benchmark caches (reproducible from config_ppo.yaml)
 experiments/*/results_ppo/
+experiments/fable/runs/
