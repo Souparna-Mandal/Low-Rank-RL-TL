@@ -43,3 +43,22 @@ non-replication.
 Exploration round 2 (seeds 0–4, NOT claims): {baseline, ssm_critic, ssm_auto}
 on Pendulum-v1 / MountainCar-v0 / CliffWalking-v1; ssm_auto on CartPole +
 Acrobot; gru_critic ablation on Acrobot.
+
+---
+
+## Addendum 3 — registered before launch (round 3: ssm_auto)
+
+Exploration (fixed code, seeds 0–4): ssm_auto beats fixed-rank ssm_critic on
+BOTH original envs (CartPole AUC 59.7 vs 53.7 vs baseline 54.6; Acrobot −152.8
+vs −160.9 vs −198.8), self-selecting orders 2–3 on CartPole and 2–5 on
+Acrobot. Orders on other envs: Pendulum 3–4, CliffWalking 2–3, MountainCar
+3–5 (all null envs).
+
+**CONFIRMATION 3a (PRIMARY) — ssm_auto vs baseline on CartPole-v1.** Fresh
+seeds 100–119 (N=20/arm; baseline cached from confirmation 1), 200 episodes,
+defaults. Primary: AUC, one-sided paired permutation, alpha .05. This is the
+sharpest test of the AR-order trick: fixed-rank SSM was null here.
+**CONFIRMATION 3b (SECONDARY) — ssm_auto vs ssm_critic on Acrobot-v1.** Fresh
+seeds 100–119 (ssm_critic cached from confirmation 1), 120 episodes. Metric:
+AUC, one-sided (H1: adaptive > fixed), alpha .05.
+Rider (context, no claim): ssm_critic on CartPole fresh seeds 100–119.

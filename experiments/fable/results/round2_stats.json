@@ -1,0 +1,117 @@
+{
+ "Acrobot-v1:dAUC": {
+  "abs": 45.4,
+  "rel_pct": 22.6,
+  "n": 20
+ },
+ "LunarLander-v3:dAUC": {
+  "abs": 4.4,
+  "rel_pct": 2.6,
+  "n": 20
+ },
+ "CartPole-v1:dAUC": {
+  "abs": -0.9,
+  "rel_pct": -1.7,
+  "n": 5
+ },
+ "Pendulum-v1:dAUC": {
+  "abs": 7.3,
+  "rel_pct": 0.6,
+  "n": 5
+ },
+ "MountainCar-v0:dAUC": {
+  "abs": 0.0,
+  "rel_pct": 0.0,
+  "n": 5
+ },
+ "CliffWalking-v1:dAUC": {
+  "abs": -6.5,
+  "rel_pct": -2.0,
+  "n": 5
+ },
+ "CartPole-v1:ssm_auto": {
+  "orders": [
+   null,
+   3,
+   2,
+   3,
+   2
+  ],
+  "ranks": [
+   16,
+   6,
+   4,
+   6,
+   4
+  ],
+  "auc": 59.7
+ },
+ "Acrobot-v1:ssm_auto": {
+  "orders": [
+   3,
+   4,
+   2,
+   5,
+   3
+  ],
+  "ranks": [
+   6,
+   8,
+   4,
+   10,
+   6
+  ],
+  "auc": -152.8
+ },
+ "Pendulum-v1:ssm_auto": {
+  "orders": [
+   3,
+   3,
+   3,
+   4,
+   3
+  ],
+  "ranks": [
+   6,
+   6,
+   6,
+   8,
+   6
+  ],
+  "auc": -1178.6
+ },
+ "MountainCar-v0:ssm_auto": {
+  "orders": [
+   4,
+   5,
+   4,
+   4,
+   3
+  ],
+  "ranks": [
+   8,
+   10,
+   8,
+   8,
+   6
+  ],
+  "auc": -200.0
+ },
+ "CliffWalking-v1:ssm_auto": {
+  "orders": [
+   3,
+   3,
+   2,
+   3,
+   2
+  ],
+  "ranks": [
+   6,
+   6,
+   4,
+   6,
+   4
+  ],
+  "auc": -326.3
+ }
+}
