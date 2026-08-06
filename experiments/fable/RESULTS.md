@@ -154,3 +154,59 @@ exactly zero). With the fixed code (seeds 0–4):
 | AR-order is a measurable env property (CartPole 2 vs Acrobot ~4) | Measured at N=20 |
 | SSM on LunarLander (AUC) | Not replicated (secondary finalQ p=.018 → longer-budget hypothesis) |
 | SSM on Pendulum/MountainCar/CliffWalking, ar_explore, robust_hd, shared-trunk variants | Null / negative, recorded |
+
+---
+
+# Round 4 — long-budget LunarLander, CartPole N=40, and the transfer object
+
+## 4a — LunarLander-v3 at 300 episodes: CONFIRMED (fresh seeds 200–219, N=20)
+
+The round-2 hypothesis (SSM needs a longer budget here) was correct:
+
+| Metric | baseline | ssm_critic | Δ | 95% CI | wins | p |
+|---|---|---|---|---|---|---|
+| **Final-quarter (primary)** | −72.0 | **−21.4** | **+50.7** | [28.9, 73.2] | 17/20 | < 0.0001 |
+| AUC (secondary) | −126.6 | −102.5 | +24.1 | [12.9, 35.3] | 15/20 | 0.0002 |
+
+The advantage curve (`results/round4_lunarlander.png`) is ≈0 for the first
+~130 episodes, then climbs monotonically to +50–70 — a late-blooming effect,
+which is exactly why the 150-episode round-2 primary missed it. **The SSM
+critic now has confirmed wins in TWO environments.**
+
+## 4b — CartPole ssm_auto at N=40 (pooled, as registered)
+
+Pooled primary AUC: +2.9, CI [−0.3, +6.1], 25/40, **p = 0.043** (final-quarter
++10.3, p = 0.022) — passes the registered α=.05 threshold, but the declared
+fresh-only sensitivity (seeds 120–139) is n.s. (p = 0.17), and the effect is
+small (~+7% AUC). Verdict: a real but modest effect; reported with both
+analyses per protocol.
+
+## 4c — the transfer object, measured (`results/coeff_clusters.png`)
+
+AR(2) coefficients fitted during ordinary baseline PPO training, 10 runs/env:
+
+| Env | (c₁, c₂) mean | SD |
+|---|---|---|
+| CartPole-v1 | (0.88, +0.12) | 0.034 |
+| LunarLander-v3 | (1.06, −0.06) | 0.075 |
+| Acrobot-v1 | (1.49, −0.50) | 0.052 |
+
+Three findings: (1) within-env dispersion is ~10× smaller than between-env
+separation — **the coefficients are an environment property**, i.e. a
+transferable object; (2) every run of every env lies on the persistence line
+c₁+c₂ ≈ 1 (unit-root structure — value signals are persistent processes);
+(3) Acrobot's (1.49, −0.50) independently replicates the ar_explore
+measurement ([1.51, −0.51]) from round 1. Environments order along the line
+by dynamical complexity, matching where the SSM critic pays off.
+
+# Final campaign ledger (updated)
+
+| Claim | Status |
+|---|---|
+| SSM critic ≫ vanilla PPO on Acrobot (2× sample efficiency) | **CONFIRMED ×2** (+45.5 & +42.2, p<1e-4, N=20 each) |
+| SSM critic ≫ vanilla PPO on LunarLander at 300 eps | **CONFIRMED** (final-quarter +50.7, p<1e-4, N=20) |
+| ssm_auto > baseline on CartPole | Marginal (pooled N=40 p=.043; fresh-only n.s.) |
+| Linear recurrence required (GRU worse than baseline) | Supported (ablation) |
+| Rank-robust (2–16); adaptive rank free, not better | Supported |
+| AR(2) coefficients are an env property on the c₁+c₂=1 line | **Measured** (10 runs/env, 10× cluster separation) |
+| Pendulum/MountainCar/CliffWalking; ar_explore; robust_hd; shared-trunk | Null / negative, recorded |
