@@ -17,7 +17,7 @@ consumed or ignored by the variant, never forwarded blindly to PPOAgent.
 import importlib
 
 VARIANTS = ["baseline", "ssm_critic", "latent_ar", "ar_explore", "robust_hd",
-            "ppg_lite", "gru_critic"]
+            "ppg_lite", "gru_critic", "ssm_auto"]
 
 
 def get_variant(name: str):

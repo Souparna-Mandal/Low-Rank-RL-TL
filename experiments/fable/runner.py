@@ -24,9 +24,25 @@ torch.set_num_threads(1)
 import gymnasium as gym
 
 from agents.variants import get_variant
+from environments.base_env import make_environment
 from ppo_training import _collect_rollout as default_collect
 
 DEFAULTS = dict(rollout_steps=1024, minibatch_size=128, update_epochs=6)
+
+# Envs needing the wrapper keys from base_env (one-hot obs, discretised
+# actions, episode caps). Everything else goes through plain gym.make.
+ENV_KWARGS = {
+    "Pendulum-v1": {"discrete_action_bins": 9},
+    "CliffWalking-v1": {"one_hot_obs": True, "time_limit": 200},
+}
+COMMON = {"discrete_config": None, "normalise": {"action": {}, "state": {}},
+          "clip": {"action": False, "state": []}}
+
+
+def make_env(env_name):
+    if env_name in ENV_KWARGS:
+        return make_environment(env_name, **ENV_KWARGS[env_name], **COMMON)
+    return gym.make(env_name)
 
 
 def parse_value(s):
@@ -42,7 +58,7 @@ def run(variant_name, env_name, seed, episodes, overrides):
     torch.manual_seed(seed)
     np.random.seed(seed)
     mod = get_variant(variant_name)
-    env = gym.make(env_name)
+    env = make_env(env_name)
     agent = mod.build(env, "cpu", overrides)
     collect = getattr(mod, "collect_rollout", None) or default_collect
 
