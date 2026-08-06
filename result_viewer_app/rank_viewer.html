@@ -1039,7 +1039,12 @@ function lineChart(opts){
   for(const s of series)if(s.band)for(const b of s.band){
     ymin=Math.min(ymin,b[1]);ymax=Math.max(ymax,b[2]);}
   if(xmax===xmin)xmax=xmin+1;
-  if(ymax===ymin){ymax+=1;ymin-=1;}
+  // A flat series is rarely bit-exact: the rolling mean of a constant whose
+  // value is not representable in binary (lambda_eff = 0.1) leaves ~1e-17 of
+  // float noise, which passes an equality test but leaves a span so tiny that
+  // ticks() below computes a step that vanishes under float addition. Compare
+  // the span against the magnitude instead so both cases collapse to here.
+  if(!(ymax-ymin>Math.max(Math.abs(ymin),Math.abs(ymax))*1e-9)){ymax+=1;ymin-=1;}
   const pad=(ymax-ymin)*0.08; ymax+=pad; ymin-=pad;
   if(ymin>0&&ymin-pad<0)ymin=Math.max(0,ymin);
   const X=v=>m.l+(v-xmin)/(xmax-xmin)*(W-m.l-m.r);
@@ -1166,7 +1171,12 @@ function lineChart(opts){
 function ticks(lo,hi,n){
   const span=hi-lo, step0=span/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
   const norm=step0/mag; let step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
-  const out=[]; for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(6));
+  const out=[]; let v=Math.ceil(lo/step)*step;
+  // Backstop: if the span is degenerate enough that step underflows relative to
+  // v, `v+=step` never advances and this loop spins until the tab runs out of
+  // memory. Callers should not hand us such a range, but never hang if they do.
+  if(!isFinite(step)||step<=0||v+step===v)return isFinite(v)?[+v.toFixed(6)]:[];
+  for(;v<=hi+1e-9;v+=step)out.push(+v.toFixed(6));
   return out;
 }
 

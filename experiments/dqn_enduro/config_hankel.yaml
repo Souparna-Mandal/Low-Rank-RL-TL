@@ -1,0 +1,106 @@
+experiment:
+  name: dqn_enduro_hankel
+  seed: 52
+  device: auto
+  # Save run artifacts (spectra figures, rewards/rank CSVs, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
+
+environment:
+  # ALE/Enduro-v5 is the canonical Gymnasium id (v0.28+); ale-py >= 0.12 bundles
+  # the ROMs, no AutoROM step needed.
+  name: ALE/Enduro-v5
+  render_mode: null
+  discrete_config: null
+  # When `atari` is set, the Atari preprocessing branch in make_environment
+  # takes over and the preprocessing blocks for clip / normalise are skipped
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: false
+    state: {}
+  # Mnih et al. (2015) "Nature DQN" preprocessing: 4-frame skip, max-pool over
+  # last two frames (handled by AtariPreprocessing), grayscale + 84x84 resize,
+  # 4-frame stack so the agent sees motion. terminal_on_life_loss=False because
+  # Enduro reuses a single life across the whole "day" — flipping it would cut
+  # episodes off mid-race. scale_obs=False keeps obs as uint8 to save memory;
+  # the CNN divides by 255 in its forward pass.
+  atari:
+    noop_max: 30 # executes a random number (0-30) no-op actions before handing to the agent to randomise state and prevent memorisation
+    frame_skip: 4
+    screen_size: 84 # rescaling the input for computation
+    terminal_on_life_loss: false
+    grayscale_obs: true
+    grayscale_newaxis: false # if false then a frame is (84,84) instead of (84,84,1)
+    scale_obs: false
+    frame_stack: 4
+
+network:
+  # CNN Q-network is defined inside exp1_hankel.ipynb (Nature DQN architecture):
+  #   Conv(4->32, k=8, s=4) -> ReLU
+  #   Conv(32->64, k=4, s=2) -> ReLU
+  #   Conv(64->64, k=3, s=1) -> ReLU
+  #   Flatten -> Linear(3136, 512) -> ReLU -> Linear(512, n_actions)
+  fc_hidden: 512
+
+agent:
+  # HankelDQNAgent's episodic buffer stores each frame stack once as uint8 on
+  # CPU (~28 kB per transition) -> 100k transitions ~ 3 GB host RAM.
+  replay_buffer_capacity: 100000
+  batch_size: 32
+  nn_learning_rate: 0.0001          # Adam LR commonly used
+  eps_start: 1.0
+  eps_min: 0.01
+  # Multiplicative decay tuned so eps ~ 0.01 after ~250k env steps:
+  # 0.01 ** (1/250000) ~ 0.999982
+  decay_rate: 0.999982
+  discount_factor: 0.99
+  TD_LR: 0.0025                     # soft target update; Polyak-style
+  buffer_util: 4                    # grad steps/ep ~ len(buffer) / (4 * batch)
+  gd_steps_ceil: 10                 # hard cap on gradient steps per training call
+  grad_clip_norm: 10.0              # max global L2 norm for gradient clipping per step
+  double: true                      # Double DQN target estimation
+  # --- Hankel low-rank regulariser (HankelDQNAgent; hankel_weight 0 => exact QAgent) ---
+  hankel_weight: 0.01       # lambda on the truncated singular-value tail
+  hankel_order: 2           # target Hankel rank r (r=1 over-compresses; campaign round 4)
+  window_len: 20            # sub-trajectory window T (~1.3 s at frame_skip 4); Hankel is 11x10
+  n_windows: 8              # penalty windows per gradient step
+  gate_threshold: null      # spectral gate OFF: every sampled window feeds the penalty
+                            # (a toy Atari run showed gate_frac=1.0 at 0.25 — fully starved)
+  warmup_grad_steps: 0      # lambda = 0 for the first grad steps ...
+  ramp_grad_steps: 0        # ... then ramps linearly to hankel_weight
+  # Full-race episodes are so long that the 100k buffer only ever holds a handful,
+  # so per-episode recency weighting is a no-op on Enduro — the buffer is already
+  # recent. (On pacman/seaquest, per-life episodes make half_life=20 a strong bias.)
+  window_half_life: null
+
+training:
+  no_episodes: 2000
+  target_network_update_steps: 200    # soft updates -> apply every env step
+  train_frequency_steps: 200           # train after every 200 env steps
+  use_episode_training: False           # True -> train once at episode end; False -> train mid-episode every train_frequency_steps
+  solved_reward: 5000                  # Enduro has no standard solved threshold; set high to disable early stop
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  ep_freq: 100
+  # q_matrix_dqn discretises observation dims -> meaningless for pixel inputs, so
+  # no generic per-matrix methods here. Hankel runs via hankel_sweep below.
+  methods: []
+  # Single-rollout, whole-episode Hankel — the old behaviour, now via the unified
+  # sweep path. Flip sub_trajectory.enabled / raise n_rollouts to opt into the
+  # richer multi-rollout + growing sub-trajectory analysis (see dqn_seaquest).
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5

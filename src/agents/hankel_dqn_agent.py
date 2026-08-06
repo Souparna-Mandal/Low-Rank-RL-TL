@@ -204,7 +204,26 @@ class HankelDQNAgent(QAgent):
         next_state = (None if terminated else
                       torch.tensor(next_state, dtype=torch.float32, device=self.device).unsqueeze(0))
         self.replay_buffer.append(state, action, reward, next_state)
-        self._open_return += float(reward[0])
+        self._track_episode(float(reward[0]), terminated, truncated)
+
+    def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
+        """Atari path: uint8 frame stacks kept on CPU (QAgent convention — a
+        float32 on-device episodic buffer would be ~10 GB per 100k frames).
+        Unlike QAgent, actions/rewards stay on CPU too so every tensor of an
+        episode lives on one device for the buffer's fancy indexing; batches
+        move to self.device at sample time in _train_step."""
+        state = torch.tensor(state, dtype=torch.uint8).unsqueeze(0)
+        action = torch.tensor([action], dtype=torch.long)
+        reward_t = torch.tensor([reward], dtype=torch.float32)
+        next_state = (None if terminated else
+                      torch.tensor(next_state, dtype=torch.uint8).unsqueeze(0))
+        self.replay_buffer.append(state, action, reward_t, next_state)
+        self._track_episode(float(reward), terminated, truncated)
+
+    def _track_episode(self, reward: float, terminated: bool, truncated: bool) -> None:
+        """Episode bookkeeping shared by both buffer paths: seal the episode and
+        latch progress-conditioned engagement on the rolling mean return."""
+        self._open_return += reward
         if terminated or truncated:
             self.replay_buffer.close(terminated)
             self._ep_returns.append(self._open_return)
@@ -213,10 +232,6 @@ class HankelDQNAgent(QAgent):
                     and len(self._ep_returns) == self._ep_returns.maxlen
                     and float(np.mean(self._ep_returns)) >= self.engage_reward_threshold):
                 self._engaged_at = self._grad_steps  # latch: ramp runs from here
-
-    def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
-        raise NotImplementedError(
-            "HankelDQNAgent's episodic buffer has no atari (uint8/CPU) path yet")
 
     def _lambda_eff(self) -> float:
         k = self._grad_steps
@@ -246,7 +261,7 @@ class HankelDQNAgent(QAgent):
             if win is not None:
                 w_states, w_actions, w_rewards, last_nexts = win
                 n, T = w_actions.shape
-                states = w_states.reshape(n * T, -1)
+                states = w_states.reshape(n * T, *w_states.shape[2:])
                 actions = w_actions.reshape(-1)
                 rewards = w_rewards.reshape(-1)
                 nexts = []
@@ -258,6 +273,11 @@ class HankelDQNAgent(QAgent):
 
     def _train_step(self):
         states, actions, rewards, next_list = self._td_batch()
+        # No-ops on the float path (already on device); moves the uint8 CPU
+        # batches of the atari path (the net's forward handles float()/255).
+        states = states.to(self.device)
+        actions = actions.to(self.device)
+        rewards = rewards.to(self.device)
         non_final_mask = torch.tensor([s is not None for s in next_list], device=self.device)
 
         Q_s_a = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -285,10 +305,13 @@ class HankelDQNAgent(QAgent):
                 half_life=self.window_half_life)
             if win is not None:
                 w_states, w_actions, w_rewards = win
+                w_states = w_states.to(self.device)
+                w_actions = w_actions.to(self.device)
+                w_rewards = w_rewards.to(self.device)
                 n, T = w_actions.shape
                 # λ=0 (warm-up): diagnostics only, keep the SVD out of the graph.
                 with torch.enable_grad() if lam > 0 else torch.no_grad():
-                    out = self.policy_net(w_states.reshape(n * T, -1))
+                    out = self.policy_net(w_states.reshape(n * T, *w_states.shape[2:]))
                     seq = (out.max(dim=1).values if self.hankel_signal == "v" else
                            out.gather(1, w_actions.reshape(n * T, 1)).squeeze(1)).view(n, T)
                     keep_mask = None
@@ -297,7 +320,7 @@ class HankelDQNAgent(QAgent):
                         # already small — i.e. where TD locally agrees with Q.
                         with torch.no_grad():
                             q_sa = out.gather(1, w_actions.reshape(n * T, 1)).view(n, T)
-                            nxt = w_states[:, 1:].reshape(n * (T - 1), -1)
+                            nxt = w_states[:, 1:].reshape(n * (T - 1), *w_states.shape[2:])
                             if self.double:
                                 na = self.policy_net(nxt).argmax(dim=1, keepdim=True)
                                 qn = self.target_net(nxt).gather(1, na).squeeze(1)

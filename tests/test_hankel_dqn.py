@@ -248,13 +248,61 @@ def test_windows_td_includes_terminal_anchor():
     assert found_terminal, "windows-mode TD never saw a terminal (target=r) anchor"
 
 
-def test_atari_path_raises():
-    a = _make_agent(0.0)
-    try:
-        a.update_buffer_atari(np.zeros(4), 0, 0.0, np.zeros(4), False)
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError:
-        pass
+class TinyConvQNet(nn.Module):
+    """Miniature NatureCNN stand-in: uint8 (C, H, W) frames in, Q-values out."""
+    def __init__(self, in_channels=2, n_actions=2, side=12):
+        super().__init__()
+        self.features = nn.Sequential(nn.Conv2d(in_channels, 4, 3, stride=2), nn.ReLU(),
+                                      nn.Flatten())
+        with torch.no_grad():
+            flat = self.features(torch.zeros(1, in_channels, side, side)).shape[1]
+        self.head = nn.Linear(flat, n_actions)
+
+    def forward(self, x):
+        return self.head(self.features(x.float() / 255.0))
+
+
+def _fill_agent_atari(agent, n_eps=3, ep_len=12, shape=(2, 12, 12)):
+    rng = np.random.RandomState(7)
+    for ep in range(n_eps):
+        frames = rng.randint(0, 256, size=(ep_len + 1, *shape), dtype=np.uint8)
+        for t in range(ep_len):
+            terminated = (t == ep_len - 1) and (ep % 2 == 0)
+            truncated = (t == ep_len - 1) and not terminated
+            agent.update_buffer_atari(frames[t], t % 2, 1.0, frames[t + 1],
+                                      terminated, truncated)
+
+
+def _make_atari_agent(weight, seed=0, **overrides):
+    kwargs = dict(q_network=TinyConvQNet, nn_extra_kwargs={}, batch_size=16,
+                  window_len=8, n_windows=4)
+    kwargs.update(overrides)
+    return _make_agent(weight, seed=seed, **kwargs)
+
+
+def test_atari_path_uint8_cpu_and_penalty():
+    a = _make_atari_agent(0.01)
+    _fill_agent_atari(a)
+    ep = a.replay_buffer._episodes[0]
+    assert ep["states"].dtype == torch.uint8 and ep["states"].device.type == "cpu"
+    assert ep["actions"].device.type == "cpu" and ep["rewards"].device.type == "cpu"
+    assert len(a._ep_returns) == 3  # episode returns tracked for the engage latch
+    d = a.train()
+    assert d is not None and not np.isnan(d["batch_eff_rank"])
+    assert d["penalty_raw"] >= 0 and a.nan_skips == 0
+
+
+def test_atari_td_gate_and_windows_td():
+    # td_gate_scale exercises the (n*(T-1), C, H, W) next-state reshape.
+    a = _make_atari_agent(0.01, seed=4, td_gate_scale=1e9)
+    _fill_agent_atari(a)
+    d = a.train()
+    assert d["ext_gate_frac"] == 0.0 and a.nan_skips == 0
+    # td_source="windows" exercises the window-batch TD reshape.
+    b = _make_atari_agent(0.01, seed=1, td_source="windows")
+    _fill_agent_atari(b)
+    d = b.train()
+    assert d is not None and b.nan_skips == 0
 
 
 def test_penalty_on_mps_if_available():

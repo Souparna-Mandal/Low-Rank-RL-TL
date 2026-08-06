@@ -1,0 +1,103 @@
+experiment:
+  name: dqn_seaquest_hankel
+  seed: 52
+  device: cuda
+  # Save run artifacts (spectra figures, rewards/rank CSVs, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
+
+environment:
+  name: ALE/Seaquest-v5
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: false
+    state: {}
+  # Standard Mnih et al. (2015) Atari preprocessing — identical pipeline to
+  # dqn_pacman/dqn_enduro. terminal_on_life_loss=True: Seaquest gives multiple
+  # lives and death (running out of oxygen or getting hit) needs to register as
+  # a terminal signal or the agent never learns to surface for air. Note this
+  # also means the episodic buffer's episodes (and the engage-latch returns) are
+  # per-life, so penalty windows never span a death.
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    terminal_on_life_loss: true
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+
+network:
+  # Vanilla Nature DQN CNN (defined inside exp1_hankel.ipynb) — deliberately NOT
+  # the dueling net of dqn_seaquest/exp1: inside this experiment's grid the
+  # baseline is hankel_weight=0 through the identical pipeline, so keeping the
+  # architecture classical makes the penalty the only delta under test.
+  #   Conv(4->32, k=8, s=4) -> ReLU
+  #   Conv(32->64, k=4, s=2) -> ReLU
+  #   Conv(64->64, k=3, s=1) -> ReLU
+  #   Flatten -> Linear(3136, 512) -> ReLU -> Linear(512, n_actions)
+  fc_hidden: 512
+
+agent:
+  # HankelDQNAgent's episodic buffer stores each frame stack once as uint8 on
+  # CPU (~28 kB per transition) -> 250k transitions ~ 7 GB host RAM.
+  replay_buffer_capacity: 250000
+  batch_size: 128
+  nn_learning_rate: 0.0001
+  eps_start: 1.0
+  eps_min: 0.01
+  # Inherited from dqn_seaquest/config.yaml for parity with the sibling experiment.
+  # NOTE: 0.999912 reaches eps 0.01 after ~52k decayed steps — ~5x faster than the
+  # "~250k steps" tuning the sibling config's comment describes.
+  decay_rate: 0.999912
+  # Higher than pacman's 0.98: the dive -> collect -> surface-for-oxygen cycle
+  # spans hundreds of steps, so credit for surfacing must survive a long horizon.
+  discount_factor: 0.99
+  TD_LR: 0.005
+  buffer_util: 4
+  gd_steps_ceil: 30
+  grad_clip_norm: 10.0
+  double: True
+  # --- Hankel low-rank regulariser (HankelDQNAgent; hankel_weight 0 => exact QAgent) ---
+  hankel_weight: 0.1       # lambda on the truncated singular-value tail
+  hankel_order: 4           # target Hankel rank r (r=1 over-compresses; campaign round 4)
+  window_len: 40            # sub-trajectory window T (~1.3 s at frame_skip 4); Hankel is 11x10
+  n_windows: 40              # penalty windows per gradient step
+  gate_threshold: null      # spectral gate OFF: every sampled window feeds the penalty
+                            # (a toy Atari run showed gate_frac=1.0 at 0.25 — fully starved)
+  warmup_grad_steps: 0      # lambda = 0 for the first grad steps ...
+  ramp_grad_steps: 0        # ... then ramps linearly to hankel_weight
+  window_half_life: 200      # episodes; recency-bias penalty windows toward current policy
+
+training:
+  no_episodes: 15000
+  target_network_update_steps: 10
+  train_frequency_steps: 40
+  use_episode_training: true
+  # DQN-family agents typically land 2000-6000 on Seaquest; set high to disable early stop.
+  solved_reward: 20000
+  warmup_steps: 50000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 20
+
+analysis:
+  ep_freq: 100
+  # q_matrix_dqn discretises observation dims -> meaningless for pixel inputs, so
+  # no generic per-matrix methods here. Hankel runs via hankel_sweep below.
+  methods: []
+  # Heavier discretised-Q analysis, run once post-training in the notebook:
+  # rows = states visited by the policy (Yang et al. 2020 construction), plus a
+  # latent-space k-means binned variant (the pixel analogue of per-dim bins).
+  post_methods:
+    - name: q_matrix_rollout
+      kwargs:
+        no_episodes: 3
+        max_states: 16000
+        feature_clusters: 128
+        seed: 52
+      outputs: [Q visited-states, Q latent-binned]
