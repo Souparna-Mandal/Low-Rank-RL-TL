@@ -30,10 +30,12 @@ def _ar_residual(vals_segs, k):
         return np.inf, None
     c = np.linalg.solve(X.T @ X + 1e-8 * np.eye(k), X.T @ y)
     Xh, yh = rows(hold)
-    if len(yh) == 0:
+    # Near-constant value signal: order is unmeasurable (scores would be
+    # ratios of numerical noise) — report failure instead of an arbitrary k.
+    if len(yh) == 0 or np.std(yh) < 1e-6:
         return np.inf, None
     res = yh - Xh @ c
-    return float(np.sqrt(np.mean(res ** 2)) / (np.std(yh) + 1e-8)), c
+    return float(np.sqrt(np.mean(res ** 2)) / np.std(yh)), c
 
 
 class SSMAutoAgent(SSMCriticAgent):
@@ -67,17 +69,44 @@ class SSMAutoAgent(SSMCriticAgent):
         m = torch.zeros(16, device=self.device)
         m[keep] = 1.0
         self.mask = m
-        # Bake the mask in permanently: dead channels neither carry memory
-        # (decay -> 0) nor reach the value (C -> 0), and stay dead because
-        # their gradient path through C*h is cut once h is zeroed each step.
-        with torch.no_grad():
-            self.critic.decay_logits.data[m == 0] = -20.0
-            self.critic.C.weight.data[:, m == 0] = 0.0
-            self.critic.B.weight.data[m == 0, :] = 0.0
-            self.critic.B.bias.data[m == 0] = 0.0
         if self.h is not None:
             self.h = self.h * m
         self.diag = {"order": int(order), "rank": int(self.mask.sum().item())}
+
+    # The mask must be ENFORCED in every forward pass, not baked into the
+    # weights once: h_dead is forced to exactly 0 before the readout, so
+    # dv/dC_dead = h_dead = 0 and dead channels can never revive through
+    # gradients or optimizer momentum.
+    def _masked_step(self, phi, h):
+        c = self.critic
+        h = (torch.sigmoid(c.decay_logits) * h + c.B(phi)) * self.mask
+        return h, (c.C(h) + c.D(phi)).squeeze(-1)
+
+    @torch.no_grad()
+    def act(self, obs):
+        t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        dist = torch.distributions.Categorical(logits=self.actor(t.unsqueeze(0)))
+        a = dist.sample()
+        self.h, v = self._masked_step(self.critic.trunk(t), self.h)
+        return int(a), float(dist.log_prob(a)), float(v)
+
+    @torch.no_grad()
+    def act_and_value_only(self, obs):
+        t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        _, v = self._masked_step(self.critic.trunk(t), self.h)  # peek only
+        return float(v)
+
+    def _seq_values(self, obs, seg_bounds, seg_h0):
+        phi = self.critic.trunk(obs)
+        bx = self.critic.B(phi)
+        a = torch.sigmoid(self.critic.decay_logits)
+        hs = []
+        for (s, e), h in zip(seg_bounds, seg_h0):
+            h = h * self.mask  # pre-mask hidden states enter masked
+            for t in range(s, e):
+                h = (a * h + bx[t]) * self.mask
+                hs.append(h)
+        return (self.critic.C(torch.stack(hs)) + self.critic.D(phi)).squeeze(-1)
 
     def update(self, buf):
         if self._updates == self.warmup_updates:
@@ -93,4 +122,5 @@ def build(env, device, overrides):
     return SSMAutoAgent(env=env, device=device,
                         warmup_updates=int(overrides.get("warmup_updates", 6)),
                         order_tol=float(overrides.get("order_tol", 1.05)),
+                        max_order=int(overrides.get("max_order", 8)),
                         **kwargs)
