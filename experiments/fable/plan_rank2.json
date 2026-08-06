@@ -1,0 +1,47 @@
+[
+ {
+  "variant": "ssm_critic",
+  "env": "Acrobot-v1",
+  "seed": 0,
+  "episodes": 120,
+  "set": [
+   "ssm_rank=2"
+  ]
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Acrobot-v1",
+  "seed": 1,
+  "episodes": 120,
+  "set": [
+   "ssm_rank=2"
+  ]
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Acrobot-v1",
+  "seed": 2,
+  "episodes": 120,
+  "set": [
+   "ssm_rank=2"
+  ]
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Acrobot-v1",
+  "seed": 3,
+  "episodes": 120,
+  "set": [
+   "ssm_rank=2"
+  ]
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Acrobot-v1",
+  "seed": 4,
+  "episodes": 120,
+  "set": [
+   "ssm_rank=2"
+  ]
+ }
+]
