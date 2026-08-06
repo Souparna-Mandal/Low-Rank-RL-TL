@@ -67,3 +67,55 @@ advantages the actor learns from) rather than nudging a scalar output.
    a thesis-ready diagnostic, and the coefficients are the transfer object.
 3. Retune the shared-trunk variants (lower vf_coef, wider trunk) before
    drawing conclusions about ideas 2 and 5.
+
+---
+
+# Round 2 — ablation, robustness, generalization, and the AR-order trick
+
+Data: `runs/{rank2,rank4,rank16,lunar,explore2,confirm_lunar}`; figures
+`results/{summary_headline,advantage_curves,cross_env_summary}.png`;
+stats `results/round2_stats.json`. All claims follow `PREREGISTRATION.md`.
+
+## Mechanism nailed down (Acrobot, N=5 paired unless noted)
+
+- **GRU ablation:** replacing the linear SSM recurrence with a nonlinear GRU
+  of the same size is WORSE than baseline (AUC −250.8 vs −198.8; SSM −160.9).
+  The win comes from the **linear low-rank recurrence**, not from recurrence
+  per se — directly supporting the thesis mechanism.
+- **Rank robustness:** the effect holds for rank ∈ {2, 4, 8, 16} (AUC −167 to
+  −152.5, all well above baseline −199). Even rank 2 — the theoretical minimum
+  from the AR(2) measurement — captures most of the benefit.
+
+## Registered LunarLander confirmation (fresh seeds 100–119, N=20)
+
+- **PRIMARY (AUC): did not replicate.** Δ+4.4, CI [−6.3, +15.1], 10/20,
+  p = 0.22. The 5/5 probe (+23.9) was substantially seed luck.
+- **SECONDARY (final-quarter): significant.** Δ+18.1, CI [+2.9, +34.8],
+  p = 0.018 — a late-training advantage consistent with the SSM needing time
+  to pay off on longer-horizon envs. Per protocol this is a *hypothesis* for a
+  longer-budget registered test, not a claim.
+
+## New environments (exploration, N=5): the effect is structure-specific
+
+Pendulum ≈ null, CliffWalking ≈ null, MountainCar all arms at the −200 floor
+(exploration-limited, as expected). Combined with confirmed-Acrobot and
+null-CartPole, the cross-env map (`cross_env_summary.png`) shows the SSM
+critic is a targeted tool, not a universal win — which the AR-order
+diagnostic anticipates.
+
+## The AR-order trick (ssm_auto, fixed after adversarial verification)
+
+An adversarial verification workflow found (and reproduced) a genuine blocker
+in the first ssm_auto implementation — masked channels could revive through
+optimizer momentum and a gradient leak — so all its runs were purged and
+re-run with the mask enforced in every forward pass (dead channels provably
+exactly zero). With the fixed code (seeds 0–4):
+
+- **ssm_auto beats fixed-rank ssm_critic on both original envs**: CartPole
+  59.7 vs 53.7 (baseline 54.6) — turning the null env positive by
+  self-selecting orders 2–3; Acrobot −152.8 vs −160.9 — with orders 2–5.
+- Orders chosen per env (5 seeds): CartPole 2–3, Acrobot 2–5, Pendulum 3–4,
+  CliffWalking 2–3, MountainCar 3–5.
+- **Round-3 confirmations registered and running**: ssm_auto vs baseline on
+  CartPole (primary) and ssm_auto vs ssm_critic on Acrobot (secondary), fresh
+  seeds 100–119, N=20.
