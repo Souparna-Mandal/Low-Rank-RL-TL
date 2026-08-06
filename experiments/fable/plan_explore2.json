@@ -1,0 +1,362 @@
+[
+ {
+  "variant": "baseline",
+  "env": "Pendulum-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "Pendulum-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "Pendulum-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "Pendulum-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "Pendulum-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Pendulum-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Pendulum-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Pendulum-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Pendulum-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "Pendulum-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Pendulum-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Pendulum-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Pendulum-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Pendulum-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Pendulum-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "MountainCar-v0",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "MountainCar-v0",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "MountainCar-v0",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "MountainCar-v0",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "MountainCar-v0",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "MountainCar-v0",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "MountainCar-v0",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "MountainCar-v0",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "MountainCar-v0",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "MountainCar-v0",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "MountainCar-v0",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "MountainCar-v0",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "MountainCar-v0",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "MountainCar-v0",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "MountainCar-v0",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "CliffWalking-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "CliffWalking-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "CliffWalking-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "CliffWalking-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "baseline",
+  "env": "CliffWalking-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CliffWalking-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CliffWalking-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CliffWalking-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CliffWalking-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CliffWalking-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CliffWalking-v1",
+  "seed": 0,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CliffWalking-v1",
+  "seed": 1,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CliffWalking-v1",
+  "seed": 2,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CliffWalking-v1",
+  "seed": 3,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CliffWalking-v1",
+  "seed": 4,
+  "episodes": 150
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 0,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 1,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 2,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 3,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 4,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 0,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 1,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 2,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 3,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 4,
+  "episodes": 120
+ },
+ {
+  "variant": "gru_critic",
+  "env": "Acrobot-v1",
+  "seed": 0,
+  "episodes": 120
+ },
+ {
+  "variant": "gru_critic",
+  "env": "Acrobot-v1",
+  "seed": 1,
+  "episodes": 120
+ },
+ {
+  "variant": "gru_critic",
+  "env": "Acrobot-v1",
+  "seed": 2,
+  "episodes": 120
+ },
+ {
+  "variant": "gru_critic",
+  "env": "Acrobot-v1",
+  "seed": 3,
+  "episodes": 120
+ },
+ {
+  "variant": "gru_critic",
+  "env": "Acrobot-v1",
+  "seed": 4,
+  "episodes": 120
+ }
+]
