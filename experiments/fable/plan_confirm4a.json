@@ -1,0 +1,242 @@
+[
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 200,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 201,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 202,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 203,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 204,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 205,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 206,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 207,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 208,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 209,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 210,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 211,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 212,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 213,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 214,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 215,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 216,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 217,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 218,
+  "episodes": 300
+ },
+ {
+  "variant": "baseline",
+  "env": "LunarLander-v3",
+  "seed": 219,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 200,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 201,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 202,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 203,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 204,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 205,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 206,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 207,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 208,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 209,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 210,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 211,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 212,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 213,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 214,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 215,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 216,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 217,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 218,
+  "episodes": 300
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "LunarLander-v3",
+  "seed": 219,
+  "episodes": 300
+ }
+]

@@ -62,3 +62,27 @@ sharpest test of the AR-order trick: fixed-rank SSM was null here.
 seeds 100–119 (ssm_critic cached from confirmation 1), 120 episodes. Metric:
 AUC, one-sided (H1: adaptive > fixed), alpha .05.
 Rider (context, no claim): ssm_critic on CartPole fresh seeds 100–119.
+
+---
+
+## Addendum 4 — registered before launch (round 4)
+
+**CONFIRMATION 4a — ssm_critic vs baseline on LunarLander-v3, LONG BUDGET.**
+Motivated by round 2's significant registered secondary (final-quarter +18.1,
+p=.018) with a null primary at 150 episodes. Budget doubled to 300 episodes,
+fresh seeds 200–219 (N=20/arm), defaults (rank 8). **PRIMARY (pre-declared
+switch): final-quarter mean return**, one-sided paired sign-flip permutation,
+alpha .05. Secondary: AUC. Failure on the primary is reported as a definitive
+non-replication of the LunarLander hypothesis.
+
+**CONFIRMATION 4b — ssm_auto vs baseline on CartPole-v1 at N=40.** Round 3a
+was directionally positive (p=.086) at N=20. Adding seeds 120–139 (N=20 new
+per arm), pooled with 100–119 → N=40, pooling declared here in advance.
+Primary: AUC pooled N=40, one-sided, alpha .05. Sensitivity: seeds 120–139
+alone (reported either way).
+
+**4c — AR(2) coefficient transfer probe (measurement, no performance claim).**
+Fit AR(2) to each rollout's value sequences during baseline PPO training
+(after update 5) on CartPole / Acrobot / LunarLander, 10 seeds each. Report:
+within-env cross-seed coefficient dispersion vs cross-env separation
+(are the coefficients an environment property — the transferable object?).
