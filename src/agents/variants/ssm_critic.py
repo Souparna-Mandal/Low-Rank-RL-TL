@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from agents.ppo_agent import PPOAgent
-from ppo_training import make_rollout_buffer
+from ppo_training import make_rollout_buffer, raw_return
 
 PPO_KEYS = {"hidden_sizes", "nn_learning_rate", "discount_factor", "gae_lambda",
             "rollout_steps", "minibatch_size", "update_epochs", "clip_eps",
@@ -124,7 +124,7 @@ def collect_rollout(agent, env, state, ep_ret):
     obs_dim = env.observation_space.shape[0]
     buf = make_rollout_buffer(agent, obs_dim, n)
     seg_bounds, seg_terminal, seg_boot, seg_h0 = [], [], [], []
-    finished_returns = []
+    finished_returns, finished_raw = [], []
     seg_start = 0
     if agent.h is None:  # hidden persists across rollouts mid-episode
         agent.begin_episode()
@@ -134,7 +134,7 @@ def collect_rollout(agent, env, state, ep_ret):
         a, logp, v = agent.act(state)
         buf["obs"][t] = state
         buf["acts"][t], buf["logps"][t], buf["values"][t] = a, logp, v
-        state, r, terminated, truncated, _ = env.step(a)
+        state, r, terminated, truncated, info = env.step(a)
         buf["rews"][t] = r
         ep_ret += r
         if terminated or truncated:
@@ -144,6 +144,7 @@ def collect_rollout(agent, env, state, ep_ret):
             seg_boot.append(0.0 if terminated else
                             agent.act_and_value_only(state))
             finished_returns.append(ep_ret)
+            finished_raw.append(raw_return(info, ep_ret))
             ep_ret = 0.0
             state, _ = env.reset()
             agent.begin_episode()
@@ -156,6 +157,7 @@ def collect_rollout(agent, env, state, ep_ret):
     buf["seg_terminal"] = seg_terminal
     buf["seg_boot_value"] = seg_boot
     buf["seg_h0"] = seg_h0
+    buf["raw_returns"] = finished_raw
     return buf, state, ep_ret, finished_returns
 
 
