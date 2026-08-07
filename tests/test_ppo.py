@@ -11,10 +11,30 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 import gymnasium as gym
 
 from agents.ppo_agent import PPOAgent
-from ppo_training import ppo_training_loop, _collect_rollout
+from ppo_training import (ppo_training_loop, _collect_rollout,
+                          greedy_episode_return, frozen_running_stats)
+from environments.base_env import make_environment
 from experiment import load_config, build_env, build_ppo_agent, train_ppo
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+
+NO_TRANSFORMS = {"discrete_config": None,
+                 "normalise": {"action": {}, "state": {}},
+                 "clip": {"action": False, "state": []}}
+
+
+def _pendulum(**over):
+    """Pendulum-v1 through make_environment with the transform keys merged."""
+    kw = {k: dict(v) if isinstance(v, dict) else v
+          for k, v in NO_TRANSFORMS.items()}
+    for k, v in over.items():
+        kw[k] = {**kw[k], **v} if isinstance(kw.get(k), dict) else v
+    return make_environment("Pendulum-v1", **kw)
+
+
+def _running(**over):
+    return {"obs": True, "reward": True, "gamma": 0.99,
+            "clip_obs": 10.0, "clip_reward": 10.0, **over}
 
 
 def _seed(s=0):
@@ -207,6 +227,101 @@ def test_training_loop_solved_early_stop():
                                 early_stopping_patience_eps=2, np_seed=11,
                                 no_eps_to_avg=2, progress=False)
     assert 2 <= len(rewards) < 100
+
+
+def test_rescale_then_clip_action_compose():
+    """Regression: ClipAction re-advertises Box(-inf, inf), so RescaleAction
+    applied AFTER it cannot build a rescale. base_env must rescale first."""
+    env = _pendulum(normalise={"action": {"min": -1.0, "max": 1.0}},
+                    clip={"action": True})
+    env.reset(seed=0)
+    env.step(np.array([9.0], np.float32))  # far out of bounds: must not raise
+    agent = PPOAgent(env=env, rollout_steps=16)
+    assert agent.continuous and agent.act_dim == 1
+
+
+def test_running_normalisation_reports_raw_and_normalised():
+    _seed(11)
+    env = _pendulum(normalise={"running": _running()})
+    agent = PPOAgent(env=env, rollout_steps=400, minibatch_size=64,
+                     update_epochs=1)
+    state, _ = env.reset(seed=0)
+    buf, _, _, finished = _collect_rollout(agent, env, state, 0.0)
+    raw = buf["raw_returns"]
+    assert len(raw) == len(finished) and len(raw) > 0
+    # Pendulum's true return is very negative; the normalised one is rescaled
+    # by the running return std, so the two streams must not coincide.
+    assert all(r < -100 for r in raw), raw
+    assert not np.allclose(raw, finished)
+    # reward clipping is active: no single step exceeds the +-10 bound
+    assert np.abs(buf["rews"]).max() <= 10.0 + 1e-6
+    # observation normalisation is active: obs are standardised, not raw
+    assert np.abs(buf["obs"]).max() <= 10.0 + 1e-6
+
+
+def test_raw_returns_equal_returns_without_normalisation():
+    """The two streams must coincide exactly when normalisation is off, which
+    is what keeps every existing discrete result unchanged."""
+    _seed(12)
+    agent = _agent()
+    env = gym.make("CartPole-v1")
+    state, _ = env.reset(seed=3)
+    buf, _, _, finished = _collect_rollout(agent, env, state, 0.0)
+    assert buf["raw_returns"] == finished
+
+
+def test_eval_does_not_move_running_stats():
+    _seed(13)
+    env = _pendulum(normalise={"running": _running()})
+    agent = PPOAgent(env=env, rollout_steps=200, minibatch_size=64,
+                     update_epochs=1)
+    state, _ = env.reset(seed=0)
+    _collect_rollout(agent, env, state, 0.0)  # prime the running stats
+
+    def snapshot():
+        out, e = [], env
+        while e is not None:
+            for attr in ("obs_rms", "return_rms"):
+                rms = getattr(e, attr, None)
+                if rms is not None:
+                    out.append((np.copy(rms.mean), np.copy(rms.var)))
+            e = getattr(e, "env", None)
+        return out
+
+    before = snapshot()
+    assert before, "expected running statistics to exist"
+    greedy_episode_return(agent, env, seed=1, max_steps=200)
+    for (m0, v0), (m1, v1) in zip(before, snapshot()):
+        assert np.array_equal(m0, m1) and np.array_equal(v0, v1), \
+            "evaluation perturbed the running statistics"
+
+
+def test_frozen_running_stats_restores_flag():
+    env = _pendulum(normalise={"running": _running()})
+    with frozen_running_stats(env):
+        pass
+    e, seen = env, False
+    while e is not None:
+        if hasattr(e, "update_running_mean"):
+            assert e.update_running_mean is True
+            seen = True
+        e = getattr(e, "env", None)
+    assert seen
+
+
+def test_solved_threshold_uses_raw_returns():
+    """With reward normalisation on, a normalised average has no fixed scale;
+    the solved check must read the raw stream or it fires meaninglessly."""
+    _seed(14)
+    env = _pendulum(normalise={"running": _running()})
+    agent = PPOAgent(env=env, rollout_steps=400, minibatch_size=64,
+                     update_epochs=1)
+    rewards, raw = ppo_training_loop(
+        agent, env, no_episodes=4, solved_reward=1e9, np_seed=2,
+        no_eps_to_avg=2, progress=False, return_raw=True)
+    assert len(rewards) == len(raw) == 4
+    assert all(r < -100 for r in raw)          # raw Pendulum returns
+    assert not np.allclose(rewards, raw)       # normalised stream differs
 
 
 if __name__ == "__main__":
