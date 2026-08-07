@@ -41,19 +41,8 @@ class LatentARAgent(PPOAgent):
                                dtype=torch.float32 if self.continuous else None)
         old_logp = torch.as_tensor(buf["logps"], dtype=torch.float32, device=self.device)
 
-        values = buf["values"]
-        T = len(values)
-        adv = np.zeros(T, dtype=np.float64)
-        for (a, b), terminal, boot_v in zip(buf["seg_bounds"], buf["seg_terminal"],
-                                            buf["seg_boot_value"]):
-            next_v = 0.0 if terminal else boot_v
-            gae = 0.0
-            for t in range(b - 1, a - 1, -1):
-                delta = buf["rews"][t] + self.gamma * next_v - values[t]
-                gae = delta + self.gamma * self.lam * gae
-                adv[t] = gae
-                next_v = values[t]
-        returns = adv + values
+        adv, returns = self._gae(buf)
+        T = len(adv)
 
         adv_t = torch.as_tensor(adv, dtype=torch.float32, device=self.device)
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
