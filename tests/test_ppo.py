@@ -29,12 +29,104 @@ def _agent(**overrides):
     return PPOAgent(**kwargs)
 
 
-def test_space_asserts_fail_fast():
+class _DiscreteObsEnv(gym.Env):
+    """Discrete observations, which PPOAgent still refuses (use one_hot_obs)."""
+    observation_space = gym.spaces.Discrete(5)
+    action_space = gym.spaces.Discrete(2)
+
+
+class _ContinuousEnv(gym.Env):
+    """3-D Box actions, to exercise the sum-over-action-dims paths that a 1-D
+    env like Pendulum cannot distinguish from a scalar."""
+    observation_space = gym.spaces.Box(-1.0, 1.0, (4,), dtype=np.float32)
+    action_space = gym.spaces.Box(-2.0, 2.0, (3,), dtype=np.float32)
+
+    def __init__(self, ep_len=10):
+        self.ep_len = ep_len
+        self.t = 0
+
+    def reset(self, seed=None, options=None):
+        self.t = 0
+        return np.zeros(4, np.float32), {}
+
+    def step(self, action):
+        self.t += 1
+        return np.zeros(4, np.float32), 1.0, self.t >= self.ep_len, False, {}
+
+
+def test_flat_obs_assert_still_enforced():
     try:
-        PPOAgent(env=gym.make("Pendulum-v1"))
-        raise RuntimeError("Box action space should have been rejected")
+        PPOAgent(env=_DiscreteObsEnv())
+        raise RuntimeError("Discrete observation space should have been rejected")
     except AssertionError as e:
-        assert "Discrete action space" in str(e)
+        assert "flat Box observation space" in str(e)
+
+
+def test_box_action_space_accepted():
+    agent = PPOAgent(env=gym.make("Pendulum-v1"))
+    assert agent.continuous and agent.act_dim == 1
+    assert agent.log_std is not None and agent.log_std.shape == (1,)
+    # Discrete stays discrete, with no log_std to optimise.
+    disc = _agent()
+    assert not disc.continuous and disc.log_std is None
+
+
+def test_continuous_rollout_shapes_and_update():
+    _seed(6)
+    env = _ContinuousEnv()
+    agent = PPOAgent(env=env, rollout_steps=64, minibatch_size=16,
+                     update_epochs=2)
+    state, _ = env.reset(seed=0)
+    buf, _, _, finished = _collect_rollout(agent, env, state, 0.0)
+    assert buf["acts"].shape == (64, 3) and buf["acts"].dtype == np.float32
+    assert np.isfinite(buf["logps"]).all() and len(finished) > 0
+    before = [p.detach().clone() for p in agent.actor.parameters()]
+    agent.update(buf)
+    assert any(not torch.equal(b, p.detach())
+               for b, p in zip(before, agent.actor.parameters()))
+    for p in agent._all_params():
+        assert torch.isfinite(p).all()
+
+
+def test_log_std_is_optimised():
+    """Guards the silent failure: a subclass that rebuilds the optimiser over
+    actor+critic only would leave log_std frozen and never error."""
+    _seed(7)
+    env = _ContinuousEnv()
+    agent = PPOAgent(env=env, rollout_steps=64, minibatch_size=16,
+                     update_epochs=2, ent_coef=0.01)
+    assert any(p is agent.log_std for p in agent._all_params())
+    state, _ = env.reset(seed=0)
+    buf, _, _, _ = _collect_rollout(agent, env, state, 0.0)
+    before = agent.log_std.detach().clone()
+    agent.update(buf)
+    assert agent.log_std.grad is not None, "log_std received no gradient"
+    assert not torch.equal(before, agent.log_std.detach()), \
+        "log_std was not stepped by the optimiser"
+
+
+def test_act_greedy_continuous_returns_mean():
+    _seed(8)
+    env = _ContinuousEnv()
+    agent = PPOAgent(env=env, rollout_steps=16)
+    obs = np.zeros(4, np.float32)
+    greedy = agent.act_greedy(obs)
+    assert greedy.shape == (3,)
+    with torch.no_grad():
+        mean = agent.actor(torch.as_tensor(obs).unsqueeze(0)).squeeze(0).numpy()
+    assert np.allclose(greedy, mean)
+
+
+def test_continuous_logp_sums_over_action_dims():
+    """log_prob must be one scalar per timestep, not one per action dim."""
+    _seed(9)
+    agent = PPOAgent(env=_ContinuousEnv(), rollout_steps=16)
+    obs = torch.zeros(5, 4)
+    dist = agent._dist(obs)
+    acts = dist.sample()
+    assert acts.shape == (5, 3)
+    assert agent._logp(dist, acts).shape == (5,)
+    assert agent._entropy(dist).shape == (5,)
 
 
 def test_collect_rollout_bookkeeping():
