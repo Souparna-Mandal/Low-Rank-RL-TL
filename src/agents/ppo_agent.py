@@ -13,6 +13,33 @@ def _mlp(in_dim, out_dim, hidden):
     return nn.Sequential(*layers)
 
 
+def compute_gae(buf, gamma, lam):
+    """GAE(lambda) advantages and lambda-returns for one rollout.
+
+    Segments are the episode slices recorded by the rollout collector, and the
+    distinction they carry is the whole point: seg_terminal marks a true
+    terminal state (bootstrap 0) as opposed to a slice cut by a time limit or
+    by the rollout boundary, which bootstraps from seg_boot_value. Collapsing
+    the two is the classic PPO bug.
+
+    Returns (adv, returns), both float64 of length T. Kept as one function
+    because every variant that overrides update() needs exactly this and would
+    otherwise re-derive it, which is how the two cases drift apart.
+    """
+    values = buf["values"]
+    adv = np.zeros(len(values), dtype=np.float64)
+    for (a, b), terminal, boot_v in zip(buf["seg_bounds"], buf["seg_terminal"],
+                                        buf["seg_boot_value"]):
+        next_v = 0.0 if terminal else boot_v
+        gae = 0.0
+        for t in range(b - 1, a - 1, -1):
+            delta = buf["rews"][t] + gamma * next_v - values[t]
+            gae = delta + gamma * lam * gae
+            adv[t] = gae
+            next_v = values[t]
+    return adv, adv + values
+
+
 class PPOAgent:
     """PPO-clip for discrete or continuous actions: separate actor/critic MLPs,
     GAE(lambda) advantages with per-segment bootstrapping, minibatched clip
@@ -68,6 +95,11 @@ class PPOAgent:
         self.vf_coef = vf_coef
         self.ent_coef = ent_coef
         self.max_grad_norm = max_grad_norm
+
+    # -- advantages --------------------------------------------------------
+    def _gae(self, buf):
+        """GAE advantages + lambda-returns at this agent's gamma/lambda."""
+        return compute_gae(buf, self.gamma, self.lam)
 
     # -- policy head -------------------------------------------------------
     def _all_params(self):
@@ -155,19 +187,8 @@ class PPOAgent:
                                dtype=torch.float32 if self.continuous else None)
         old_logp = torch.as_tensor(buf["logps"], dtype=torch.float32, device=self.device)
 
-        values = buf["values"]
-        T = len(values)
-        adv = np.zeros(T, dtype=np.float64)
-        for (a, b), terminal, boot_v in zip(buf["seg_bounds"], buf["seg_terminal"],
-                                            buf["seg_boot_value"]):
-            next_v = 0.0 if terminal else boot_v
-            gae = 0.0
-            for t in range(b - 1, a - 1, -1):
-                delta = buf["rews"][t] + self.gamma * next_v - values[t]
-                gae = delta + self.gamma * self.lam * gae
-                adv[t] = gae
-                next_v = values[t]
-        returns = adv + values
+        adv, returns = self._gae(buf)
+        T = len(adv)
 
         adv_t = torch.as_tensor(adv, dtype=torch.float32, device=self.device)
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
