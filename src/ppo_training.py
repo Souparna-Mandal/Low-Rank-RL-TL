@@ -3,12 +3,24 @@ import numpy as np
 from tqdm import tqdm
 
 
+def make_rollout_buffer(agent, obs_dim, n):
+    """Empty rollout buffer of n steps.
+
+    The action column is (n,) int64 for a Discrete agent and (n, act_dim)
+    float32 for a continuous one. Variants that ship their own collect_rollout
+    should build their buffer here so that dtype rule stays in one place.
+    """
+    acts = (np.zeros((n, agent.act_dim), np.float32) if agent.continuous
+            else np.zeros(n, np.int64))
+    return {"obs": np.zeros((n, obs_dim), np.float32), "acts": acts,
+            "logps": np.zeros(n, np.float32), "rews": np.zeros(n, np.float64),
+            "values": np.zeros(n, np.float64)}
+
+
 def _collect_rollout(agent, env, state, ep_ret):
     n = agent.rollout_steps
     obs_dim = env.observation_space.shape[0]
-    buf = {"obs": np.zeros((n, obs_dim), np.float32), "acts": np.zeros(n, np.int64),
-           "logps": np.zeros(n, np.float32), "rews": np.zeros(n, np.float64),
-           "values": np.zeros(n, np.float64)}
+    buf = make_rollout_buffer(agent, obs_dim, n)
     seg_bounds, seg_terminal, seg_boot = [], [], []
     finished_returns = []
     seg_start = 0
