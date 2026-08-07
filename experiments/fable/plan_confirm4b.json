@@ -1,0 +1,242 @@
+[
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 120,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 121,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 122,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 123,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 124,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 125,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 126,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 127,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 128,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 129,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 130,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 131,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 132,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 133,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 134,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 135,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 136,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 137,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 138,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 139,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 120,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 121,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 122,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 123,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 124,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 125,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 126,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 127,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 128,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 129,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 130,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 131,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 132,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 133,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 134,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 135,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 136,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 137,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 138,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 139,
+  "episodes": 200
+ }
+]

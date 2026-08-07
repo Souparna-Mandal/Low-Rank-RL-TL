@@ -1,0 +1,62 @@
+[
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 0,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 1,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 2,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 3,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "CartPole-v1",
+  "seed": 4,
+  "episodes": 200
+ },
+ {
+  "variant": "baseline",
+  "env": "Acrobot-v1",
+  "seed": 0,
+  "episodes": 120
+ },
+ {
+  "variant": "baseline",
+  "env": "Acrobot-v1",
+  "seed": 1,
+  "episodes": 120
+ },
+ {
+  "variant": "baseline",
+  "env": "Acrobot-v1",
+  "seed": 2,
+  "episodes": 120
+ },
+ {
+  "variant": "baseline",
+  "env": "Acrobot-v1",
+  "seed": 3,
+  "episodes": 120
+ },
+ {
+  "variant": "baseline",
+  "env": "Acrobot-v1",
+  "seed": 4,
+  "episodes": 120
+ }
+]

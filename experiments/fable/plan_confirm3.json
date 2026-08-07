@@ -1,0 +1,362 @@
+[
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 100,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 100,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 100,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 101,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 101,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 101,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 102,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 102,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 102,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 103,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 103,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 103,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 104,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 104,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 104,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 105,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 105,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 105,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 106,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 106,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 106,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 107,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 107,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 107,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 108,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 108,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 108,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 109,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 109,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 109,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 110,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 110,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 110,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 111,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 111,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 111,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 112,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 112,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 112,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 113,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 113,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 113,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 114,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 114,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 114,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 115,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 115,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 115,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 116,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 116,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 116,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 117,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 117,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 117,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 118,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 118,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 118,
+  "episodes": 120
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "CartPole-v1",
+  "seed": 119,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_critic",
+  "env": "CartPole-v1",
+  "seed": 119,
+  "episodes": 200
+ },
+ {
+  "variant": "ssm_auto",
+  "env": "Acrobot-v1",
+  "seed": 119,
+  "episodes": 120
+ }
+]
