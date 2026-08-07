@@ -85,10 +85,13 @@ class SSMAutoAgent(SSMCriticAgent):
     @torch.no_grad()
     def act(self, obs):
         t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        dist = torch.distributions.Categorical(logits=self.actor(t.unsqueeze(0)))
+        dist = self._dist(t.unsqueeze(0))
         a = dist.sample()
+        logp = float(self._logp(dist, a))
         self.h, v = self._masked_step(self.critic.trunk(t), self.h)
-        return int(a), float(dist.log_prob(a)), float(v)
+        if self.continuous:
+            return a.squeeze(0).cpu().numpy(), logp, float(v)
+        return int(a), logp, float(v)
 
     @torch.no_grad()
     def act_and_value_only(self, obs):

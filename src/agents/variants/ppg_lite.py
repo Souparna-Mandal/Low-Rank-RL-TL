@@ -10,7 +10,7 @@ from agents.ppo_agent import PPOAgent
 
 PPO_KEYS = {"hidden_sizes", "nn_learning_rate", "discount_factor", "gae_lambda",
             "rollout_steps", "minibatch_size", "update_epochs", "clip_eps",
-            "vf_coef", "ent_coef", "max_grad_norm"}
+            "vf_coef", "ent_coef", "max_grad_norm", "log_std_init"}
 
 
 class PPGLiteAgent(PPOAgent):
@@ -18,17 +18,18 @@ class PPGLiteAgent(PPOAgent):
                  **kwargs):
         super().__init__(env, device=device, **kwargs)
         obs_dim = env.observation_space.shape[0]
-        n_act = env.action_space.n
         self.trunk = nn.Sequential(nn.Linear(obs_dim, 64), nn.Tanh(),
                                    nn.Linear(64, 64), nn.Tanh()).to(self.device)
-        self.pi_head = nn.Linear(64, n_act).to(self.device)
+        # actor_out_dim: n_act logits, or one Gaussian mean per action dim.
+        self.pi_head = nn.Linear(64, self.actor_out_dim).to(self.device)
         self.v_head = nn.Linear(64, 1).to(self.device)
         # rebind parent nets so act/act_greedy/act_and_value_only work as-is
         self.actor = nn.Sequential(self.trunk, self.pi_head)
         self.critic = nn.Sequential(self.trunk, self.v_head)
         self.params = (list(self.trunk.parameters())
                        + list(self.pi_head.parameters())
-                       + list(self.v_head.parameters()))
+                       + list(self.v_head.parameters())
+                       + ([self.log_std] if self.continuous else []))
         self.optim = torch.optim.Adam(self.params,
                                       lr=self.optim.param_groups[0]["lr"])
         self.n_pi = n_pi
@@ -40,7 +41,8 @@ class PPGLiteAgent(PPOAgent):
 
     def update(self, buf):
         obs = torch.as_tensor(buf["obs"], dtype=torch.float32, device=self.device)
-        acts = torch.as_tensor(buf["acts"], device=self.device)
+        acts = torch.as_tensor(buf["acts"], device=self.device,
+                               dtype=torch.float32 if self.continuous else None)
         old_logp = torch.as_tensor(buf["logps"], dtype=torch.float32, device=self.device)
 
         values = buf["values"]
@@ -69,8 +71,10 @@ class PPGLiteAgent(PPOAgent):
             for start in range(0, T, self.minibatch_size):
                 mb = idx[start:start + self.minibatch_size]
                 phi = self.trunk(obs[mb])
-                dist = torch.distributions.Categorical(logits=self.pi_head(phi))
-                logp = dist.log_prob(acts[mb])
+                # _dist_from, not _dist: phi is reused by the value head below,
+                # so the trunk must not be forwarded a second time.
+                dist = self._dist_from(self.pi_head(phi))
+                logp = self._logp(dist, acts[mb])
                 ratio = (logp - old_logp[mb]).exp()
                 s1 = ratio * adv_t[mb]
                 s2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * adv_t[mb]
@@ -78,7 +82,7 @@ class PPGLiteAgent(PPOAgent):
                 v = self.v_head(phi.detach()).squeeze(-1)
                 value_loss = 0.5 * ((v - ret_t[mb]) ** 2).mean()
                 loss = (policy_loss + self.vf_coef * value_loss
-                        - self.ent_coef * dist.entropy().mean())
+                        - self.ent_coef * self._entropy(dist).mean())
                 self.optim.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.params, self.max_grad_norm)
@@ -95,8 +99,11 @@ class PPGLiteAgent(PPOAgent):
                               dtype=torch.float32, device=self.device)
         ret = torch.as_tensor(np.concatenate([r for _, r in self.aux_buf]),
                               dtype=torch.float32, device=self.device)
-        with torch.no_grad():  # policy logits at the start of the aux phase
-            old_logits = self.pi_head(self.trunk(obs))
+        with torch.no_grad():  # policy at the start of the aux phase
+            old_out = self.pi_head(self.trunk(obs))
+            # log_std is trained in this phase too, so the KL reference has to
+            # pin the old spread as well as the old mean.
+            old_std = self.log_std.exp().clone() if self.continuous else None
         N = len(ret)
         idx = np.arange(N)
         for _ in range(self.aux_epochs):
@@ -105,9 +112,8 @@ class PPGLiteAgent(PPOAgent):
                 mb = idx[start:start + self.minibatch_size]
                 phi = self.trunk(obs[mb])  # undetached: distill into trunk
                 v = self.v_head(phi).squeeze(-1)
-                kl = torch.distributions.kl_divergence(
-                    torch.distributions.Categorical(logits=old_logits[mb]),
-                    torch.distributions.Categorical(logits=self.pi_head(phi)))
+                kl = self._kl(self._dist_from(old_out[mb], std=old_std),
+                              self._dist_from(self.pi_head(phi)))
                 loss = (0.5 * ((v - ret[mb]) ** 2).mean()
                         + self.clone_beta * kl.mean())
                 self.optim.zero_grad()

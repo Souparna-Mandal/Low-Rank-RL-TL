@@ -29,9 +29,9 @@ class GRUCriticAgent(SSMCriticAgent):
         super().__init__(env, device=device, ssm_rank=ssm_rank, **kwargs)
         self.critic = _GRUCritic(env.observation_space.shape[0],
                                  ssm_rank).to(self.device)
+        # _all_params() so log_std survives the critic swap on continuous envs.
         self.optim = torch.optim.Adam(
-            list(self.actor.parameters()) + list(self.critic.parameters()),
-            lr=self.optim.param_groups[0]["lr"])
+            self._all_params(), lr=self.optim.param_groups[0]["lr"])
 
     def _seq_values(self, obs, seg_bounds, seg_h0):
         phi = self.critic.trunk(obs)

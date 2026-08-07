@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 
 from agents.ppo_agent import PPOAgent
+from ppo_training import make_rollout_buffer
 
 PPO_KEYS = {"hidden_sizes", "nn_learning_rate", "discount_factor", "gae_lambda",
             "rollout_steps", "minibatch_size", "update_epochs", "clip_eps",
-            "vf_coef", "ent_coef", "max_grad_norm"}
+            "vf_coef", "ent_coef", "max_grad_norm", "log_std_init"}
 
 
 class _SSMCritic(nn.Module):
@@ -35,9 +36,9 @@ class SSMCriticAgent(PPOAgent):
         self.r = ssm_rank
         self.critic = _SSMCritic(env.observation_space.shape[0],
                                  ssm_rank).to(self.device)
+        # _all_params(), not actor+critic by hand: it carries log_std too.
         self.optim = torch.optim.Adam(
-            list(self.actor.parameters()) + list(self.critic.parameters()),
-            lr=self.optim.param_groups[0]["lr"])
+            self._all_params(), lr=self.optim.param_groups[0]["lr"])
         self.h = None  # live hidden state; set by begin_episode()
 
     def begin_episode(self):
@@ -46,10 +47,13 @@ class SSMCriticAgent(PPOAgent):
     @torch.no_grad()
     def act(self, obs):
         t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        dist = torch.distributions.Categorical(logits=self.actor(t.unsqueeze(0)))
+        dist = self._dist(t.unsqueeze(0))
         a = dist.sample()
+        logp = float(self._logp(dist, a))
         self.h, v = self.critic.step(self.critic.trunk(t), self.h)
-        return int(a), float(dist.log_prob(a)), float(v)
+        if self.continuous:
+            return a.squeeze(0).cpu().numpy(), logp, float(v)
+        return int(a), logp, float(v)
 
     @torch.no_grad()
     def act_and_value_only(self, obs):
@@ -70,7 +74,8 @@ class SSMCriticAgent(PPOAgent):
 
     def update(self, buf):
         obs = torch.as_tensor(buf["obs"], dtype=torch.float32, device=self.device)
-        acts = torch.as_tensor(buf["acts"], device=self.device)
+        acts = torch.as_tensor(buf["acts"], device=self.device,
+                               dtype=torch.float32 if self.continuous else None)
         old_logp = torch.as_tensor(buf["logps"], dtype=torch.float32, device=self.device)
 
         values = buf["values"]
@@ -92,15 +97,14 @@ class SSMCriticAgent(PPOAgent):
         ret_t = torch.as_tensor(returns, dtype=torch.float32, device=self.device)
         seg_h0 = [h.to(self.device) for h in buf["seg_h0"]]
 
-        params = list(self.actor.parameters()) + list(self.critic.parameters())
+        params = self._all_params()
         idx = np.arange(T)
         for _ in range(self.update_epochs):
             np.random.shuffle(idx)
             for start in range(0, T, self.minibatch_size):
                 mb = idx[start:start + self.minibatch_size]
-                logits = self.actor(obs[mb])
-                dist = torch.distributions.Categorical(logits=logits)
-                logp = dist.log_prob(acts[mb])
+                dist = self._dist(obs[mb])
+                logp = self._logp(dist, acts[mb])
                 ratio = (logp - old_logp[mb]).exp()
                 s1 = ratio * adv_t[mb]
                 s2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * adv_t[mb]
@@ -108,7 +112,7 @@ class SSMCriticAgent(PPOAgent):
                 v = self._seq_values(obs, buf["seg_bounds"], seg_h0)
                 value_loss = 0.5 * ((v[mb] - ret_t[mb]) ** 2).mean()
                 loss = (policy_loss + self.vf_coef * value_loss
-                        - self.ent_coef * dist.entropy().mean())
+                        - self.ent_coef * self._entropy(dist).mean())
                 self.optim.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(params, self.max_grad_norm)
@@ -118,9 +122,7 @@ class SSMCriticAgent(PPOAgent):
 def collect_rollout(agent, env, state, ep_ret):
     n = agent.rollout_steps
     obs_dim = env.observation_space.shape[0]
-    buf = {"obs": np.zeros((n, obs_dim), np.float32), "acts": np.zeros(n, np.int64),
-           "logps": np.zeros(n, np.float32), "rews": np.zeros(n, np.float64),
-           "values": np.zeros(n, np.float64)}
+    buf = make_rollout_buffer(agent, obs_dim, n)
     seg_bounds, seg_terminal, seg_boot, seg_h0 = [], [], [], []
     finished_returns = []
     seg_start = 0

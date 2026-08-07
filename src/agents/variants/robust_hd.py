@@ -9,7 +9,7 @@ from agents.ppo_agent import PPOAgent
 
 PPO_KEYS = {"hidden_sizes", "nn_learning_rate", "discount_factor", "gae_lambda",
             "rollout_steps", "minibatch_size", "update_epochs", "clip_eps",
-            "vf_coef", "ent_coef", "max_grad_norm"}
+            "vf_coef", "ent_coef", "max_grad_norm", "log_std_init"}
 
 
 def _cadzow_step(y, r, beta=1.0):
@@ -53,7 +53,8 @@ class RobustHDAgent(PPOAgent):
 
     def update(self, buf):
         obs = torch.as_tensor(buf["obs"], dtype=torch.float32, device=self.device)
-        acts = torch.as_tensor(buf["acts"], device=self.device)
+        acts = torch.as_tensor(buf["acts"], device=self.device,
+                               dtype=torch.float32 if self.continuous else None)
         old_logp = torch.as_tensor(buf["logps"], dtype=torch.float32, device=self.device)
 
         values = buf["values"]
@@ -84,9 +85,8 @@ class RobustHDAgent(PPOAgent):
             np.random.shuffle(idx)
             for start in range(0, T, self.minibatch_size):
                 mb = idx[start:start + self.minibatch_size]
-                logits = self.actor(obs[mb])
-                dist = torch.distributions.Categorical(logits=logits)
-                logp = dist.log_prob(acts[mb])
+                dist = self._dist(obs[mb])
+                logp = self._logp(dist, acts[mb])
                 ratio = (logp - old_logp[mb]).exp()
                 s1 = ratio * adv_t[mb]
                 s2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * adv_t[mb]
@@ -94,12 +94,10 @@ class RobustHDAgent(PPOAgent):
                 v = self.critic(obs[mb]).squeeze(-1)
                 value_loss = 0.5 * ((v - ret_t[mb]) ** 2).mean()
                 loss = (policy_loss + self.vf_coef * value_loss
-                        - self.ent_coef * dist.entropy().mean())
+                        - self.ent_coef * self._entropy(dist).mean())
                 self.optim.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(
-                    list(self.actor.parameters()) + list(self.critic.parameters()),
-                    self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self._all_params(), self.max_grad_norm)
                 self.optim.step()
 
 

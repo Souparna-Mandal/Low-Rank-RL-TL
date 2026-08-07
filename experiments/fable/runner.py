@@ -39,7 +39,13 @@ COMMON = {"discrete_config": None, "normalise": {"action": {}, "state": {}},
           "clip": {"action": False, "state": []}}
 
 
-def make_env(env_name):
+def make_env(env_name, continuous=False):
+    """continuous=True keeps a Box action space instead of binning it, and
+    turns on ClipAction so the unbounded Gaussian's tails are absorbed at the
+    env boundary (how SB3/CleanRL bound continuous PPO)."""
+    if continuous:
+        return make_environment(env_name, **dict(
+            COMMON, clip={"action": True, "state": []}))
     if env_name in ENV_KWARGS:
         return make_environment(env_name, **ENV_KWARGS[env_name], **COMMON)
     return gym.make(env_name)
@@ -54,11 +60,11 @@ def parse_value(s):
     return s
 
 
-def run(variant_name, env_name, seed, episodes, overrides):
+def run(variant_name, env_name, seed, episodes, overrides, continuous=False):
     torch.manual_seed(seed)
     np.random.seed(seed)
     mod = get_variant(variant_name)
-    env = make_env(env_name)
+    env = make_env(env_name, continuous=continuous)
     agent = mod.build(env, "cpu", overrides)
     collect = getattr(mod, "collect_rollout", None) or default_collect
 
@@ -91,12 +97,16 @@ def main():
     p.add_argument("--episodes", type=int, required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
+    p.add_argument("--continuous", action="store_true",
+                   help="keep the Box action space (Gaussian policy + "
+                        "ClipAction) instead of binning it to Discrete")
     a = p.parse_args()
     overrides = dict(DEFAULTS)
     for kv in a.set:
         k, v = kv.split("=", 1)
         overrides[k] = parse_value(v)
-    result = run(a.variant, a.env, a.seed, a.episodes, overrides)
+    result = run(a.variant, a.env, a.seed, a.episodes, overrides,
+                 continuous=a.continuous)
     out = pathlib.Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result))

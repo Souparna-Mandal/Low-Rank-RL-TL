@@ -5,7 +5,7 @@ from agents.ppo_agent import PPOAgent
 
 PPO_KEYS = {"hidden_sizes", "nn_learning_rate", "discount_factor", "gae_lambda",
             "rollout_steps", "minibatch_size", "update_epochs", "clip_eps",
-            "vf_coef", "ent_coef", "max_grad_norm"}
+            "vf_coef", "ent_coef", "max_grad_norm", "log_std_init"}
 
 
 class ARExplorePPO(PPOAgent):
