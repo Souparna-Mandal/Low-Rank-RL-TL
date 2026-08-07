@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 import gymnasium as gym
 
-from agents.ppo_agent import PPOAgent
+from agents.ppo_agent import PPOAgent, compute_gae
 from ppo_training import (ppo_training_loop, _collect_rollout,
                           greedy_episode_return, frozen_running_stats)
 from environments.base_env import make_environment
@@ -227,6 +227,57 @@ def test_training_loop_solved_early_stop():
                                 early_stopping_patience_eps=2, np_seed=11,
                                 no_eps_to_avg=2, progress=False)
     assert 2 <= len(rewards) < 100
+
+
+def _gae_buf(rews, values, seg_bounds, seg_terminal, seg_boot):
+    return {"rews": np.asarray(rews, np.float64),
+            "values": np.asarray(values, np.float64),
+            "seg_bounds": seg_bounds, "seg_terminal": seg_terminal,
+            "seg_boot_value": seg_boot}
+
+
+def test_compute_gae_terminal_vs_truncated():
+    """The distinction the shared helper exists to protect: a terminal segment
+    bootstraps 0, a truncated one bootstraps seg_boot_value. At gamma=lam=1
+    both have a closed form, so this pins the semantics exactly."""
+    rews, values = [1.0, 2.0, 3.0], [0.5, 0.25, 0.125]
+    tail = np.cumsum(rews[::-1])[::-1]  # sum(rews[t:])
+
+    adv, ret = compute_gae(
+        _gae_buf(rews, values, [(0, 3)], [True], [99.0]), gamma=1.0, lam=1.0)
+    assert np.allclose(adv, tail - np.asarray(values))
+    assert np.allclose(ret, tail), "terminal segment must ignore seg_boot_value"
+
+    boot = 7.0
+    adv_t, ret_t = compute_gae(
+        _gae_buf(rews, values, [(0, 3)], [False], [boot]), gamma=1.0, lam=1.0)
+    assert np.allclose(ret_t, tail + boot), "truncated segment must bootstrap"
+    assert not np.allclose(ret, ret_t)
+
+
+def test_compute_gae_segments_are_independent():
+    """A segment must not leak advantage across its boundary."""
+    rews, values = [1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]
+    split, _ = compute_gae(
+        _gae_buf(rews, values, [(0, 2), (2, 4)], [True, True], [0.0, 0.0]),
+        gamma=1.0, lam=1.0)
+    whole, _ = compute_gae(
+        _gae_buf(rews[:2], values[:2], [(0, 2)], [True], [0.0]),
+        gamma=1.0, lam=1.0)
+    assert np.allclose(split[:2], whole) and np.allclose(split[2:], whole)
+
+
+def test_every_variant_uses_the_shared_gae():
+    """Guards the drift the refactor removed: no variant may carry its own
+    copy of the GAE recursion."""
+    import agents.ppo_agent as ppo_mod
+    root = pathlib.Path(ppo_mod.__file__).parent
+    offenders = [p.name for p in sorted(root.rglob("*.py"))
+                 if "adv[t] = gae" in p.read_text() and p.name != "ppo_agent.py"]
+    assert not offenders, f"re-derived GAE loop in: {offenders}"
+    # and the one surviving copy is the shared helper, reachable from an agent
+    assert PPOAgent._gae(_agent(), _gae_buf(
+        [1.0], [0.0], [(0, 1)], [True], [0.0]))[0].shape == (1,)
 
 
 def test_rescale_then_clip_action_compose():
