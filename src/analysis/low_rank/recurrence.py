@@ -123,6 +123,48 @@ def forecast_free_running(coefficients, seed_values, horizon,
     return np.asarray(forecast)
 
 
+def forecast_rolling_horizon(coefficients, value_sequence, horizon,
+                             fit_intercept=False):
+    """Repeated `horizon`-step forecasts, re-anchored on the true values.
+
+    The sequence is walked in blocks of `horizon`. At the start of each block
+    the recurrence is seeded with the `order` values that TRULY precede it, then
+    runs free for `horizon` steps. The next block re-seeds from the real values
+    again, so errors compound within a block but never across one.
+
+    This is the regime that matches how such a model would actually be used:
+    you forecast a little way ahead, then you observe what really happened and
+    forecast again from there. It also interpolates cleanly between the two
+    extremes already available:
+
+        horizon = 1                     identical to predict_one_step_ahead
+        horizon >= len(sequence)-order  identical to forecast_free_running
+
+    so sweeping `horizon` measures exactly how far ahead the recurrence can see
+    before it stops being useful.
+
+    Returns an array aligned with value_sequence[order:], the same alignment
+    predict_one_step_ahead uses, so the two are directly comparable.
+    """
+    if horizon < 1:
+        raise ValueError(f"horizon must be at least 1, got {horizon}")
+    order = len(coefficients) - 1 if fit_intercept else len(coefficients)
+    value_sequence = np.asarray(value_sequence, dtype=np.float64)
+    n_predictions = len(value_sequence) - order
+    if n_predictions <= 0:
+        return np.zeros(0)
+    predictions = np.empty(n_predictions)
+    for block_start in range(0, n_predictions, horizon):
+        # The `order` true values immediately preceding this block.
+        seed_end = order + block_start
+        seed_values = value_sequence[seed_end - order:seed_end]
+        block_length = min(horizon, n_predictions - block_start)
+        predictions[block_start:block_start + block_length] = \
+            forecast_free_running(coefficients, seed_values, block_length,
+                                  fit_intercept=fit_intercept)
+    return predictions
+
+
 def root_mean_squared_error(predicted, actual):
     """Plain RMSE, in the same units as the value signal."""
     predicted, actual = np.asarray(predicted), np.asarray(actual)

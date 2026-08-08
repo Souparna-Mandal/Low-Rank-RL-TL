@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from analysis.low_rank.autoregressive_value_probe import (
     HELD_OUT_TRAJECTORY_SPLIT, PREFIX_SUFFIX_SPLIT, coefficient_rows,
     collect_greedy_value_sequences, evaluate_autoregressive_orders,
-    example_rollout_arrays, metric_rows)
+    example_rollout_arrays, horizon_metric_rows, metric_rows)
 
 
 def _order_two_sequences(n_sequences=10, length=80, seed=0):
@@ -97,6 +97,61 @@ def test_constant_value_sequences_do_not_raise():
     nearly_constant = [np.full(50, 3.0) + 1e-9 * np.arange(50)
                        for _ in range(6)]
     assert evaluate_autoregressive_orders(nearly_constant, orders=(4,))
+
+
+def test_rolling_horizon_sweep_endpoints_match_the_other_regimes():
+    """The sweep must contain the other two regimes as its endpoints: horizon 1
+    is one-step-ahead, and a horizon past the trajectory length is free
+    running. If that stops holding, the three numbers are not comparable."""
+    generator = np.random.default_rng(11)
+    sequences = [np.cumsum(generator.normal(size=70)) + 20.0 for _ in range(8)]
+    results = evaluate_autoregressive_orders(
+        sequences, orders=(2,), forecast_horizons=(1, 8, 1000))
+    split = results[2][HELD_OUT_TRAJECTORY_SPLIT]
+    horizons = split["test_horizons"]
+    assert abs(horizons[1]["normalised_rmse"]
+               - split["test"]["normalised_rmse_one_step_ahead"]) < 1e-9
+    assert abs(horizons[1000]["normalised_rmse"]
+               - split["test"]["normalised_rmse_free_running"]) < 1e-9
+
+
+def test_error_grows_with_forecast_horizon_then_saturates():
+    """Longer horizons are harder, but the error does NOT grow without bound.
+
+    A stable fitted recurrence decays towards the signal's mean once it runs
+    free, so beyond some horizon it is simply predicting the mean and the error
+    plateaus at roughly the signal's own scale. Only an unstable recurrence
+    diverges, and that is reported separately. Asserting strict monotonicity
+    here would therefore be wrong; what must hold is that horizon 1 -- which
+    uses the most true information -- is the easiest of all horizons, and that
+    a long horizon is materially harder than it.
+    """
+    generator = np.random.default_rng(12)
+    sequences = [np.sin(0.3 * np.arange(120)) + 0.25 * generator.normal(size=120)
+                 + 6.0 for _ in range(8)]
+    results = evaluate_autoregressive_orders(
+        sequences, orders=(2,), ridge_penalty=1e-6,
+        forecast_horizons=(1, 4, 16, 64))
+    errors = {h: m["normalised_rmse"] for h, m
+              in results[2][HELD_OUT_TRAJECTORY_SPLIT]["test_horizons"].items()}
+    assert errors[1] == min(errors.values()), errors
+    assert errors[4] > errors[1] and errors[16] > errors[4], errors
+    assert errors[64] > 1.5 * errors[1], errors
+    # saturation: the jump from 16 to 64 is far smaller than from 1 to 16
+    assert abs(errors[64] - errors[16]) < (errors[16] - errors[1]), errors
+
+
+def test_horizon_rows_cover_every_combination():
+    sequences, _ = _order_two_sequences()
+    horizons = (1, 4, 16)
+    results = evaluate_autoregressive_orders(sequences, orders=(2, 4),
+                                             forecast_horizons=horizons)
+    rows = horizon_metric_rows(episode=7, results=results,
+                               value_sequences=sequences)
+    # 2 orders x 2 splits x 2 subsets x 3 horizons
+    assert len(rows) == 24
+    assert {r["forecast_horizon"] for r in rows} == set(horizons)
+    assert all(r["episode"] == 7 for r in rows)
 
 
 def test_row_flattening_shapes_match_the_csv_columns():

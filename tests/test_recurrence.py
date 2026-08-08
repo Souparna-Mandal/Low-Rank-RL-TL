@@ -13,6 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from analysis.low_rank.recurrence import (fit_autoregressive_coefficients,
                                           forecast_free_running,
+                                          forecast_rolling_horizon,
                                           normalised_root_mean_squared_error,
                                           predict_one_step_ahead,
                                           root_mean_squared_error)
@@ -83,6 +84,73 @@ def test_one_step_alignment_and_noise_stability():
                                               value_sequence[4:]) < 0.5
     assert np.isfinite(forecast_free_running(coefficients, value_sequence[:4],
                                              horizon=50)).all()
+
+
+def test_rolling_horizon_of_one_equals_one_step_ahead():
+    """horizon=1 must reproduce predict_one_step_ahead exactly: each block is a
+    single step seeded from the true history."""
+    generator = np.random.default_rng(5)
+    value_sequence = np.cumsum(generator.normal(size=120)) + 10.0
+    coefficients = fit_autoregressive_coefficients([value_sequence], order=3)
+    assert np.allclose(
+        forecast_rolling_horizon(coefficients, value_sequence, horizon=1),
+        predict_one_step_ahead(coefficients, value_sequence))
+
+
+def test_rolling_horizon_covering_whole_sequence_equals_free_running():
+    """A horizon at least as long as the sequence leaves one block, which is
+    exactly the free-running forecast from the start."""
+    generator = np.random.default_rng(6)
+    value_sequence = np.cumsum(generator.normal(size=90)) + 5.0
+    order = 4
+    coefficients = fit_autoregressive_coefficients([value_sequence], order=order)
+    rolling = forecast_rolling_horizon(coefficients, value_sequence,
+                                       horizon=len(value_sequence))
+    free_running = forecast_free_running(coefficients, value_sequence[:order],
+                                         horizon=len(value_sequence) - order)
+    assert np.allclose(rolling, free_running)
+
+
+def test_rolling_horizon_re_anchors_on_true_values():
+    """Within a block the forecast drifts; at every block boundary it must snap
+    back to a prediction made from the real history."""
+    order, horizon = 2, 8
+    # A sequence the recurrence cannot follow perfectly, so drift is visible.
+    generator = np.random.default_rng(7)
+    value_sequence = (np.sin(0.35 * np.arange(120))
+                      + 0.3 * generator.normal(size=120) + 4.0)
+    coefficients = fit_autoregressive_coefficients([value_sequence], order=order,
+                                                   ridge_penalty=1e-6)
+    rolling = forecast_rolling_horizon(coefficients, value_sequence,
+                                       horizon=horizon)
+    one_step = predict_one_step_ahead(coefficients, value_sequence)
+    # The first prediction of every block is seeded entirely from true values,
+    # so it must equal the one-step-ahead prediction at that index.
+    for block_start in range(0, len(rolling), horizon):
+        assert abs(rolling[block_start] - one_step[block_start]) < 1e-9, \
+            f"block at {block_start} did not re-anchor on the true history"
+    # And a longer horizon must be at least as hard as a shorter one.
+    error_short = normalised_root_mean_squared_error(
+        forecast_rolling_horizon(coefficients, value_sequence, 2),
+        value_sequence[order:])
+    error_long = normalised_root_mean_squared_error(
+        forecast_rolling_horizon(coefficients, value_sequence, 32),
+        value_sequence[order:])
+    assert error_long > error_short
+
+
+def test_rolling_horizon_alignment_and_short_sequences():
+    coefficients = fit_autoregressive_coefficients([np.arange(30.0)], order=3)
+    assert forecast_rolling_horizon(coefficients, np.arange(30.0),
+                                    horizon=7).shape == (27,)
+    # Sequence not longer than the order yields no predictions rather than raising.
+    assert forecast_rolling_horizon(coefficients, np.arange(3.0),
+                                    horizon=7).shape == (0,)
+    try:
+        forecast_rolling_horizon(coefficients, np.arange(30.0), horizon=0)
+        raise AssertionError("expected ValueError for horizon 0")
+    except ValueError as error:
+        assert "at least 1" in str(error)
 
 
 def test_intercept_handles_constant_offset():

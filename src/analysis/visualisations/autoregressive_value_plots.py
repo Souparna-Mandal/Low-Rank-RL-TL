@@ -77,6 +77,118 @@ def load_example_rollouts(run_directory, episode=None):
         return {key: data[key] for key in data.files}, int(chosen.stem[2:])
 
 
+def load_horizon_errors(run_directory):
+    """The rolling-horizon forecast sweep as a DataFrame.
+
+    One row per (episode, order, split, subset, forecast_horizon), where the
+    horizon is how many steps are predicted before the recurrence is re-anchored
+    on the values that actually occurred.
+    """
+    path = (pathlib.Path(run_directory)
+            / "autoregressive_value_horizon_metrics.csv")
+    return pd.read_csv(path)
+
+
+def plot_error_versus_forecast_horizon(
+        run_directory, episode=None, split=HELD_OUT_TRAJECTORY_SPLIT,
+        subset="test", save_to=None, show=True, figsize=(8, 5)):
+    """Error against how far ahead the recurrence is asked to forecast.
+
+    At horizon tau the recurrence predicts tau steps from the true history, is
+    then re-anchored on what actually happened, and predicts the next tau. The
+    two endpoints of this curve are the other regimes: horizon 1 IS
+    one-step-ahead, and a horizon past the trajectory length IS free running.
+
+    Read it as: how far ahead can this recurrence see before it stops being
+    useful? A curve that rises then flattens has saturated -- the recurrence has
+    decayed to predicting the signal's mean, so the error plateaus at roughly
+    the signal's own scale rather than growing without bound. A curve that keeps
+    climbing steeply is an unstable fit.
+
+    episode=None uses the last checkpoint.
+    """
+    errors = load_horizon_errors(run_directory)
+    errors = errors[(errors["split"] == split) & (errors["subset"] == subset)]
+    if episode is None:
+        episode = errors["episode"].max()
+    at_episode = errors[errors["episode"] == episode]
+    if at_episode.empty:
+        raise ValueError(f"no horizon rows at episode {episode}")
+    orders = sorted(at_episode["order"].unique())
+    colours = _order_colours(orders)
+
+    figure, axis = plt.subplots(figsize=figsize)
+    for order in orders:
+        selected = (at_episode[at_episode["order"] == order]
+                    .sort_values("forecast_horizon"))
+        axis.plot(selected["forecast_horizon"], selected["normalised_rmse"],
+                  marker="o", markersize=4, color=colours[order],
+                  linewidth=1.8, label=f"order {order}")
+    axis.axhline(1.0, color="grey", linestyle=":", linewidth=1.0)
+    axis.annotate("error as large as the signal itself", xy=(0.02, 1.05),
+                  xycoords=("axes fraction", "data"), fontsize=8, color="grey")
+    axis.set_xscale("log", base=2)
+    axis.set_yscale("log")
+    axis.set_xlabel("forecast horizon $\\tau$ (steps predicted before re-anchoring)")
+    axis.set_ylabel("normalised RMSE")
+    axis.set_title(f"How far ahead can the recurrence see?\n"
+                   f"episode {episode} · {SPLIT_TITLES.get(split, split)} · {subset}")
+    axis.grid(alpha=0.3, which="both")
+    axis.legend(fontsize=8)
+    figure.tight_layout()
+    _finish(figure, save_to, show)
+    return figure
+
+
+def plot_horizon_error_over_training(
+        run_directory, order=2, split=HELD_OUT_TRAJECTORY_SPLIT,
+        subset="test", save_to=None, show=True, figsize=(10, 4.5)):
+    """For one recurrence order, the error at each horizon across training.
+
+    Shows whether the agent's value signal becomes predictable further ahead as
+    it learns, or only ever one step ahead.
+    """
+    errors = load_horizon_errors(run_directory)
+    errors = errors[(errors["split"] == split) & (errors["subset"] == subset)
+                    & (errors["order"] == order)]
+    if errors.empty:
+        raise ValueError(f"no horizon rows for order {order}, split {split!r}")
+    horizons = sorted(errors["forecast_horizon"].unique())
+    colour_map = plt.get_cmap("plasma")
+
+    figure, axis = plt.subplots(figsize=figsize)
+    for index, horizon in enumerate(horizons):
+        selected = (errors[errors["forecast_horizon"] == horizon]
+                    .sort_values("episode"))
+        axis.plot(selected["episode"], selected["normalised_rmse"],
+                  color=colour_map(index / max(len(horizons) - 1, 1)),
+                  linewidth=1.6, label=f"$\\tau$ = {horizon}")
+    axis.set_yscale("log")
+    axis.set_xlabel("training episode")
+    axis.set_ylabel("normalised RMSE")
+    axis.set_title(f"Order-{order} forecast error at each horizon, over training "
+                   f"({SPLIT_TITLES.get(split, split)}, {subset})")
+    axis.grid(alpha=0.3)
+    axis.legend(fontsize=8, ncol=2)
+    figure.tight_layout()
+    _finish(figure, save_to, show)
+    return figure
+
+
+def summarise_horizon_sweep(run_directory, episode=None,
+                            split=HELD_OUT_TRAJECTORY_SPLIT, subset="test"):
+    """Held-out error at each (order, horizon) as a readable pivot table."""
+    errors = load_horizon_errors(run_directory)
+    errors = errors[(errors["split"] == split) & (errors["subset"] == subset)]
+    if episode is None:
+        episode = errors["episode"].max()
+    at_episode = errors[errors["episode"] == episode]
+    table = at_episode.pivot_table(index="order", columns="forecast_horizon",
+                                   values="normalised_rmse")
+    table.columns = [f"tau={int(c)}" for c in table.columns]
+    return table
+
+
 def find_latest_run_with_probe(runs_directory="runs"):
     """The most recently modified run directory that actually has probe output.
 

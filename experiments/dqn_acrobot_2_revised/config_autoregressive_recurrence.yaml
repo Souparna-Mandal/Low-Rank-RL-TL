@@ -84,6 +84,14 @@ analysis:
     # Value sequences sit at a non-zero level, so without an intercept the
     # recurrence would spend its coefficients representing that offset.
     fit_intercept: true
+    # Rolling-horizon forecast windows. At each horizon tau the recurrence
+    # predicts tau steps from the true history, is then re-anchored on the
+    # values that actually occurred, and predicts the next tau -- which is how
+    # such a model would really be used. The sweep contains the other two
+    # regimes as its endpoints: horizon 1 is exactly one-step-ahead, and a
+    # horizon longer than the trajectory is exactly free running, so this
+    # measures how far ahead the recurrence stays useful.
+    forecast_horizons: [1, 2, 4, 8, 16, 32, 64]
     # How many example trajectories per subset get their actual-vs-predicted
     # arrays saved for plotting.
     n_example_rollouts: 2

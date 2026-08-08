@@ -85,7 +85,8 @@ def run_sig(run_dir: pathlib.Path) -> str:
     parts = []
     for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv",
                  "autoregressive_value_metrics.csv",
-                 "autoregressive_value_coefficients.csv"):
+                 "autoregressive_value_coefficients.csv",
+                 "autoregressive_value_horizon_metrics.csv"):
         p = run_dir / name
         if p.exists():
             st = p.stat()
@@ -103,6 +104,7 @@ def load_run(run_dir: pathlib.Path) -> dict:
                      "rewards": None, "figures": {}, "trajectories": [],
                      "autoregressive_metrics": None,
                      "autoregressive_coefficients": None,
+                     "autoregressive_horizons": None,
                      "autoregressive_rollouts": [],
                      "sig": run_sig(run_dir)}
 
@@ -119,6 +121,8 @@ def load_run(run_dir: pathlib.Path) -> dict:
         run_dir / "autoregressive_value_metrics.csv")
     payload["autoregressive_coefficients"] = _csv_table(
         run_dir / "autoregressive_value_coefficients.csv")
+    payload["autoregressive_horizons"] = _csv_table(
+        run_dir / "autoregressive_value_horizon_metrics.csv")
     ar_rollout_dir = run_dir / "autoregressive_rollouts"
     if ar_rollout_dir.is_dir():
         for p in sorted(ar_rollout_dir.glob("*.npz")):

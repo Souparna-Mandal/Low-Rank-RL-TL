@@ -43,6 +43,7 @@ import torch
 
 from analysis.low_rank.recurrence import (fit_autoregressive_coefficients,
                                           forecast_free_running,
+                                          forecast_rolling_horizon,
                                           normalised_root_mean_squared_error,
                                           predict_one_step_ahead,
                                           root_mean_squared_error)
@@ -50,6 +51,14 @@ from analysis.low_rank.recurrence import (fit_autoregressive_coefficients,
 # Orders probed by default. 2 is the order the low-rank work has focused on; 8
 # is included so over-parameterisation shows up as free-running divergence.
 DEFAULT_ORDERS = (2, 3, 4, 8)
+
+# Forecast window sizes for the rolling-horizon regime: predict this many steps
+# from the true history, then observe what really happened and forecast again.
+# Spanning powers of two from 1 turns "how predictable is the value signal?"
+# into a curve rather than a single number -- horizon 1 is one-step-ahead and a
+# horizon past the trajectory length is full free running, so the sweep shows
+# exactly how far ahead the recurrence stays useful.
+DEFAULT_FORECAST_HORIZONS = (1, 2, 4, 8, 16, 32, 64)
 
 HELD_OUT_TRAJECTORY_SPLIT = "held_out_trajectory_split"
 PREFIX_SUFFIX_SPLIT = "prefix_suffix_split"
@@ -176,9 +185,50 @@ def _prediction_metrics(coefficients, value_sequences, order, fit_intercept,
     return metrics
 
 
+def _rolling_horizon_metrics(coefficients, value_sequences, order,
+                             fit_intercept, horizons):
+    """Error of the repeated `horizon`-step forecast, for each horizon.
+
+    At every horizon the recurrence is re-seeded from the true values, forecasts
+    that many steps, and is then re-anchored on what actually happened -- the
+    way such a model would really be used. Horizon 1 reproduces one-step-ahead
+    and a horizon longer than the trajectory reproduces free running, so this
+    single sweep contains both of the other regimes as its endpoints.
+    """
+    per_horizon = {}
+    for horizon in horizons:
+        predicted_blocks, actual_blocks = [], []
+        for value_sequence in value_sequences:
+            if len(value_sequence) <= order:
+                continue
+            predicted_blocks.append(forecast_rolling_horizon(
+                coefficients, value_sequence, horizon,
+                fit_intercept=fit_intercept))
+            actual_blocks.append(value_sequence[order:])
+        if not predicted_blocks:
+            per_horizon[horizon] = {"rmse": float("nan"),
+                                    "normalised_rmse": float("nan"),
+                                    "diverged": False}
+            continue
+        predicted = np.concatenate(predicted_blocks)
+        actual = np.concatenate(actual_blocks)
+        if not np.isfinite(predicted).all():
+            per_horizon[horizon] = {"rmse": float("inf"),
+                                    "normalised_rmse": float("inf"),
+                                    "diverged": True}
+            continue
+        normalised = normalised_root_mean_squared_error(predicted, actual)
+        per_horizon[horizon] = {
+            "rmse": root_mean_squared_error(predicted, actual),
+            "normalised_rmse": normalised,
+            "diverged": bool(normalised > DIVERGENCE_SCALE_MULTIPLE),
+        }
+    return per_horizon
+
+
 def _evaluate_held_out_trajectory_split(value_sequences, order,
                                         training_fraction, ridge_penalty,
-                                        fit_intercept):
+                                        fit_intercept, horizons):
     """Fit on some trajectories, score on the trajectories left out."""
     n_training = max(1, int(round(training_fraction * len(value_sequences))))
     n_training = min(n_training, len(value_sequences) - 1)
@@ -193,13 +243,17 @@ def _evaluate_held_out_trajectory_split(value_sequences, order,
                                         fit_intercept),
         "test": _prediction_metrics(coefficients, test_sequences, order,
                                     fit_intercept),
+        "training_horizons": _rolling_horizon_metrics(
+            coefficients, training_sequences, order, fit_intercept, horizons),
+        "test_horizons": _rolling_horizon_metrics(
+            coefficients, test_sequences, order, fit_intercept, horizons),
         "training_sequences": training_sequences,
         "test_sequences": test_sequences,
     }
 
 
 def _evaluate_prefix_suffix_split(value_sequences, order, ridge_penalty,
-                                  fit_intercept):
+                                  fit_intercept, horizons):
     """Fit on the first half of each trajectory, forecast the second half."""
     prefixes, suffixes, suffix_seed_histories = [], [], []
     for value_sequence in value_sequences:
@@ -223,6 +277,10 @@ def _evaluate_prefix_suffix_split(value_sequences, order, ridge_penalty,
         "test": _prediction_metrics(coefficients, suffixes, order,
                                     fit_intercept,
                                     free_running_seeds=suffix_seed_histories),
+        "training_horizons": _rolling_horizon_metrics(
+            coefficients, prefixes, order, fit_intercept, horizons),
+        "test_horizons": _rolling_horizon_metrics(
+            coefficients, suffixes, order, fit_intercept, horizons),
         "training_sequences": prefixes,
         "test_sequences": suffixes,
         "suffix_seed_histories": suffix_seed_histories,
@@ -231,7 +289,8 @@ def _evaluate_prefix_suffix_split(value_sequences, order, ridge_penalty,
 
 def evaluate_autoregressive_orders(value_sequences, orders=DEFAULT_ORDERS,
                                    training_fraction=0.6, ridge_penalty=1e-8,
-                                   fit_intercept=True):
+                                   fit_intercept=True,
+                                   forecast_horizons=DEFAULT_FORECAST_HORIZONS):
     """Fit and score every requested order under both splits.
 
     fit_intercept defaults to True here (unlike the raw primitive) because real
@@ -253,10 +312,10 @@ def evaluate_autoregressive_orders(value_sequences, orders=DEFAULT_ORDERS,
         per_split = {
             HELD_OUT_TRAJECTORY_SPLIT: _evaluate_held_out_trajectory_split(
                 long_enough, order, training_fraction, ridge_penalty,
-                fit_intercept),
+                fit_intercept, forecast_horizons),
         }
         prefix_suffix = _evaluate_prefix_suffix_split(
-            long_enough, order, ridge_penalty, fit_intercept)
+            long_enough, order, ridge_penalty, fit_intercept, forecast_horizons)
         if prefix_suffix is not None:
             per_split[PREFIX_SUFFIX_SPLIT] = prefix_suffix
         results[order] = per_split
@@ -289,6 +348,31 @@ def metric_rows(episode, results, value_sequences):
                     "n_trajectories_collected": len(value_sequences),
                     "mean_trajectory_length": mean_length,
                 })
+    return rows
+
+
+def horizon_metric_rows(episode, results, value_sequences):
+    """Flatten the rolling-horizon sweep into one row per
+    (order, split, subset, forecast horizon)."""
+    mean_length = (float(np.mean([len(s) for s in value_sequences]))
+                   if value_sequences else float("nan"))
+    rows = []
+    for order, per_split in sorted(results.items()):
+        for split_name, split in per_split.items():
+            for subset in ("training", "test"):
+                for horizon, metrics in sorted(
+                        split[f"{subset}_horizons"].items()):
+                    rows.append({
+                        "episode": episode,
+                        "order": order,
+                        "split": split_name,
+                        "subset": subset,
+                        "forecast_horizon": horizon,
+                        "rmse": metrics["rmse"],
+                        "normalised_rmse": metrics["normalised_rmse"],
+                        "diverged": int(metrics["diverged"]),
+                        "mean_trajectory_length": mean_length,
+                    })
     return rows
 
 
@@ -358,8 +442,9 @@ def autoregressive_value_probe(agent, env, orders=DEFAULT_ORDERS,
                                n_trajectories=12, base_seed=40_000,
                                training_fraction=0.6, ridge_penalty=1e-8,
                                fit_intercept=True, n_example_rollouts=2,
-                               max_steps=10_000, episode=None,
-                               run_logger=None):
+                               max_steps=10_000,
+                               forecast_horizons=DEFAULT_FORECAST_HORIZONS,
+                               episode=None, run_logger=None):
     """Entry point called from the analysis registry at every checkpoint.
 
     Collects greedy trajectories, evaluates every order under both splits, and
@@ -374,10 +459,13 @@ def autoregressive_value_probe(agent, env, orders=DEFAULT_ORDERS,
         agent, env, seeds, max_steps=max_steps)
     results = evaluate_autoregressive_orders(
         value_sequences, orders=orders, training_fraction=training_fraction,
-        ridge_penalty=ridge_penalty, fit_intercept=fit_intercept)
+        ridge_penalty=ridge_penalty, fit_intercept=fit_intercept,
+        forecast_horizons=tuple(forecast_horizons))
     if run_logger is not None and results:
         run_logger.log_autoregressive_metrics(
             metric_rows(episode, results, value_sequences))
+        run_logger.log_autoregressive_horizon_metrics(
+            horizon_metric_rows(episode, results, value_sequences))
         run_logger.log_autoregressive_coefficients(
             coefficient_rows(episode, results, fit_intercept=fit_intercept))
         run_logger.save_autoregressive_example_rollouts(

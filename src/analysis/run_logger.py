@@ -134,6 +134,23 @@ class RunLogger:
         self._append_rows(self.dir / "autoregressive_value_metrics.csv",
                           self.AUTOREGRESSIVE_METRIC_COLUMNS, rows)
 
+    AUTOREGRESSIVE_HORIZON_COLUMNS = [
+        "episode", "order", "split", "subset", "forecast_horizon",
+        "rmse", "normalised_rmse", "diverged", "mean_trajectory_length",
+    ]
+
+    def log_autoregressive_horizon_metrics(self, rows) -> None:
+        """Append the rolling-horizon sweep to
+        autoregressive_value_horizon_metrics.csv.
+
+        One row per (episode, order, split, subset, forecast horizon), where the
+        horizon is how many steps are forecast before the recurrence is
+        re-anchored on the values that actually occurred.
+        """
+        self._append_rows(
+            self.dir / "autoregressive_value_horizon_metrics.csv",
+            self.AUTOREGRESSIVE_HORIZON_COLUMNS, rows)
+
     def log_autoregressive_coefficients(self, rows) -> None:
         """Append fitted coefficients to autoregressive_value_coefficients.csv.
 

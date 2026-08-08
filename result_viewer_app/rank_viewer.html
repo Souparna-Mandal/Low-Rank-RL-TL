@@ -253,7 +253,8 @@ const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
   persistEp:null,
   // autoregressive value-recurrence panel selections
   arCoeffSplit:null,arRolloutEp:undefined,arRolloutSplit:null,
-  arRolloutSubset:null,arRolloutCache:{}};
+  arRolloutSubset:null,arRolloutCache:{},
+  arHorizonEp:null,arHorizonSplit:null};
 
 function computeSig(d){
   if(!d)return "";
@@ -540,6 +541,7 @@ function render(){
   // Autoregressive value-recurrence probe panels (absent unless the run
   // enabled analysis.autoregressive_value_probe).
   for(const build of [autoregressivePredictionErrorCard,
+                      autoregressiveHorizonCard,
                       autoregressiveCoefficientCard,
                       autoregressiveRolloutCard]){
     const cardEl=build();
@@ -1029,6 +1031,94 @@ function autoregressivePredictionErrorCard(){
   card.append(el("p",{class:"muted-note"},"Raw data: ",
     el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_metrics.csv`,
       download:"autoregressive_value_metrics.csv",text:"autoregressive_value_metrics.csv"})));
+  return card;
+}
+
+function autoregressiveHorizonCard(){
+  const t=arTable("autoregressive_horizons"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"How far ahead can the recurrence see?"}),
+    el("p",{class:"desc",text:"At forecast horizon τ the recurrence predicts τ steps from the true history, is then re-anchored on the values that actually occurred, and predicts the next τ — which is how such a model would really be used. The endpoints are the other two regimes: τ = 1 is exactly one step ahead, and a τ longer than the trajectory is exactly free running. A curve that rises then flattens has saturated, meaning the recurrence has decayed to predicting the signal's mean; a curve that keeps climbing steeply is an unstable fit."}));
+
+  const episodes=[...new Set(t.rows.map(r=>+r[t.index.episode]))].sort((a,b)=>a-b);
+  if(STATE.arHorizonEp===null||!episodes.includes(STATE.arHorizonEp))
+    STATE.arHorizonEp=episodes[episodes.length-1];
+  const epSelect=el("select");
+  for(const e of episodes) epSelect.append(el("option",{value:String(e),text:"episode "+e}));
+  epSelect.value=String(STATE.arHorizonEp);
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  const splitSelect=el("select");
+  for(const s of splits) splitSelect.append(el("option",{value:s,text:AR_SPLIT_LABELS[s]||s}));
+  splitSelect.value=STATE.arHorizonSplit||splits[0];
+  STATE.arHorizonSplit=splitSelect.value;
+
+  card.append(el("div",{class:"pill-row"},
+    el("label",{text:"Checkpoint"}),epSelect,
+    el("label",{text:"Fitted on"}),splitSelect));
+
+  const host=el("div",{});
+  card.append(host);
+  const colour=arOrderColour();
+
+  function paint(){
+    host.innerHTML="";
+    const orders=[...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+    const legend=el("div",{class:"legend"});
+    for(const o of orders){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(colour[o]||SLOTS[0]);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"order "+o}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      legend.append(item);
+    }
+    host.append(legend);
+    const grid=el("div",{class:"grid-charts"});
+    // error against horizon, at the selected checkpoint
+    for(const subset of ["training","test"]){
+      const series=orders.map(o=>({
+        name:"order "+o,color:colour[o]||SLOTS[0],
+        pts:t.rows.filter(r=>+r[t.index.order]===o
+                            && +r[t.index.episode]===STATE.arHorizonEp
+                            && r[t.index.split]===STATE.arHorizonSplit
+                            && r[t.index.subset]===subset)
+                  .map(r=>[+r[t.index.forecast_horizon],+r[t.index.normalised_rmse]])
+                  .filter(p=>Number.isFinite(p[1]))
+                  .sort((a,b)=>a[0]-b[0]),
+        endLabel:false}));
+      if(series.every(s=>!s.pts.length))continue;
+      grid.append(lineChart({title:`error vs horizon — ${subset}`,
+        hint:`episode ${STATE.arHorizonEp}`,series,
+        xLabel:"forecast horizon τ (steps)",xPrefix:"τ = "}));
+    }
+    // error at each horizon across training, for the smallest order
+    const smallestOrder=orders[0];
+    const horizons=[...new Set(t.rows.map(r=>+r[t.index.forecast_horizon]))]
+      .sort((a,b)=>a-b);
+    const overTraining=horizons.map((h,i)=>({
+      name:"τ = "+h,color:SLOTS[i%SLOTS.length],
+      pts:t.rows.filter(r=>+r[t.index.order]===smallestOrder
+                          && +r[t.index.forecast_horizon]===h
+                          && r[t.index.split]===STATE.arHorizonSplit
+                          && r[t.index.subset]==="test")
+                .map(r=>[+r[t.index.episode],+r[t.index.normalised_rmse]])
+                .filter(p=>Number.isFinite(p[1]))
+                .sort((a,b)=>a[0]-b[0]),
+      endLabel:false}));
+    if(!overTraining.every(s=>!s.pts.length)){
+      grid.append(lineChart({title:`order ${smallestOrder}: each horizon over training — test`,
+        hint:"does the value signal become predictable further ahead as the agent learns?",
+        series:overTraining,episodeAxis:true,xLabel:"episode",wide:true}));
+    }
+    host.append(grid);
+  }
+  epSelect.onchange=()=>{STATE.arHorizonEp=+epSelect.value;paint();};
+  splitSelect.onchange=()=>{STATE.arHorizonSplit=splitSelect.value;paint();};
+  paint();
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_horizon_metrics.csv`,
+      download:"autoregressive_value_horizon_metrics.csv",text:"autoregressive_value_horizon_metrics.csv"})));
   return card;
 }
 
