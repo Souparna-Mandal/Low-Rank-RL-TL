@@ -209,6 +209,29 @@ def find_latest_run_with_probe(runs_directory="runs"):
     return max(candidates, key=lambda d: d.stat().st_mtime)
 
 
+def available_orders(run_directory, split=HELD_OUT_TRAJECTORY_SPLIT):
+    """Recurrence orders this run actually fitted, ascending.
+
+    Read this rather than hardcoding a list: the orders come from the config's
+    autoregressive_value_probe.orders, so a run configured with [2, 4] has no
+    order 3 or 8 and asking for one is an error, not an empty plot.
+    """
+    coefficients = load_coefficients(run_directory)
+    coefficients = coefficients[coefficients["split"] == split]
+    return sorted(int(order) for order in coefficients["order"].unique())
+
+
+def fitted_with_intercept(run_directory, split=HELD_OUT_TRAJECTORY_SPLIT):
+    """Whether this run fitted an intercept, inferred from the artifacts.
+
+    The intercept is written as the lag-0 row, so its absence means the run set
+    autoregressive_value_probe.fit_intercept to false.
+    """
+    coefficients = load_coefficients(run_directory)
+    coefficients = coefficients[coefficients["split"] == split]
+    return bool((coefficients["lag"] == 0).any())
+
+
 def available_rollout_episodes(run_directory):
     """Checkpoint episodes for which example rollouts were saved."""
     rollout_directory = pathlib.Path(run_directory) / "autoregressive_rollouts"
@@ -287,7 +310,11 @@ def plot_coefficient_evolution(run_directory, order,
     coefficients = coefficients[(coefficients["order"] == order)
                                 & (coefficients["split"] == split)]
     if coefficients.empty:
-        raise ValueError(f"no coefficients for order {order}, split {split!r}")
+        raise ValueError(
+            f"no coefficients for order {order}, split {split!r}. This run "
+            f"fitted orders {available_orders(run_directory, split)} — see "
+            f"autoregressive_value_probe.orders in its config.yaml. Use "
+            f"available_orders(run_directory) instead of a hardcoded list.")
 
     lag_weights = coefficients[coefficients["lag"] > 0]
     figure, axis = plt.subplots(figsize=figsize)
