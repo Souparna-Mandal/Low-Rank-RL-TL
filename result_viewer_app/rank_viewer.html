@@ -250,7 +250,10 @@ function seqColor(t){
 const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
   ep:null,tauIdx:null,playing:null,live:true,followLast:false,dragging:false,
   sig:null,pending:null,metric:"eff_rank",sweepRows:null,trajEp:undefined,trajCache:{},
-  persistEp:null};
+  persistEp:null,
+  // autoregressive value-recurrence panel selections
+  arCoeffSplit:null,arRolloutEp:undefined,arRolloutSplit:null,
+  arRolloutSubset:null,arRolloutCache:{}};
 
 function computeSig(d){
   if(!d)return "";
@@ -534,6 +537,14 @@ function render(){
   if((d.trajectories||[]).length) app.append(tracesCard());
 
   if(d.stats) app.append(metricsCard());
+  // Autoregressive value-recurrence probe panels (absent unless the run
+  // enabled analysis.autoregressive_value_probe).
+  for(const build of [autoregressivePredictionErrorCard,
+                      autoregressiveCoefficientCard,
+                      autoregressiveRolloutCard]){
+    const cardEl=build();
+    if(cardEl) app.append(cardEl);
+  }
   if(d.rewards&&d.rewards.length) app.append(rewardCard());
 
   if(d.config){
@@ -941,6 +952,217 @@ function rewardCard(){
   const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
   card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
     episodeAxis:true,xLabel:"episode"}));
+  return card;
+}
+
+// ============ AUTOREGRESSIVE VALUE-RECURRENCE PROBE ============
+// Reads autoregressive_value_metrics.csv, autoregressive_value_coefficients.csv
+// and autoregressive_rollouts/epNNNNNN.npz. Each recurrence order gets a fixed
+// colour so the same order is the same colour in every chart on the page.
+const AR_SPLIT_LABELS={
+  held_out_trajectory_split:"Held-out trajectories",
+  prefix_suffix_split:"Prefix / suffix within trajectory"};
+const AR_SPLIT_HINTS={
+  held_out_trajectory_split:"fitted on some trajectories, scored on trajectories from the same frozen policy that it never saw",
+  prefix_suffix_split:"fitted on the first half of every trajectory, scored on forecasting the second half"};
+
+function arTable(which){
+  const t=STATE.data&&STATE.data[which];
+  if(!t||!t.rows||!t.rows.length)return null;
+  const index={}; t.columns.forEach((c,i)=>index[c]=i);
+  return {index,rows:t.rows};
+}
+function arOrders(){
+  const t=arTable("autoregressive_metrics"); if(!t)return [];
+  return [...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+}
+function arOrderColour(){
+  const map={}; arOrders().forEach((o,i)=>map[o]=SLOTS[i%SLOTS.length]);
+  return map;
+}
+
+function autoregressivePredictionErrorCard(){
+  const t=arTable("autoregressive_metrics"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Value predictability over training"}),
+    el("p",{class:"desc",text:"How well one global linear recurrence, fitted per checkpoint, reproduces the value signal of the frozen greedy policy. Lower is more predictable; the error is normalised by the signal's own root-mean-square, so it is comparable across environments. One line per recurrence order."}));
+  const colour=arOrderColour();
+  const orders=arOrders();
+  const legend=el("div",{class:"legend"});
+  for(const o of orders){
+    const item=el("span",{class:"item fixed"});
+    item.style.color=cssv(colour[o]);
+    item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"order "+o}));
+    item.querySelector(".nm").style.color="var(--ink-2)";
+    legend.append(item);
+  }
+  card.append(legend);
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  for(const split of splits){
+    card.append(el("h3",{class:"ct",text:AR_SPLIT_LABELS[split]||split}));
+    card.append(el("p",{class:"ch",text:AR_SPLIT_HINTS[split]||""}));
+    const grid=el("div",{class:"grid-charts"});
+    for(const subset of ["training","test"]){
+      for(const [column,label,hint] of [
+        ["normalised_rmse_one_step_ahead","One step ahead — "+subset,
+         "each prediction made from the true previous values, so errors never accumulate"],
+        ["normalised_rmse_free_running","Free running — "+subset,
+         "seeded once then predicting from its own output, so errors compound"]]){
+        const series=orders.map(o=>({
+          name:"order "+o, color:colour[o],
+          pts:t.rows.filter(r=>+r[t.index.order]===o
+                              && r[t.index.split]===split
+                              && r[t.index.subset]===subset)
+                    .map(r=>[+r[t.index.episode],+r[t.index[column]]])
+                    .filter(p=>Number.isFinite(p[1]))
+                    .sort((a,b)=>a[0]-b[0]),
+          endLabel:false}));
+        if(series.every(s=>!s.pts.length))continue;
+        grid.append(lineChart({title:label,hint,series,episodeAxis:true,
+          xLabel:"episode"}));
+      }
+    }
+    card.append(grid);
+  }
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_metrics.csv`,
+      download:"autoregressive_value_metrics.csv",text:"autoregressive_value_metrics.csv"})));
+  return card;
+}
+
+function autoregressiveCoefficientCard(){
+  const t=arTable("autoregressive_coefficients"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Recurrence coefficients over training"}),
+    el("p",{class:"desc",text:"Each order gets its own chart, with one line per lag: lag 1 is the weight on the immediately preceding value, lag 0 is the fitted intercept. This is where coefficient drift shows up — a stable order has lines that settle, a drifting one does not."}));
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  const splitSelect=el("select");
+  for(const s of splits) splitSelect.append(el("option",{value:s,text:AR_SPLIT_LABELS[s]||s}));
+  if(STATE.arCoeffSplit&&splits.includes(STATE.arCoeffSplit)) splitSelect.value=STATE.arCoeffSplit;
+  else STATE.arCoeffSplit=splitSelect.value;
+  card.append(el("div",{class:"pill-row"},el("label",{text:"Fitted on"}),splitSelect));
+
+  const host=el("div",{});
+  card.append(host);
+  function paint(){
+    host.innerHTML="";
+    const orders=[...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+    const grid=el("div",{class:"grid-charts"});
+    for(const order of orders){
+      const lags=[...new Set(t.rows.filter(r=>+r[t.index.order]===order)
+                                   .map(r=>+r[t.index.lag]))].sort((a,b)=>a-b);
+      const series=lags.map((lag,i)=>({
+        name: lag===0?"intercept":("lag "+lag),
+        color: SLOTS[i%SLOTS.length],
+        pts: t.rows.filter(r=>+r[t.index.order]===order
+                            && +r[t.index.lag]===lag
+                            && r[t.index.split]===STATE.arCoeffSplit)
+                   .map(r=>[+r[t.index.episode],+r[t.index.coefficient]])
+                   .filter(p=>Number.isFinite(p[1]))
+                   .sort((a,b)=>a[0]-b[0])}));
+      if(series.every(s=>!s.pts.length))continue;
+      grid.append(lineChart({title:"Order "+order,
+        hint:"coefficient value at each checkpoint",series,episodeAxis:true,
+        xLabel:"episode"}));
+    }
+    host.append(grid);
+  }
+  splitSelect.onchange=()=>{STATE.arCoeffSplit=splitSelect.value;paint();};
+  paint();
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_coefficients.csv`,
+      download:"autoregressive_value_coefficients.csv",text:"autoregressive_value_coefficients.csv"})));
+  return card;
+}
+
+function autoregressiveRolloutCard(){
+  const files=(STATE.data&&STATE.data.autoregressive_rollouts)||[];
+  if(!files.length)return null;
+  const card=el("div",{class:"card"});
+  const episodes=files.map(f=>f.episode).sort((a,b)=>a-b);
+  if(STATE.arRolloutEp===undefined||!episodes.includes(STATE.arRolloutEp))
+    STATE.arRolloutEp=episodes[episodes.length-1];
+
+  const epSelect=el("select");
+  for(const e of episodes) epSelect.append(el("option",{value:String(e),text:"episode "+e}));
+  epSelect.value=String(STATE.arRolloutEp);
+
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Example value rollouts: actual vs predicted"}),
+    el("p",{class:"desc",text:"The true value sequence of one trajectory against what the fitted recurrence predicts for it, one panel per order. One-step-ahead sees the real history at every step; free-running is seeded once and then runs on its own output, so the gap between the two lines is exactly how fast the recurrence loses the signal."})),
+    el("div",{class:"pill-row"},el("label",{text:"Checkpoint"}),epSelect));
+  card.append(head);
+
+  const controls=el("div",{class:"pill-row"});
+  const splitSelect=el("select"), subsetSelect=el("select");
+  for(const [v,l] of Object.entries(AR_SPLIT_LABELS)) splitSelect.append(el("option",{value:v,text:l}));
+  for(const v of ["test","training"]) subsetSelect.append(el("option",{value:v,text:v}));
+  splitSelect.value=STATE.arRolloutSplit||"held_out_trajectory_split";
+  subsetSelect.value=STATE.arRolloutSubset||"test";
+  STATE.arRolloutSplit=splitSelect.value; STATE.arRolloutSubset=subsetSelect.value;
+  controls.append(el("label",{text:"Split"}),splitSelect,
+                  el("label",{text:"Subset"}),subsetSelect);
+  card.append(controls);
+
+  const host=el("div",{});
+  card.append(host);
+
+  async function paint(){
+    host.innerHTML="";
+    host.append(el("p",{class:"muted-note",text:"Loading rollouts…"}));
+    const {exp,run}=STATE.cur;
+    const file=files.find(f=>f.episode===STATE.arRolloutEp);
+    if(!file){host.innerHTML="";host.append(el("p",{class:"muted-note",text:"No rollouts at this checkpoint."}));return;}
+    const key=exp+"/"+run+"/ar/"+file.file;
+    if(!STATE.arRolloutCache[key]){
+      STATE.arRolloutCache[key]=await (await fetch(
+        `/api/arroll/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(file.file)}`)).json();
+    }
+    const data=STATE.arRolloutCache[key];
+    host.innerHTML="";
+    // keys look like order2__held_out_trajectory_split__test__0__actual
+    const wanted=`__${STATE.arRolloutSplit}__${STATE.arRolloutSubset}__`;
+    const stems=[...new Set(Object.keys(data)
+      .filter(k=>k.endsWith("__actual")&&k.includes(wanted))
+      .map(k=>k.slice(0,-"__actual".length)))].sort();
+    if(!stems.length){host.append(el("p",{class:"muted-note",text:"No example rollouts for this split and subset."}));return;}
+    const grid=el("div",{class:"grid-charts"});
+    for(const stem of stems){
+      const actual=data[stem+"__actual"]||[];
+      const oneStep=data[stem+"__one_step_ahead"]||[];
+      const freeRunning=data[stem+"__free_running"]||[];
+      const order=+(stem.match(/^order(\d+)/)||[0,0])[1];
+      // one-step predictions start `order` steps in; free-running is aligned to
+      // the end of the sequence so it lines up with what it is forecasting.
+      const freeOffset=Math.max(0,actual.length-freeRunning.length);
+      const series=[
+        {name:"actual",color:"--s1",pts:actual.map((v,i)=>[i,v]),endLabel:false},
+        {name:"one step",color:"--s3",pts:oneStep.map((v,i)=>[i+order,v]),endLabel:false},
+        {name:"free running",color:"--s5",pts:freeRunning.map((v,i)=>[i+freeOffset,v]),endLabel:false},
+      ].filter(s=>s.pts.length);
+      const index=(stem.match(/__(\d+)$/)||[0,"?"])[1];
+      grid.append(lineChart({title:`Order ${order} · example ${index}`,
+        hint:"value along the trajectory",series,xLabel:"t (steps)",xPrefix:"t = "}));
+    }
+    const legend=el("div",{class:"legend"});
+    for(const [nm,cv] of [["actual","--s1"],["one step ahead","--s3"],["free running","--s5"]]){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(cv);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:nm}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      legend.append(item);
+    }
+    host.append(legend,grid);
+  }
+  epSelect.onchange=()=>{STATE.arRolloutEp=+epSelect.value;paint();};
+  splitSelect.onchange=()=>{STATE.arRolloutSplit=splitSelect.value;paint();};
+  subsetSelect.onchange=()=>{STATE.arRolloutSubset=subsetSelect.value;paint();};
+  paint();
   return card;
 }
 

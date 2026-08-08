@@ -29,6 +29,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 HTML_PATH = HERE / "rank_viewer.html"
 FIG_RE = re.compile(r"^(?:ep(\d{6})|final)_(.+)\.png$")
 TRAJ_RE = re.compile(r"^(?:ep(\d{6})|final)_seed(\d+)\.npz$")
+# autoregressive_rollouts/epNNNNNN.npz — one file per probe checkpoint, holding
+# actual vs one-step-ahead vs free-running arrays for a few example rollouts.
+AR_ROLLOUT_RE = re.compile(r"^(?:ep(\d{6})|final)\.npz$")
 # hankel_sweep.csv columns the frontend plots — the leverage *min* and matrix
 # shape columns are dropped from the JSON payload (still in the raw CSV link).
 # A long Atari run has >100k sweep rows, so payload size matters; we keep the
@@ -80,12 +83,14 @@ def run_sig(run_dir: pathlib.Path) -> str:
     figures/trajectories dir mtimes (which bump when a file is added). The
     frontend polls this instead of re-downloading the multi-MB payload."""
     parts = []
-    for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv"):
+    for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv",
+                 "autoregressive_value_metrics.csv",
+                 "autoregressive_value_coefficients.csv"):
         p = run_dir / name
         if p.exists():
             st = p.stat()
             parts.append(f"{name}:{st.st_size}:{st.st_mtime_ns}")
-    for name in ("figures", "trajectories"):
+    for name in ("figures", "trajectories", "autoregressive_rollouts"):
         p = run_dir / name
         if p.is_dir():
             parts.append(f"{name}:{p.stat().st_mtime_ns}")
@@ -96,6 +101,9 @@ def load_run(run_dir: pathlib.Path) -> dict:
     """Parse one run directory into the JSON payload the frontend renders."""
     payload: dict = {"config": None, "stats": None, "sweep": None,
                      "rewards": None, "figures": {}, "trajectories": [],
+                     "autoregressive_metrics": None,
+                     "autoregressive_coefficients": None,
+                     "autoregressive_rollouts": [],
                      "sig": run_sig(run_dir)}
 
     cfg = run_dir / "config.yaml"
@@ -103,6 +111,24 @@ def load_run(run_dir: pathlib.Path) -> dict:
         payload["config"] = cfg.read_text(errors="replace")
 
     payload["stats"] = _csv_table(run_dir / "rank_stats.csv")
+
+    # Autoregressive value-recurrence probe. Both tables are small (a handful
+    # of rows per checkpoint) so they ship whole rather than being projected
+    # down like the Hankel sweep.
+    payload["autoregressive_metrics"] = _csv_table(
+        run_dir / "autoregressive_value_metrics.csv")
+    payload["autoregressive_coefficients"] = _csv_table(
+        run_dir / "autoregressive_value_coefficients.csv")
+    ar_rollout_dir = run_dir / "autoregressive_rollouts"
+    if ar_rollout_dir.is_dir():
+        for p in sorted(ar_rollout_dir.glob("*.npz")):
+            m = AR_ROLLOUT_RE.match(p.name)
+            if m:
+                episode = m.group(1)
+                payload["autoregressive_rollouts"].append({
+                    "file": p.name,
+                    "episode": None if episode is None else int(episode),
+                })
     sweep = _csv_table(run_dir / "hankel_sweep.csv")
     if sweep:  # project onto the plotted columns to keep the payload small
         idx = [sweep["columns"].index(c) for c in SWEEP_COLS
@@ -245,6 +271,18 @@ def make_handler(root: pathlib.Path):
                         self._json(load_npz_1d(npz))
                     else:
                         self._json({"error": "trajectory not found"}, 404)
+                elif len(parts) == 5 and parts[:2] == ["api", "arroll"]:
+                    # One checkpoint's autoregressive example rollouts: the
+                    # actual, one-step-ahead and free-running arrays keyed by
+                    # order/split/subset/index.
+                    d = self._run_dir(parts[2], parts[3])
+                    npz = ((d / "autoregressive_rollouts" / parts[4]).resolve()
+                           if d else None)
+                    if npz and npz.is_file() and npz.suffix == ".npz" \
+                            and npz.is_relative_to(root):
+                        self._json(load_npz_1d(npz))
+                    else:
+                        self._json({"error": "rollout not found"}, 404)
                 elif len(parts) == 4 and parts[0] == "csv":
                     d = self._run_dir(parts[1], parts[2])
                     f = (d / parts[3]).resolve() if d else None

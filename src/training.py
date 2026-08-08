@@ -1,5 +1,6 @@
 from agents import q_agent
-from analysis.low_rank import rank, tabular_q_matrix, hankel_policy
+from analysis.low_rank import (rank, tabular_q_matrix, hankel_policy,
+                               autoregressive_value_probe)
 from analysis.registry import resolve_methods
 import gymnasium as gym
 import numpy as np
@@ -36,6 +37,42 @@ def run_analysis_tick(agent, env, analysis_config: dict, run_logger=None, episod
     if hk_cfg and hk_cfg.get("enabled", True):
         hankel_policy.hankel_sweep_analysis(agent, env, hk_cfg,
                                             run_logger=run_logger, episode=episode)
+    # Autoregressive value-recurrence probe: freeze the policy, roll greedy
+    # trajectories, fit one linear recurrence per order and record how well it
+    # predicts held-out value sequences. Opt-in via the
+    # analysis.autoregressive_value_probe config block (absent => skipped).
+    # Like the Hankel sweep it rolls `env` to termination, so the same
+    # caller-resets-afterwards contract applies.
+    ar_cfg = analysis_config.get("autoregressive_value_probe")
+    if ar_cfg and ar_cfg.get("enabled", True):
+        probe_kwargs = {k: v for k, v in ar_cfg.items() if k != "enabled"}
+        if "orders" in probe_kwargs:
+            probe_kwargs["orders"] = tuple(probe_kwargs["orders"])
+        summary = autoregressive_value_probe.autoregressive_value_probe(
+            agent, env, run_logger=run_logger, episode=episode, **probe_kwargs)
+        _print_autoregressive_summary(summary)
+
+
+def _print_autoregressive_summary(summary):
+    """One compact line per recurrence order, for the training-run console."""
+    results = summary["results"]
+    if not results:
+        print("autoregressive value probe: no trajectory long enough to fit")
+        return
+    lengths = [len(s) for s in summary["value_sequences"]]
+    print(f"**************** autoregressive value probe "
+          f"({len(lengths)} trajectories, mean length {np.mean(lengths):.0f}) "
+          f"****************")
+    for order, per_split in sorted(results.items()):
+        held_out = per_split.get(
+            autoregressive_value_probe.HELD_OUT_TRAJECTORY_SPLIT)
+        if held_out is None:
+            continue
+        test = held_out["test"]
+        diverged = " (free-running diverged)" if test["free_running_diverged"] else ""
+        print(f"  order {order}: held-out test normalised RMSE "
+              f"one-step {test['normalised_rmse_one_step_ahead']:.4f}, "
+              f"free-running {test['normalised_rmse_free_running']:.4f}{diverged}")
 
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,

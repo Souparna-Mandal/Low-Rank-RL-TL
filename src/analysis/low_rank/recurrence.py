@@ -1,63 +1,143 @@
-"""Order-r linear recurrence (AR) fitting and prediction for value sequences.
+"""Autoregressive (linear recurrence) fitting and prediction for value sequences.
 
-If a sequence's Hankel matrix has rank <= r it obeys q_t = sum_j c_j q_{t-j}
-(Kronecker); these helpers fit the c_j by least squares and extrapolate with
-them, which is the direct test of that property's predictive use.
+The low-Hankel-rank observation says that if the Hankel matrix built from a
+scalar sequence has rank at most `order`, then by Kronecker's theorem the
+sequence obeys a linear recurrence of that order:
+
+    value[t] = coefficient_1 * value[t-1] + ... + coefficient_order * value[t-order]
+
+These helpers fit those coefficients by least squares and extrapolate with
+them, which is the direct test of whether that structural property is of any
+predictive use on real value sequences produced by a trained policy.
+
+Naming convention in this module: `value_sequence` is a single one-dimensional
+array of scalar values along one trajectory, and `value_sequences` is a list of
+such arrays (typically one per trajectory).
 """
 import numpy as np
 
 
-def fit_ar(seqs, order, ridge=1e-8, intercept=False):
-    """Least-squares fit of q_t = sum_{j=1..order} c_j q_{t-j} (+ c_0) over all
-    valid windows of the given sequences.
+def fit_autoregressive_coefficients(value_sequences, order, ridge_penalty=1e-8,
+                                    fit_intercept=False):
+    """Least-squares fit of one GLOBAL order-`order` recurrence across sequences.
 
-    seqs: iterable of 1-D arrays. Returns coeffs of shape (order,) with
-    coeffs[0] the weight on the most recent value, or (order+1,) with the
-    intercept last when intercept=True.
+    Every valid window of every sequence contributes one row, so the returned
+    coefficients describe all the supplied trajectories jointly rather than
+    being fitted per trajectory.
+
+    Args:
+        value_sequences: iterable of one-dimensional arrays of scalar values.
+        order: number of past values the recurrence looks back over.
+        ridge_penalty: small diagonal added before solving, to keep the normal
+            equations well conditioned when the sequences are nearly collinear
+            (which they are whenever the true order is lower than `order`).
+        fit_intercept: also fit a constant offset term.
+
+    Returns:
+        Array of shape (order,), where element 0 is the weight on the MOST
+        RECENT value and element order-1 the weight on the oldest. When
+        fit_intercept is True the shape is (order + 1,) with the intercept last.
+
+    Raises:
+        ValueError: if no sequence is long enough to yield a single window.
     """
-    X, y = [], []
-    for s in seqs:
-        s = np.asarray(s, dtype=np.float64)
-        for t in range(order, len(s)):
-            X.append(s[t - order:t][::-1])
-            y.append(s[t])
-    if not X:
-        raise ValueError("no window of length order+1 in seqs")
-    X, y = np.asarray(X), np.asarray(y)
-    if intercept:
-        X = np.hstack([X, np.ones((len(X), 1))])
-    A = X.T @ X + ridge * np.eye(X.shape[1])
-    return np.linalg.solve(A, X.T @ y)
+    design_rows, targets = [], []
+    for value_sequence in value_sequences:
+        value_sequence = np.asarray(value_sequence, dtype=np.float64)
+        for t in range(order, len(value_sequence)):
+            # Reversed so column 0 is always the most recent lag.
+            design_rows.append(value_sequence[t - order:t][::-1])
+            targets.append(value_sequence[t])
+    if not design_rows:
+        raise ValueError(
+            f"no sequence long enough for order {order}: need at least "
+            f"{order + 1} values in some sequence")
+    design_matrix = np.asarray(design_rows)
+    targets = np.asarray(targets)
+    if fit_intercept:
+        design_matrix = np.hstack(
+            [design_matrix, np.ones((len(design_matrix), 1))])
+    normal_matrix = (design_matrix.T @ design_matrix
+                     + ridge_penalty * np.eye(design_matrix.shape[1]))
+    right_hand_side = design_matrix.T @ targets
+    # Least squares rather than a direct solve: early in training the value
+    # signal is nearly constant, which makes the lagged columns collinear and
+    # the normal matrix singular. lstsq returns the minimum-norm solution there
+    # instead of raising, so a checkpoint probe cannot abort a training run.
+    solution, *_ = np.linalg.lstsq(normal_matrix, right_hand_side, rcond=None)
+    return solution
 
 
-def predict_one_step(coeffs, seq, intercept=False):
-    """One-step-ahead predictions from the *true* history: returns array
-    aligned with seq[order:]."""
-    c, c0 = (coeffs[:-1], coeffs[-1]) if intercept else (coeffs, 0.0)
-    r = len(c)
-    s = np.asarray(seq, dtype=np.float64)
-    preds = [c @ s[t - r:t][::-1] + c0 for t in range(r, len(s))]
-    return np.asarray(preds)
+def predict_one_step_ahead(coefficients, value_sequence, fit_intercept=False):
+    """One-step-ahead predictions made from the TRUE history at every step.
+
+    Each prediction sees the real previous values, so errors never accumulate.
+    This measures how well the recurrence fits locally, and is the optimistic
+    counterpart to forecast_free_running.
+
+    Returns an array aligned with value_sequence[order:], i.e. it is
+    `len(value_sequence) - order` long.
+    """
+    if fit_intercept:
+        lag_weights, intercept = coefficients[:-1], coefficients[-1]
+    else:
+        lag_weights, intercept = coefficients, 0.0
+    order = len(lag_weights)
+    value_sequence = np.asarray(value_sequence, dtype=np.float64)
+    return np.asarray([
+        lag_weights @ value_sequence[t - order:t][::-1] + intercept
+        for t in range(order, len(value_sequence))
+    ])
 
 
-def free_run(coeffs, seed_vals, horizon, intercept=False):
-    """Recursive multi-step prediction: extrapolate `horizon` values from the
-    last r seed values, feeding predictions back in."""
-    c, c0 = (coeffs[:-1], coeffs[-1]) if intercept else (coeffs, 0.0)
-    r = len(c)
-    hist = list(np.asarray(seed_vals, dtype=np.float64)[-r:])
-    if len(hist) < r:
-        raise ValueError("need at least `order` seed values")
-    out = []
+def forecast_free_running(coefficients, seed_values, horizon,
+                          fit_intercept=False):
+    """Recursive multi-step forecast: predictions are fed back as history.
+
+    After the first `order` seed values the recurrence runs on its own output,
+    so errors compound. This is the honest test of the low-rank claim: a model
+    can look excellent one step ahead and still diverge here.
+
+    Args:
+        coefficients: as returned by fit_autoregressive_coefficients.
+        seed_values: at least `order` real values; the last `order` are used.
+        horizon: how many values to forecast.
+
+    Returns:
+        Array of length `horizon`.
+    """
+    if fit_intercept:
+        lag_weights, intercept = coefficients[:-1], coefficients[-1]
+    else:
+        lag_weights, intercept = coefficients, 0.0
+    order = len(lag_weights)
+    history = list(np.asarray(seed_values, dtype=np.float64)[-order:])
+    if len(history) < order:
+        raise ValueError(
+            f"need at least {order} seed values, got {len(history)}")
+    forecast = []
     for _ in range(horizon):
-        nxt = c @ np.asarray(hist[-r:][::-1]) + c0
-        out.append(nxt)
-        hist.append(nxt)
-    return np.asarray(out)
+        next_value = lag_weights @ np.asarray(history[-order:][::-1]) + intercept
+        forecast.append(next_value)
+        history.append(next_value)
+    return np.asarray(forecast)
 
 
-def nrmse(pred, true):
-    """RMSE normalised by the RMS of the true signal (scale-free)."""
-    pred, true = np.asarray(pred), np.asarray(true)
-    rms = np.sqrt(np.mean(true ** 2))
-    return float(np.sqrt(np.mean((pred - true) ** 2)) / max(rms, 1e-12))
+def root_mean_squared_error(predicted, actual):
+    """Plain RMSE, in the same units as the value signal."""
+    predicted, actual = np.asarray(predicted), np.asarray(actual)
+    return float(np.sqrt(np.mean((predicted - actual) ** 2)))
+
+
+def normalised_root_mean_squared_error(predicted, actual):
+    """RMSE divided by the root-mean-square of the true signal.
+
+    Scale-free, so it is comparable across environments whose value magnitudes
+    differ by orders of magnitude (Acrobot values are large and negative,
+    CartPole values are small and positive). A value of 1.0 means the error is
+    as large as the signal itself.
+    """
+    predicted, actual = np.asarray(predicted), np.asarray(actual)
+    signal_root_mean_square = np.sqrt(np.mean(np.asarray(actual) ** 2))
+    return float(root_mean_squared_error(predicted, actual)
+                 / max(signal_root_mean_square, 1e-12))

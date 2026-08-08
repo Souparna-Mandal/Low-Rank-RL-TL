@@ -28,6 +28,7 @@ class RunLogger:
         self.checkpoints_dir = self.dir / "checkpoints"
         self.trajectories_dir = self.dir / "trajectories"
         self.mc_rollouts_dir = self.dir / "mc_rollouts"
+        self.autoregressive_rollouts_dir = self.dir / "autoregressive_rollouts"
         self.figures_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir.mkdir(exist_ok=True)
         self.trajectories_dir.mkdir(exist_ok=True)
@@ -112,6 +113,59 @@ class RunLogger:
             if header_needed:
                 writer.writerow(["episode"] + keys)
             writer.writerow([episode] + [f"{metrics[k]:.6g}" for k in keys])
+
+    # -- autoregressive value-recurrence probe ------------------------------
+    AUTOREGRESSIVE_METRIC_COLUMNS = [
+        "episode", "order", "split", "subset",
+        "rmse_one_step_ahead", "normalised_rmse_one_step_ahead",
+        "rmse_free_running", "normalised_rmse_free_running",
+        "free_running_diverged", "n_sequences_scored",
+        "n_trajectories_collected", "mean_trajectory_length",
+    ]
+    AUTOREGRESSIVE_COEFFICIENT_COLUMNS = ["episode", "order", "split", "lag",
+                                          "coefficient"]
+
+    def log_autoregressive_metrics(self, rows) -> None:
+        """Append prediction-error rows to autoregressive_value_metrics.csv.
+
+        One row per (episode, recurrence order, split, training/test subset),
+        as produced by analysis.low_rank.autoregressive_value_probe.metric_rows.
+        """
+        self._append_rows(self.dir / "autoregressive_value_metrics.csv",
+                          self.AUTOREGRESSIVE_METRIC_COLUMNS, rows)
+
+    def log_autoregressive_coefficients(self, rows) -> None:
+        """Append fitted coefficients to autoregressive_value_coefficients.csv.
+
+        One row per (episode, order, split, lag), so each order's coefficient
+        trajectory over training plots directly. lag 0 is the intercept.
+        """
+        self._append_rows(self.dir / "autoregressive_value_coefficients.csv",
+                          self.AUTOREGRESSIVE_COEFFICIENT_COLUMNS, rows)
+
+    def save_autoregressive_example_rollouts(self, episode, arrays) -> pathlib.Path:
+        """Persist actual-vs-predicted example sequences for one checkpoint.
+
+        Saved under autoregressive_rollouts/epNNNNNN.npz so the notebook and the
+        result viewer can plot the same arrays without recomputing them.
+        """
+        self.autoregressive_rollouts_dir.mkdir(exist_ok=True)
+        tag = "final" if episode is None else f"ep{episode:06d}"
+        path = self.autoregressive_rollouts_dir / f"{tag}.npz"
+        np.savez_compressed(path, **arrays)
+        return path
+
+    @staticmethod
+    def _append_rows(path, columns, rows) -> None:
+        """Append dict rows to a CSV, writing the header on first use."""
+        if not rows:
+            return
+        header_needed = not path.exists()
+        with open(path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+            if header_needed:
+                writer.writeheader()
+            writer.writerows(rows)
 
     def log_rewards(self, rewards) -> None:
         with open(self.dir / "rewards.csv", "w", newline="") as f:
