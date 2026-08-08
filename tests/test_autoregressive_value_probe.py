@@ -176,6 +176,25 @@ def test_row_flattening_shapes_match_the_csv_columns():
     assert 0 in {r["lag"] for r in coefficients}, "intercept row must be present"
 
 
+def test_example_rollouts_carry_the_configured_forecast_windows():
+    """The rollout panel must be able to draw the rolling-horizon forecast, not
+    just the seeded-once free run -- that is the whole point of the tau sweep."""
+    sequences, _ = _order_two_sequences()
+    results = evaluate_autoregressive_orders(
+        sequences, orders=(2,), forecast_horizons=(1, 8, 32))
+    arrays = example_rollout_arrays(results, n_examples=1,
+                                    forecast_horizons=(1, 8, 32))
+    stem = next(k[:-len("__actual")] for k in arrays if k.endswith("__actual"))
+    for horizon in (1, 8, 32):
+        key = f"{stem}__rolling_horizon_{horizon}"
+        assert key in arrays, f"missing {key}"
+        # aligned with actual[order:], exactly like one_step_ahead
+        assert len(arrays[key]) == len(arrays[stem + "__actual"]) - 2
+    # tau=1 must coincide with the one-step array it is supposed to generalise
+    assert np.allclose(arrays[f"{stem}__rolling_horizon_1"],
+                       arrays[f"{stem}__one_step_ahead"])
+
+
 def test_example_rollout_arrays_are_plottable():
     sequences, _ = _order_two_sequences()
     results = evaluate_autoregressive_orders(sequences, orders=(2,))

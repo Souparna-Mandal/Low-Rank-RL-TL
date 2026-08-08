@@ -253,7 +253,7 @@ const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
   persistEp:null,
   // autoregressive value-recurrence panel selections
   arCoeffSplit:null,arRolloutEp:undefined,arRolloutSplit:null,
-  arRolloutSubset:null,arRolloutCache:{},
+  arRolloutSubset:null,arRolloutCache:{},arRolloutHorizon:null,
   arHorizonEp:null,arHorizonSplit:null};
 
 function computeSig(d){
@@ -1206,8 +1206,14 @@ function autoregressiveRolloutCard(){
   splitSelect.value=STATE.arRolloutSplit||"held_out_trajectory_split";
   subsetSelect.value=STATE.arRolloutSubset||"test";
   STATE.arRolloutSplit=splitSelect.value; STATE.arRolloutSubset=subsetSelect.value;
+  // Forecast window. "seeded once" is the pure free run (never re-anchored);
+  // any numeric τ re-anchors on the true values every τ steps, which is what
+  // forecast_horizons in the config configures.
+  const horizonSelect=el("select");
+  horizonSelect.append(el("option",{value:"free",text:"seeded once (never re-anchored)"}));
   controls.append(el("label",{text:"Split"}),splitSelect,
-                  el("label",{text:"Subset"}),subsetSelect);
+                  el("label",{text:"Subset"}),subsetSelect,
+                  el("label",{text:"Forecast window τ"}),horizonSelect);
   card.append(controls);
 
   const host=el("div",{});
@@ -1232,19 +1238,39 @@ function autoregressiveRolloutCard(){
       .filter(k=>k.endsWith("__actual")&&k.includes(wanted))
       .map(k=>k.slice(0,-"__actual".length)))].sort();
     if(!stems.length){host.append(el("p",{class:"muted-note",text:"No example rollouts for this split and subset."}));return;}
+    // Populate the τ selector from whatever rolling-horizon arrays this
+    // checkpoint actually saved (older runs have none, and fall back to the
+    // seeded-once free run).
+    const availableHorizons=[...new Set(Object.keys(data)
+      .map(k=>(k.match(/__rolling_horizon_(\d+)$/)||[])[1])
+      .filter(Boolean).map(Number))].sort((a,b)=>a-b);
+    if(horizonSelect.options.length===1&&availableHorizons.length){
+      for(const h of availableHorizons)
+        horizonSelect.append(el("option",{value:String(h),text:"τ = "+h}));
+      if(STATE.arRolloutHorizon!=null) horizonSelect.value=String(STATE.arRolloutHorizon);
+    }
+    const chosenHorizon=horizonSelect.value;
+
     const grid=el("div",{class:"grid-charts"});
     for(const stem of stems){
       const actual=data[stem+"__actual"]||[];
       const oneStep=data[stem+"__one_step_ahead"]||[];
-      const freeRunning=data[stem+"__free_running"]||[];
       const order=+(stem.match(/^order(\d+)/)||[0,0])[1];
+      const rolling=chosenHorizon==="free"
+        ? null : data[`${stem}__rolling_horizon_${chosenHorizon}`];
+      const freeRunning=chosenHorizon==="free"
+        ? (data[stem+"__free_running"]||[]) : [];
       // one-step predictions start `order` steps in; free-running is aligned to
       // the end of the sequence so it lines up with what it is forecasting.
       const freeOffset=Math.max(0,actual.length-freeRunning.length);
       const series=[
         {name:"actual",color:"--s1",pts:actual.map((v,i)=>[i,v]),endLabel:false},
         {name:"one step",color:"--s3",pts:oneStep.map((v,i)=>[i+order,v]),endLabel:false},
-        {name:"free running",color:"--s5",pts:freeRunning.map((v,i)=>[i+freeOffset,v]),endLabel:false},
+        rolling
+          ? {name:`τ = ${chosenHorizon}`,color:"--s5",
+             pts:Array.from(rolling,(v,i)=>[i+order,v]),endLabel:false}
+          : {name:"free running",color:"--s5",
+             pts:freeRunning.map((v,i)=>[i+freeOffset,v]),endLabel:false},
       ].filter(s=>s.pts.length);
       const index=(stem.match(/__(\d+)$/)||[0,"?"])[1];
       grid.append(lineChart({title:`Order ${order} · example ${index}`,
@@ -1263,6 +1289,9 @@ function autoregressiveRolloutCard(){
   epSelect.onchange=()=>{STATE.arRolloutEp=+epSelect.value;paint();};
   splitSelect.onchange=()=>{STATE.arRolloutSplit=splitSelect.value;paint();};
   subsetSelect.onchange=()=>{STATE.arRolloutSubset=subsetSelect.value;paint();};
+  horizonSelect.onchange=()=>{
+    STATE.arRolloutHorizon=horizonSelect.value==="free"?null:+horizonSelect.value;
+    paint();};
   paint();
   return card;
 }

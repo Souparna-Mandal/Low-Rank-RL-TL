@@ -356,6 +356,7 @@ def plot_coefficient_evolution(run_directory, order,
 def plot_example_rollouts(run_directory, episode=None, orders=None,
                           split=HELD_OUT_TRAJECTORY_SPLIT,
                           subsets=("training", "test"), example_index=0,
+                          forecast_horizon=None,
                           save_to=None, show=True, figsize=(13, 3.2)):
     """Actual vs predicted value along single trajectories.
 
@@ -380,7 +381,18 @@ def plot_example_rollouts(run_directory, episode=None, orders=None,
                 axis.set_visible(False)
                 continue
             one_step = arrays.get(f"{stem}__one_step_ahead")
-            free_running = arrays.get(f"{stem}__free_running")
+            if forecast_horizon is None:
+                free_running = arrays.get(f"{stem}__free_running")
+                forecast_label = "free running (seeded once)"
+            else:
+                free_running = arrays.get(
+                    f"{stem}__rolling_horizon_{forecast_horizon}")
+                forecast_label = f"rolling forecast, $\\tau$ = {forecast_horizon}"
+                if free_running is None:
+                    raise ValueError(
+                        f"this run saved no rolling-horizon arrays for "
+                        f"tau={forecast_horizon}; available: "
+                        f"{sorted(int(k.rsplit('_', 1)[1]) for k in arrays if '__rolling_horizon_' in k) or 'none'}")
             axis.plot(np.arange(len(actual)), actual, color="black",
                       linewidth=2.0, label="actual")
             if one_step is not None:
@@ -388,10 +400,13 @@ def plot_example_rollouts(run_directory, episode=None, orders=None,
                           color="tab:blue", linewidth=1.3, alpha=0.9,
                           label="one step ahead")
             if free_running is not None:
-                offset = max(0, len(actual) - len(free_running))
+                # Rolling-horizon arrays align with actual[order:] like the
+                # one-step ones; the seeded-once free run is aligned to the end.
+                offset = (order if forecast_horizon is not None
+                          else max(0, len(actual) - len(free_running)))
                 axis.plot(np.arange(offset, offset + len(free_running)),
                           free_running, color="tab:red", linewidth=1.3,
-                          linestyle="--", label="free running")
+                          linestyle="--", label=forecast_label)
                 # Free running can diverge; keep the true signal readable.
                 span = float(np.max(actual) - np.min(actual)) or 1.0
                 axis.set_ylim(float(np.min(actual)) - span,

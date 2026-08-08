@@ -399,7 +399,8 @@ def coefficient_rows(episode, results, fit_intercept=True):
     return rows
 
 
-def example_rollout_arrays(results, n_examples=2, fit_intercept=True):
+def example_rollout_arrays(results, n_examples=2, fit_intercept=True,
+                           forecast_horizons=DEFAULT_FORECAST_HORIZONS):
     """Actual vs predicted sequences for a few trajectories, for plotting.
 
     Picks the first `n_examples` trajectories of each subset of each split, and
@@ -435,6 +436,15 @@ def example_rollout_arrays(results, n_examples=2, fit_intercept=True):
                     arrays[f"{prefix}__free_running"] = forecast_free_running(
                         coefficients, seed_values, horizon=horizon,
                         fit_intercept=fit_intercept)
+                    # The rolling-horizon forecast at each configured window, so
+                    # the plots can show the re-anchoring sawtooth rather than
+                    # only the seeded-once extreme. Aligned with
+                    # value_sequence[order:], like one_step_ahead.
+                    for forecast_horizon in forecast_horizons:
+                        arrays[f"{prefix}__rolling_horizon_{forecast_horizon}"] = \
+                            forecast_rolling_horizon(
+                                coefficients, value_sequence, forecast_horizon,
+                                fit_intercept=fit_intercept)
     return arrays
 
 
@@ -471,5 +481,6 @@ def autoregressive_value_probe(agent, env, orders=DEFAULT_ORDERS,
         run_logger.save_autoregressive_example_rollouts(
             episode, example_rollout_arrays(
                 results, n_examples=n_example_rollouts,
-                fit_intercept=fit_intercept))
+                fit_intercept=fit_intercept,
+                forecast_horizons=tuple(forecast_horizons)))
     return {"value_sequences": value_sequences, "results": results}
