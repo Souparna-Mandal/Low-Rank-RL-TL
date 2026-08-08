@@ -539,13 +539,24 @@ function render(){
 
   if(d.stats) app.append(metricsCard());
   // Autoregressive value-recurrence probe panels (absent unless the run
-  // enabled analysis.autoregressive_value_probe).
+  // enabled analysis.autoregressive_value_probe). Each is built inside its own
+  // try/catch: render() has already cleared #app, so an exception escaping here
+  // would leave the whole viewer blank with no clue why. A broken panel should
+  // cost you that panel, not the page.
   for(const build of [autoregressivePredictionErrorCard,
                       autoregressiveHorizonCard,
                       autoregressiveCoefficientCard,
                       autoregressiveRolloutCard]){
-    const cardEl=build();
-    if(cardEl) app.append(cardEl);
+    try{
+      const cardEl=build();
+      if(cardEl) app.append(cardEl);
+    }catch(err){
+      console.error(`${build.name} failed`,err);
+      app.append(el("div",{class:"card"},
+        el("h2",{text:"Panel failed to render"}),
+        el("p",{class:"desc",text:`${build.name} threw: ${err&&err.message||err}. `
+          +`The rest of the page is unaffected; see the browser console for the stack.`})));
+    }
   }
   if(d.rewards&&d.rewards.length) app.append(rewardCard());
 
