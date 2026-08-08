@@ -121,16 +121,16 @@ def plot_error_versus_forecast_horizon(
     for order in orders:
         selected = (at_episode[at_episode["order"] == order]
                     .sort_values("forecast_horizon"))
-        axis.plot(selected["forecast_horizon"], selected["normalised_rmse"],
+        axis.plot(selected["forecast_horizon"], selected["one_minus_r_squared"],
                   marker="o", markersize=4, color=colours[order],
                   linewidth=1.8, label=f"order {order}")
     axis.axhline(1.0, color="grey", linestyle=":", linewidth=1.0)
-    axis.annotate("error as large as the signal itself", xy=(0.02, 1.05),
+    axis.annotate("no better than predicting the mean", xy=(0.02, 1.05),
                   xycoords=("axes fraction", "data"), fontsize=8, color="grey")
     axis.set_xscale("log", base=2)
     axis.set_yscale("log")
     axis.set_xlabel("forecast horizon $\\tau$ (steps predicted before re-anchoring)")
-    axis.set_ylabel("normalised RMSE")
+    axis.set_ylabel("1 - R$^2$  (fraction of variance unexplained)")
     axis.set_title(f"How far ahead can the recurrence see?\n"
                    f"episode {episode} · {SPLIT_TITLES.get(split, split)} · {subset}")
     axis.grid(alpha=0.3, which="both")
@@ -160,12 +160,12 @@ def plot_horizon_error_over_training(
     for index, horizon in enumerate(horizons):
         selected = (errors[errors["forecast_horizon"] == horizon]
                     .sort_values("episode"))
-        axis.plot(selected["episode"], selected["normalised_rmse"],
+        axis.plot(selected["episode"], selected["one_minus_r_squared"],
                   color=colour_map(index / max(len(horizons) - 1, 1)),
                   linewidth=1.6, label=f"$\\tau$ = {horizon}")
     axis.set_yscale("log")
     axis.set_xlabel("training episode")
-    axis.set_ylabel("normalised RMSE")
+    axis.set_ylabel("1 - R$^2$  (fraction of variance unexplained)")
     axis.set_title(f"Order-{order} forecast error at each horizon, over training "
                    f"({SPLIT_TITLES.get(split, split)}, {subset})")
     axis.grid(alpha=0.3)
@@ -184,7 +184,7 @@ def summarise_horizon_sweep(run_directory, episode=None,
         episode = errors["episode"].max()
     at_episode = errors[errors["episode"] == episode]
     table = at_episode.pivot_table(index="order", columns="forecast_horizon",
-                                   values="normalised_rmse")
+                                   values="one_minus_r_squared")
     table.columns = [f"tau={int(c)}" for c in table.columns]
     return table
 
@@ -245,8 +245,8 @@ def _order_colours(orders):
 
 
 def plot_prediction_error_over_training(
-        run_directory, split=HELD_OUT_TRAJECTORY_SPLIT, normalised=True,
-        save_to=None, show=True, figsize=(13, 8)):
+        run_directory, split=HELD_OUT_TRAJECTORY_SPLIT,
+        unexplained_variance=True, save_to=None, show=True, figsize=(13, 8)):
     """How well each recurrence order predicts, checkpoint by checkpoint.
 
     Four panels: {one step ahead, free running} x {training, test}. One line per
@@ -254,14 +254,17 @@ def plot_prediction_error_over_training(
     it is the only panel where neither the trajectories nor the compounding of
     the recurrence's own errors were seen during fitting.
 
-    normalised=True plots the scale-free error (divided by the signal's
-    root-mean-square), which is what makes different environments comparable.
+    unexplained_variance=True plots 1 - R^2, the fraction of the signal's
+    variance left unexplained: 0 is perfect, 1 is no better than predicting the
+    signal's own mean, above 1 is worse than that. Set it False to plot the raw
+    RMSE instead, which is in the value signal's own units and therefore not
+    comparable between environments.
     """
     errors = load_prediction_errors(run_directory)
     errors = errors[errors["split"] == split]
     if errors.empty:
         raise ValueError(f"no rows for split {split!r} in {run_directory}")
-    prefix = "normalised_rmse_" if normalised else "rmse_"
+    prefix = "one_minus_r_squared_" if unexplained_variance else "rmse_"
     orders = sorted(errors["order"].unique())
     colours = _order_colours(orders)
 
@@ -281,8 +284,12 @@ def plot_prediction_error_over_training(
             axis.grid(alpha=0.3)
             if row == 1:
                 axis.set_xlabel("training episode")
+            if unexplained_variance:
+                # 1 is the reference: no better than predicting the mean.
+                axis.axhline(1.0, color="grey", linestyle=":", linewidth=1.0)
             if column == 0:
-                axis.set_ylabel("normalised RMSE" if normalised else "RMSE")
+                axis.set_ylabel("1 - $R^2$  (variance unexplained)"
+                                if unexplained_variance else "RMSE")
     axes[0, 0].legend(fontsize=8, ncol=2)
     figure.suptitle(
         f"Value predictability over training — {SPLIT_TITLES.get(split, split)}\n"
@@ -461,13 +468,16 @@ def summarise_final_checkpoint(run_directory,
     last_episode = errors["episode"].max()
     final = errors[(errors["episode"] == last_episode)
                    & (errors["subset"] == "test")]
-    columns = ["order", "normalised_rmse_one_step_ahead",
-               "normalised_rmse_free_running", "free_running_diverged",
+    columns = ["order", "rmse_one_step_ahead",
+               "one_minus_r_squared_one_step_ahead", "rmse_free_running",
+               "one_minus_r_squared_free_running", "free_running_diverged",
                "mean_trajectory_length"]
     return (final[columns].sort_values("order").reset_index(drop=True)
             .rename(columns={
-                "normalised_rmse_one_step_ahead": "one step ahead (nRMSE)",
-                "normalised_rmse_free_running": "free running (nRMSE)",
+                "rmse_one_step_ahead": "one step RMSE",
+                "one_minus_r_squared_one_step_ahead": "one step 1-R^2",
+                "rmse_free_running": "free run RMSE",
+                "one_minus_r_squared_free_running": "free run 1-R^2",
                 "free_running_diverged": "diverged",
                 "mean_trajectory_length": "mean trajectory length"}))
 

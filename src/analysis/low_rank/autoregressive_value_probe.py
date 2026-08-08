@@ -44,7 +44,7 @@ import torch
 from analysis.low_rank.recurrence import (fit_autoregressive_coefficients,
                                           forecast_free_running,
                                           forecast_rolling_horizon,
-                                          normalised_root_mean_squared_error,
+                                          one_minus_r_squared,
                                           predict_one_step_ahead,
                                           root_mean_squared_error)
 
@@ -162,22 +162,22 @@ def _prediction_metrics(coefficients, value_sequences, order, fit_intercept,
     def _score(predictions, actuals, label):
         if not predictions:
             return {f"rmse_{label}": float("nan"),
-                    f"normalised_rmse_{label}": float("nan")}
+                    f"one_minus_r_squared_{label}": float("nan")}
         predicted = np.concatenate(predictions)
         actual = np.concatenate(actuals)
         if not np.isfinite(predicted).all():
             return {f"rmse_{label}": float("inf"),
-                    f"normalised_rmse_{label}": float("inf")}
+                    f"one_minus_r_squared_{label}": float("inf")}
         return {f"rmse_{label}": root_mean_squared_error(predicted, actual),
-                f"normalised_rmse_{label}":
-                    normalised_root_mean_squared_error(predicted, actual)}
+                f"one_minus_r_squared_{label}":
+                    one_minus_r_squared(predicted, actual)}
 
     metrics = {}
     metrics.update(_score(one_step_predictions, one_step_actuals,
                           "one_step_ahead"))
     metrics.update(_score(free_running_predictions, free_running_actuals,
                           "free_running"))
-    normalised_free_running = metrics["normalised_rmse_free_running"]
+    normalised_free_running = metrics["one_minus_r_squared_free_running"]
     metrics["free_running_diverged"] = bool(
         not np.isfinite(normalised_free_running)
         or normalised_free_running > DIVERGENCE_SCALE_MULTIPLE)
@@ -207,20 +207,20 @@ def _rolling_horizon_metrics(coefficients, value_sequences, order,
             actual_blocks.append(value_sequence[order:])
         if not predicted_blocks:
             per_horizon[horizon] = {"rmse": float("nan"),
-                                    "normalised_rmse": float("nan"),
+                                    "one_minus_r_squared": float("nan"),
                                     "diverged": False}
             continue
         predicted = np.concatenate(predicted_blocks)
         actual = np.concatenate(actual_blocks)
         if not np.isfinite(predicted).all():
             per_horizon[horizon] = {"rmse": float("inf"),
-                                    "normalised_rmse": float("inf"),
+                                    "one_minus_r_squared": float("inf"),
                                     "diverged": True}
             continue
-        normalised = normalised_root_mean_squared_error(predicted, actual)
+        normalised = one_minus_r_squared(predicted, actual)
         per_horizon[horizon] = {
             "rmse": root_mean_squared_error(predicted, actual),
-            "normalised_rmse": normalised,
+            "one_minus_r_squared": normalised,
             "diverged": bool(normalised > DIVERGENCE_SCALE_MULTIPLE),
         }
     return per_horizon
@@ -337,11 +337,11 @@ def metric_rows(episode, results, value_sequences):
                     "split": split_name,
                     "subset": subset,
                     "rmse_one_step_ahead": metrics["rmse_one_step_ahead"],
-                    "normalised_rmse_one_step_ahead":
-                        metrics["normalised_rmse_one_step_ahead"],
+                    "one_minus_r_squared_one_step_ahead":
+                        metrics["one_minus_r_squared_one_step_ahead"],
                     "rmse_free_running": metrics["rmse_free_running"],
-                    "normalised_rmse_free_running":
-                        metrics["normalised_rmse_free_running"],
+                    "one_minus_r_squared_free_running":
+                        metrics["one_minus_r_squared_free_running"],
                     "free_running_diverged":
                         int(metrics["free_running_diverged"]),
                     "n_sequences_scored": metrics["n_sequences_scored"],
@@ -369,7 +369,7 @@ def horizon_metric_rows(episode, results, value_sequences):
                         "subset": subset,
                         "forecast_horizon": horizon,
                         "rmse": metrics["rmse"],
-                        "normalised_rmse": metrics["normalised_rmse"],
+                        "one_minus_r_squared": metrics["one_minus_r_squared"],
                         "diverged": int(metrics["diverged"]),
                         "mean_trajectory_length": mean_length,
                     })

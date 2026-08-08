@@ -70,9 +70,9 @@ def _print_autoregressive_summary(summary):
             continue
         test = held_out["test"]
         diverged = " (free-running diverged)" if test["free_running_diverged"] else ""
-        print(f"  order {order}: held-out test normalised RMSE "
-              f"one-step {test['normalised_rmse_one_step_ahead']:.4f}, "
-              f"free-running {test['normalised_rmse_free_running']:.4f}{diverged}")
+        print(f"  order {order}: held-out test 1 - R^2  "
+              f"one-step {test['one_minus_r_squared_one_step_ahead']:.4f}, "
+              f"free-running {test['one_minus_r_squared_free_running']:.4f}{diverged}")
 
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,

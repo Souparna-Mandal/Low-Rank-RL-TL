@@ -1018,9 +1018,9 @@ function autoregressivePredictionErrorCard(){
     const grid=el("div",{class:"grid-charts"});
     for(const subset of ["training","test"]){
       for(const [column,label,hint] of [
-        ["normalised_rmse_one_step_ahead","One step ahead — "+subset,
+        ["one_minus_r_squared_one_step_ahead","One step ahead — "+subset,
          "each prediction made from the true previous values, so errors never accumulate"],
-        ["normalised_rmse_free_running","Free running — "+subset,
+        ["one_minus_r_squared_free_running","Free running — "+subset,
          "seeded once then predicting from its own output, so errors compound"]]){
         const series=orders.map(o=>({
           name:"order "+o, color:colour[o],
@@ -1093,7 +1093,7 @@ function autoregressiveHorizonCard(){
                             && +r[t.index.episode]===STATE.arHorizonEp
                             && r[t.index.split]===STATE.arHorizonSplit
                             && r[t.index.subset]===subset)
-                  .map(r=>[+r[t.index.forecast_horizon],+r[t.index.normalised_rmse]])
+                  .map(r=>[+r[t.index.forecast_horizon],+r[t.index.one_minus_r_squared]])
                   .filter(p=>Number.isFinite(p[1]))
                   .sort((a,b)=>a[0]-b[0]),
         endLabel:false}));
@@ -1112,7 +1112,7 @@ function autoregressiveHorizonCard(){
                           && +r[t.index.forecast_horizon]===h
                           && r[t.index.split]===STATE.arHorizonSplit
                           && r[t.index.subset]==="test")
-                .map(r=>[+r[t.index.episode],+r[t.index.normalised_rmse]])
+                .map(r=>[+r[t.index.episode],+r[t.index.one_minus_r_squared]])
                 .filter(p=>Number.isFinite(p[1]))
                 .sort((a,b)=>a[0]-b[0]),
       endLabel:false}));

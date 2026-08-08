@@ -117,8 +117,8 @@ class RunLogger:
     # -- autoregressive value-recurrence probe ------------------------------
     AUTOREGRESSIVE_METRIC_COLUMNS = [
         "episode", "order", "split", "subset",
-        "rmse_one_step_ahead", "normalised_rmse_one_step_ahead",
-        "rmse_free_running", "normalised_rmse_free_running",
+        "rmse_one_step_ahead", "one_minus_r_squared_one_step_ahead",
+        "rmse_free_running", "one_minus_r_squared_free_running",
         "free_running_diverged", "n_sequences_scored",
         "n_trajectories_collected", "mean_trajectory_length",
     ]
@@ -136,7 +136,7 @@ class RunLogger:
 
     AUTOREGRESSIVE_HORIZON_COLUMNS = [
         "episode", "order", "split", "subset", "forecast_horizon",
-        "rmse", "normalised_rmse", "diverged", "mean_trajectory_length",
+        "rmse", "one_minus_r_squared", "diverged", "mean_trajectory_length",
     ]
 
     def log_autoregressive_horizon_metrics(self, rows) -> None:

@@ -42,8 +42,8 @@ def test_recovers_known_order_two_structure_on_held_out_trajectories():
     assert np.allclose(held_out["coefficients"][:2], true_coefficients, atol=1e-4)
     # An exact recurrence must predict held-out trajectories essentially perfectly,
     # including under free running where errors would otherwise compound.
-    assert held_out["test"]["normalised_rmse_one_step_ahead"] < 1e-6
-    assert held_out["test"]["normalised_rmse_free_running"] < 1e-4
+    assert held_out["test"]["one_minus_r_squared_one_step_ahead"] < 1e-6
+    assert held_out["test"]["one_minus_r_squared_free_running"] < 1e-4
     assert not held_out["test"]["free_running_diverged"]
 
 
@@ -52,7 +52,7 @@ def test_prefix_suffix_split_forecasts_the_unseen_half():
     results = evaluate_autoregressive_orders(sequences, orders=(2,))
     prefix_suffix = results[2][PREFIX_SUFFIX_SPLIT]
     # Fitted only on first halves, forecasting the second halves it never saw.
-    assert prefix_suffix["test"]["normalised_rmse_free_running"] < 1e-4
+    assert prefix_suffix["test"]["one_minus_r_squared_free_running"] < 1e-4
     assert len(prefix_suffix["training_sequences"][0]) == 40
     assert len(prefix_suffix["test_sequences"][0]) == 40
 
@@ -65,7 +65,7 @@ def test_unpredictable_noise_is_not_reported_as_predictable():
     results = evaluate_autoregressive_orders(sequences, orders=(2, 8))
     for order in (2, 8):
         test = results[order][HELD_OUT_TRAJECTORY_SPLIT]["test"]
-        assert test["normalised_rmse_one_step_ahead"] > 0.5, \
+        assert test["one_minus_r_squared_one_step_ahead"] > 0.5, \
             "white noise should be near-unpredictable one step ahead"
 
 
@@ -81,7 +81,7 @@ def test_free_running_divergence_is_recorded_not_hidden():
         explosive.append(sequence)
     results = evaluate_autoregressive_orders(explosive, orders=(2,))
     metrics = results[2][HELD_OUT_TRAJECTORY_SPLIT]["test"]
-    assert np.isfinite(metrics["normalised_rmse_one_step_ahead"])
+    assert np.isfinite(metrics["one_minus_r_squared_one_step_ahead"])
     assert "free_running_diverged" in metrics
 
 
@@ -109,10 +109,10 @@ def test_rolling_horizon_sweep_endpoints_match_the_other_regimes():
         sequences, orders=(2,), forecast_horizons=(1, 8, 1000))
     split = results[2][HELD_OUT_TRAJECTORY_SPLIT]
     horizons = split["test_horizons"]
-    assert abs(horizons[1]["normalised_rmse"]
-               - split["test"]["normalised_rmse_one_step_ahead"]) < 1e-9
-    assert abs(horizons[1000]["normalised_rmse"]
-               - split["test"]["normalised_rmse_free_running"]) < 1e-9
+    assert abs(horizons[1]["one_minus_r_squared"]
+               - split["test"]["one_minus_r_squared_one_step_ahead"]) < 1e-9
+    assert abs(horizons[1000]["one_minus_r_squared"]
+               - split["test"]["one_minus_r_squared_free_running"]) < 1e-9
 
 
 def test_error_grows_with_forecast_horizon_then_saturates():
@@ -132,7 +132,7 @@ def test_error_grows_with_forecast_horizon_then_saturates():
     results = evaluate_autoregressive_orders(
         sequences, orders=(2,), ridge_penalty=1e-6,
         forecast_horizons=(1, 4, 16, 64))
-    errors = {h: m["normalised_rmse"] for h, m
+    errors = {h: m["one_minus_r_squared"] for h, m
               in results[2][HELD_OUT_TRAJECTORY_SPLIT]["test_horizons"].items()}
     assert errors[1] == min(errors.values()), errors
     assert errors[4] > errors[1] and errors[16] > errors[4], errors

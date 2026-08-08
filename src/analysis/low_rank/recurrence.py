@@ -171,15 +171,31 @@ def root_mean_squared_error(predicted, actual):
     return float(np.sqrt(np.mean((predicted - actual) ** 2)))
 
 
-def normalised_root_mean_squared_error(predicted, actual):
-    """RMSE divided by the root-mean-square of the true signal.
+def one_minus_r_squared(predicted, actual):
+    """Fraction of the signal's VARIANCE the prediction fails to explain.
 
-    Scale-free, so it is comparable across environments whose value magnitudes
-    differ by orders of magnitude (Acrobot values are large and negative,
-    CartPole values are small and positive). A value of 1.0 means the error is
-    as large as the signal itself.
+        1 - R^2 = mean((predicted - actual)^2) / var(actual)
+
+    Read it directly:
+
+        0    perfect
+        1    no better than predicting the signal's own mean
+        > 1  worse than predicting the mean
+
+    This deliberately normalises by the variance rather than by the
+    mean-square. A value sequence sits at a large non-zero level -- Acrobot
+    around -1.56 with a standard deviation of 0.03, CartPole around 97 with a
+    standard deviation of 3.4 -- so dividing by the root-mean-square measures
+    the error against the LEVEL, which the mean already explains for free. That
+    flatters a model by one to two orders of magnitude: an error equal to the
+    entire variation of the Acrobot signal scores 0.02 against its RMS but 1.0
+    here, which is the honest number.
+
+    Returns NaN for a constant signal, where no fraction-of-variance explained
+    is defined.
     """
     predicted, actual = np.asarray(predicted), np.asarray(actual)
-    signal_root_mean_square = np.sqrt(np.mean(np.asarray(actual) ** 2))
-    return float(root_mean_squared_error(predicted, actual)
-                 / max(signal_root_mean_square, 1e-12))
+    total_variance = np.var(actual)
+    if total_variance <= 0:
+        return float("nan")
+    return float(np.mean((predicted - actual) ** 2) / total_variance)
