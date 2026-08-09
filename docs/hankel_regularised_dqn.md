@@ -163,7 +163,10 @@ unoccupied.
   windows and never crosses a reset. Capacity counted in transitions, FIFO by episode.
 - `HankelDQNAgent(QAgent)` config keys (under `agent:` — the constructor-kwarg
   convention): `hankel_weight, hankel_order, window_len, n_windows, gate_threshold,
-  warmup_grad_steps, ramp_grad_steps, penalize_terminal_windows, td_source`.
+  warmup_grad_steps, ramp_grad_steps, penalize_terminal_windows, td_source,
+  hankel_log`. `hankel_log: true` computes the penalty on the signed log
+  sign(v)·log1p(|v|) of each window's value sequence (values can be negative/zero,
+  so a plain log is undefined) instead of the raw values.
   `td_source: windows` is the ablation where TD pairs come from inside the penalty
   windows (correlated batches; terminal anchors preserved via each window's
   post-window state).

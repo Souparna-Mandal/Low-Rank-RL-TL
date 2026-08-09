@@ -71,19 +71,19 @@ analysis:
     # Recurrence orders to fit. 2 is the order the low-rank work centres on;
     # 8 is included so that over-parameterisation shows up as free-running
     # divergence rather than as a quietly better fit.
-    orders: [2, 3, 4, 8]
+    orders: [2, 4]
     # Trajectories rolled per checkpoint. training_fraction of them are fitted
     # on and the rest are held out, so this must be comfortably above 2.
-    n_trajectories: 12
-    training_fraction: 0.6
+    n_trajectories: 50
+    training_fraction: 0.5
     # Fixed probe seeds, offset well clear of the training seed so the probe
     # trajectories are a consistent, reproducible evaluation set at every
     # checkpoint rather than a moving target.
-    base_seed: 40000
-    ridge_penalty: 1.0e-8
+    base_seed: 20000
+    ridge_penalty: 1.0e-7
     # Value sequences sit at a non-zero level, so without an intercept the
     # recurrence would spend its coefficients representing that offset.
-    fit_intercept: true
+    fit_intercept: False
     # Rolling-horizon forecast windows. At each horizon tau the recurrence
     # predicts tau steps from the true history, is then re-anchored on the
     # values that actually occurred, and predicts the next tau -- which is how

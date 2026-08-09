@@ -40,7 +40,7 @@ agent:
   decay_rate: 0.99992
   discount_factor: 0.99
   TD_LR: 0.3
-  buffer_util: 1
+  buffer_util: 2
   gd_steps_ceil: 40
   grad_clip_norm: 10.0
   double: True
@@ -52,8 +52,6 @@ training:
   use_episode_training: True
   solved_reward: 475
   warmup_steps: 1500
-  # No early stop: the probe is about how predictability EVOLVES, so the run
-  # should cover the whole budget rather than stopping once the task is solved.
   early_stopping_patience_eps: 1000000
   no_eps_to_avg: 10
 
@@ -74,19 +72,19 @@ analysis:
     # Recurrence orders to fit. 2 is the order the low-rank work centres on;
     # 8 is included so that over-parameterisation shows up as free-running
     # divergence rather than as a quietly better fit.
-    orders: [2, 3, 4, 8]
+    orders: [2, 4]
     # Trajectories rolled per checkpoint. training_fraction of them are fitted
     # on and the rest are held out, so this must be comfortably above 2.
-    n_trajectories: 12
+    n_trajectories: 80
     training_fraction: 0.6
     # Fixed probe seeds, offset well clear of the training seed so the probe
     # trajectories are a consistent, reproducible evaluation set at every
     # checkpoint rather than a moving target.
-    base_seed: 40000
+    base_seed: 20000
     ridge_penalty: 1.0e-8
     # Value sequences sit at a non-zero level, so without an intercept the
     # recurrence would spend its coefficients representing that offset.
-    fit_intercept: true
+    fit_intercept: false
     # Rolling-horizon forecast windows. At each horizon tau the recurrence
     # predicts tau steps from the true history, is then re-anchored on the
     # values that actually occurred, and predicts the next tau -- which is how
@@ -94,7 +92,7 @@ analysis:
     # regimes as its endpoints: horizon 1 is exactly one-step-ahead, and a
     # horizon longer than the trajectory is exactly free running, so this
     # measures how far ahead the recurrence stays useful.
-    forecast_horizons: [1, 2, 4, 8, 16, 32, 64]
+    forecast_horizons: [1, 2, 4, 8, 16,]
     # How many example trajectories per subset get their actual-vs-predicted
     # arrays saved for plotting.
     n_example_rollouts: 2

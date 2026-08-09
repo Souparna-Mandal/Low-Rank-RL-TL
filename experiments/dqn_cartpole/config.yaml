@@ -24,7 +24,7 @@ environment:
       max: [ null, 100, null, 100]
 network:
   # MLP Q-network is defined inside exp1.ipynb
-  hidden_sizes: [128, 128]
+  hidden_sizes: [128, 128] 
 
 agent:
   replay_buffer_capacity: 100000

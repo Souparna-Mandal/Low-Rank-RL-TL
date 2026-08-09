@@ -1,5 +1,5 @@
 experiment:
-  name: dqn_acrobot_2
+  name: dqn_acrobot_2_small_2_HL
   seed: 52
   device: auto
   # Save run artifacts (spectra figures, rewards/rank/hankel_sweep CSVs, trajectories,
@@ -21,7 +21,7 @@ environment:
 
 network:
   # MLP Q-network is defined inside exp1.ipynb
-  hidden_sizes: [128, 128]
+  hidden_sizes: [8,]
 
 agent:
   replay_buffer_capacity: 10000
@@ -35,7 +35,7 @@ agent:
   buffer_util: 1         # What fraction of the buffer to use (Increasing reducing the gd_steps) ==== gradient steps/episode ~ len(buffer) / (buffer_util * batch)
   # With the current settings when buffer is full it should do 40 gd_steps without the ceiling
   gd_steps_ceil: 1      # hard cap on gradient steps per training call
-  grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
+  grad_clip_norm: 10.0   # max global L2 norm for gradient clipping per step
 
 training:
   no_episodes: 500
@@ -68,7 +68,7 @@ analysis:
     functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
     save_trajectories: true
     sub_trajectory:
-      enabled: true
+      enabled: false
       min_len: 10
       stride: 5
       n_figures: 5

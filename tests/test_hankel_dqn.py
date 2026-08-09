@@ -75,6 +75,23 @@ def test_penalty_minimizable_and_finite_grads():
     assert float(p) == 0.0 and torch.isfinite(c.grad).all()
 
 
+def test_log_transform_penalty():
+    # Windows whose signed log sign(v)*log1p(|v|) is an exact rank-2 sequence:
+    # low tail after the transform, high tail on the raw values.
+    y = _rank2_batch(6, 16)
+    v = torch.sign(y) * torch.expm1(y.abs())  # symlog^{-1}(y)
+    p_log, d_log = HankelRankPenalty(order=2, log_transform=True)(v)
+    p_raw, _ = HankelRankPenalty(order=2)(v)
+    assert float(p_log) < 1e-5, f"log-domain penalty {float(p_log)}"
+    assert d_log["converged_frac"] == 1.0
+    assert float(p_raw) > 1e-3, f"raw penalty should see high rank: {float(p_raw)}"
+    # Gradients stay finite through the transform, including at negative values.
+    x = (v + 0.1 * torch.randn(6, 16)).requires_grad_(True)
+    p, _ = HankelRankPenalty(order=2, log_transform=True)(x)
+    p.backward()
+    assert float(p) > 0 and torch.isfinite(x.grad).all()
+
+
 def test_gate_excludes_offmanifold_windows():
     torch.manual_seed(2)
     pen = HankelRankPenalty(order=2, gate_threshold=0.05)

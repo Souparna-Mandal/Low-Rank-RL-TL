@@ -22,15 +22,24 @@ class HankelRankPenalty(nn.Module):
     Windows whose relative tail energy exceeds gate_threshold are excluded
     (off-manifold windows give arbitrary gradients), as are windows already at
     rank <= order (nothing to optimise, degenerate spectra).
+
+    log_transform lifts each window through the signed log sign(v)*log1p(|v|)
+    before the Hankel construction, so the tail is measured on the
+    log-magnitude value sequence. The signed form is needed because value
+    sequences can be negative or zero (a plain log would be undefined); it is
+    monotone and, for |v| >> 1, log|v_t| of a geometric |v_t| is affine in t —
+    Hankel rank 2.
     """
 
     def __init__(self, order: int = 2, gate_threshold: float | None = None,
-                 detach_denominator: bool = True, jitter: float = 0.0):
+                 detach_denominator: bool = True, jitter: float = 0.0,
+                 log_transform: bool = False):
         super().__init__()
         self.order = order
         self.gate_threshold = gate_threshold
         self.detach_denominator = detach_denominator
         self.jitter = jitter
+        self.log_transform = log_transform
 
     def forward(self, value_seqs: torch.Tensor, keep_mask: torch.Tensor | None = None):
         """value_seqs: (B, T) predicted values along episode-contiguous windows.
@@ -45,6 +54,8 @@ class HankelRankPenalty(nn.Module):
             return value_seqs.new_zeros(()), diag
 
         seqs = value_seqs
+        if self.log_transform:
+            seqs = torch.sign(seqs) * torch.log1p(seqs.abs())
         if self.jitter > 0:
             seqs = seqs + self.jitter * seqs.detach().std().clamp_min(1e-8) * torch.randn_like(seqs)
         H = seqs.unfold(dimension=1, size=L, step=1)  # (B, T-L+1, L)
