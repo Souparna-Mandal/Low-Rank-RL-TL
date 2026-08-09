@@ -134,7 +134,7 @@ class TabularPolicyIterationAgent(BaseAgent):
         empty_f = np.empty(0, dtype=np.float32); empty_i = np.empty(0, dtype=np.int32)
         return {
             "start_bin": np.asarray(cols["start_bin"], dtype=np.int32),
-            "action": np.asarray(cols["action"], dtype=np.int8),
+            "action": np.asarray(cols["action"], dtype=np.int32),
             "return": np.asarray(cols["return"], dtype=np.float32),
             "length": np.asarray(cols["length"], dtype=np.int32),
             "terminated": np.asarray(cols["terminated"], dtype=bool),

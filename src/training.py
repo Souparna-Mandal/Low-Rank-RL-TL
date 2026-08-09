@@ -43,7 +43,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       train_frequency_steps: int, use_episode_training: bool, solved_reward: int,
                       warmup_steps: int = 0, early_stopping_patience_eps: int = 50,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
-                      analysis_config: dict = {},
+                      analysis_config: dict | None = None,
                       DEBUG=False, atari= False, run_logger=None):
     """The default behaviour is that we wait for atleast train_frequency_steps between training. However this is only invoked after every
     episode. This means that if after train_frequency_steps it will only update once the episode ends and not in between.
@@ -58,7 +58,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         warmup_steps (int, optional): _description_. Defaults to 0.
         np_seed (int, optional): _description_. Defaults to 52.
         no_eps_to_avg (int, optional): _description_. Defaults to 10.
-        analysis_config (dict, optional): _description_. Defaults to {}.
+        analysis_config (dict, optional): _description_. Defaults to None (== {}, no analysis).
         DEBUG (bool, optional): _description_. Defaults to False.
         run_logger (RunLogger, optional): when provided, analysis figures are
             saved to its run directory instead of rendered inline, rank stats go
@@ -69,6 +69,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
     Returns:
         _type_: _description_
     """
+    analysis_config = analysis_config or {}
     state, info = env.reset(seed = np_seed)
     s_tn_upd, s_train, step_count = 0,0,0
     episode_rewards_training = []
@@ -136,7 +137,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             print("**************************** DEBUG INFO END **********************************")
             
         # Analysis prints during training
-        if episode % analysis_config["ep_freq"] == 0:
+        if episode % analysis_config.get("ep_freq", 1) == 0:
             run_analysis_tick(agent, env, analysis_config, run_logger, episode)
             if run_logger is not None:
                 run_logger.log_rewards(episode_rewards_training)
@@ -171,7 +172,7 @@ def _greedy_episode_return(agent, env, seed: int) -> float:
 
 def policy_iteration_loop(agent, env, no_iterations: int, solved_reward: int,
                           eval_episodes_per_iter: int = 5, np_seed: int = 52,
-                          analysis_config: dict = {}, run_logger=None, DEBUG=False):
+                          analysis_config: dict | None = None, run_logger=None, DEBUG=False):
     """Classical tabular policy iteration: exhaustive generative-model MC
     evaluation of the current policy, then greedy improvement.
 
@@ -179,6 +180,7 @@ def policy_iteration_loop(agent, env, no_iterations: int, solved_reward: int,
     reward = mean greedy-episode return over eval_episodes_per_iter fixed seeds.
     Stops on policy stability (no action changed), solved_reward, or the cap.
     """
+    analysis_config = analysis_config or {}
     iteration_rewards = []
     best_avg = float("-inf")
     for iteration in tqdm(range(no_iterations)):
@@ -202,7 +204,7 @@ def policy_iteration_loop(agent, env, no_iterations: int, solved_reward: int,
             best_avg = avg
             run_logger.checkpoint(agent, "best")
 
-        if iteration % analysis_config["ep_freq"] == 0:
+        if iteration % analysis_config.get("ep_freq", 1) == 0:
             run_analysis_tick(agent, env, analysis_config, run_logger, episode=iteration)
             if run_logger is not None:
                 run_logger.log_rewards(iteration_rewards)
