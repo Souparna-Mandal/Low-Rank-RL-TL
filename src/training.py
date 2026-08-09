@@ -51,7 +51,10 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             next_state, reward, terminated, truncated, info = env.step(action)
             agent.update_buffer(state, action, reward, next_state, terminated) if not atari else  agent.update_buffer_atari(state, action, reward, next_state, terminated)
             state = next_state
-            epsiode_total_reward += reward
+            # A ScaleReward-wrapped env trains the agent on scaled rewards but exposes
+            # the raw game score in info — log raw so reward curves and solved_reward
+            # stay comparable across runs with and without scaling.
+            epsiode_total_reward += info.get("raw_reward", reward)
             
             if step_count > warmup_steps: # start the counters for training and updating target network
                 # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network

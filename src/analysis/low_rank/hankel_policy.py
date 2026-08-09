@@ -1,5 +1,6 @@
 from agents.q_agent import QAgent
 from analysis.low_rank import rank
+from analysis.visualisations.heatmaps import plot_matrix_heatmap
 import gymnasium as gym
 import numpy as np
 import torch
@@ -105,6 +106,8 @@ def hankel_sweep_analysis(agent: QAgent, env: gym.Env, cfg: dict,
         n_rollouts (int=5), base_seed (int=52),
         functions (list[str]=all three sequence names),
         save_trajectories (bool=False),
+        save_heatmaps (bool=False): also save a heatmap of each rendered Hankel
+            matrix (at the same milestone lengths as the spectra, rollout 0),
         sub_trajectory: {enabled (bool=False), min_len (int=8), stride (int=16),
                          n_figures (int=5)}
     """
@@ -112,6 +115,9 @@ def hankel_sweep_analysis(agent: QAgent, env: gym.Env, cfg: dict,
     base_seed = cfg.get("base_seed", 52)
     Hankel_objects = cfg.get("functions", list(HANKEL_SEQUENCE_NAMES))
     save_trajectories = cfg.get("save_trajectories", True)
+    # Opt-in: alongside each rendered spectrum, also save a heatmap of that Hankel
+    # matrix (default off so existing experiments' artifacts are unchanged).
+    save_heatmaps = cfg.get("save_heatmaps", False)
     sub = cfg.get("sub_trajectory", {}) or {}
     sub_enabled = sub.get("enabled", True)
     min_len = sub.get("min_len")
@@ -139,6 +145,12 @@ def hankel_sweep_analysis(agent: QAgent, env: gym.Env, cfg: dict,
                                if run_logger is not None else None)
                     metrics = rank.row_rank_property_check(
                         hk, label, save_to=save_to, show=run_logger is None)
+                    if save_heatmaps:
+                        hm_save_to = (run_logger.figure_path(
+                            _figure_name(name, L, H, r) + " heatmap", episode)
+                            if run_logger is not None else None)
+                        plot_matrix_heatmap(hk, label, save_to=hm_save_to,
+                                            show=run_logger is None)
                 else:
                     metrics = rank.compute_rank_metrics(hk)
 

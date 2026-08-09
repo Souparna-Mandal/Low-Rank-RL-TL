@@ -39,8 +39,11 @@ def build_env(cfg: dict, render_mode=None):
     return make_environment(env_name, **env_cfg)
 
 
-def build_agent(cfg: dict, env, q_network, nn_extra_kwargs: dict):
-    return QAgent(
+def build_agent(cfg: dict, env, q_network, nn_extra_kwargs: dict, agent_cls=QAgent):
+    """Build the agent from cfg["agent"]. Pass agent_cls=RainbowDQNAgent (from
+    agents.rainbow_agent) to build the Rainbow benchmark instead of the default
+    QAgent. The config keys under `agent` must match that class's constructor."""
+    return agent_cls(
         **cfg["agent"],
         q_network=q_network,
         nn_extra_kwargs=nn_extra_kwargs,
@@ -62,10 +65,10 @@ def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
     )
 
 
-def make_run_logger(cfg: dict):
+def make_run_logger(cfg: dict, config_path: str = "config.yaml"):
     """A RunLogger under runs/<timestamp>/ when experiment.save_artifacts is set,
-    else None (analysis renders inline). Imported lazily"""
+    else None (analysis renders inline). Imported lazily. Pass config_path"""
     from analysis.run_logger import RunLogger
     if cfg["experiment"].get("save_artifacts", True):
-        return RunLogger(pathlib.Path.cwd(), config_path="config.yaml")
+        return RunLogger(pathlib.Path.cwd(), config_path=config_path)
     return None

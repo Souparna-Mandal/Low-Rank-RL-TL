@@ -1,0 +1,129 @@
+experiment:
+  name: dqn_seaquest_rainbow
+  seed: 52
+  device: cuda
+  # Save run artifacts (spectra + heatmaps, rewards/rank CSVs, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
+
+environment:
+  # Identical Atari pipeline to the DQN Seaquest baseline (config.yaml) — same env,
+  # same Mnih et al. (2015) preprocessing — so the Rainbow benchmark is measured on
+  # exactly the same observations. See config.yaml for the per-key rationale.
+  name: ALE/Seaquest-v5
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: false
+    state: {}
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    terminal_on_life_loss: true
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+  # Train on scaled rewards (canonical Rainbow assumes [-1,1]-clipped Atari scores;
+  # raw Seaquest rewards of 20..1000+ produce heavy-tailed PER priorities and crush
+  # the max-normalised IS weights). Scaling by 0.01 keeps relative reward magnitudes
+  # (unlike sign-clipping) while restoring the range the hyperparameters assume.
+  # The ScaleReward wrapper exposes the raw score in info["raw_reward"], which the
+  # training loop logs — so rewards.csv stays in raw game units, comparable with the
+  # DQN baseline, and solved_reward below stays a raw-scale threshold.
+  reward:
+    scale: 0.01
+
+network:
+  # For Rainbow the externally-supplied network is only the ENCODER — the Nature DQN
+  # conv trunk (Conv 4->32->64->64 -> Flatten -> 3136 features). The dueling + noisy +
+  # IQN head lives INSIDE RainbowDQNAgent (src/agents/rainbow_agent.py), so there is
+  # no fc_hidden here; the head width is agent.head_hidden below and the agent infers
+  # feature_dim (3136) and n_actions (18) itself.
+  #   Conv(4->32, k=8, s=4) -> ReLU
+  #   Conv(32->64, k=4, s=2) -> ReLU
+  #   Conv(64->64, k=3, s=1) -> ReLU -> Flatten (3136)
+
+agent:
+  # Values fall back to the DQN Seaquest baseline (config.yaml) wherever they still
+  # make sense; the Rainbow-specific blocks are layered on top. NOTE: eps_start /
+  # eps_min / decay_rate are GONE — exploration is noisy-nets only (noisy_sigma0).
+  replay_buffer_capacity: 250000
+  batch_size: 128
+  nn_learning_rate: 0.0001
+  discount_factor: 0.99
+
+  # --- multi-step returns ---
+  n_step: 3
+
+  # --- distributional head (IQN) ---
+  n_quantiles: 32            # online quantile samples N  (loss)
+  n_quantiles_target: 32     # target quantile samples N' (loss)
+  n_quantiles_act: 32        # quantiles averaged into the expected Q used for acting,
+                             # Double-DQN selection, and the Hankel Q/V/A traces
+  n_cos: 64                  # cosine basis size for the tau embedding
+  head_hidden: 512           # was network.fc_hidden in the baseline; now the head width
+  huber_kappa: 1.0
+
+  # --- dueling + noisy + double ---
+  dueling: true
+  # Raised from the Fortunato default 0.5 after run 20260712-152522: the output-layer
+  # sigmas had annealed to 0.27-0.56x of init while the policy plateaued at the
+  # ~450-900 shark-farming band without discovering surfacing — more initial noise
+  # gives the learned exploration more headroom before SGD anneals it.
+  noisy_sigma0: 1.0
+  double: true
+
+  # --- prioritised experience replay ---
+  per_alpha: 0.5             # prioritisation strength (0 = uniform replay)
+  per_beta_start: 0.4        # importance-sampling correction, annealed to 1.0
+  # beta climbs by +increment each gradient step (~300k updates to reach 1.0).
+  per_beta_increment: 0.000002
+  per_eps: 0.00001           # priority floor so nothing is unsamplable
+
+  # --- optimisation / target updates (fall back to the baseline) ---
+  TD_LR: 0.01               # soft (Polyak) target-update rate
+  buffer_util: 8
+  gd_steps_ceil: 3
+  grad_clip_norm: 10.0
+
+training:
+  # Identical schedule to the DQN baseline so the comparison is apples-to-apples.
+  no_episodes: 15000
+  target_network_update_steps: 15
+  train_frequency_steps: 15
+  use_episode_training: false
+  # Rainbow tends to reach Seaquest returns above the DQN band; kept high to disable
+  # early stopping and let it run the full schedule.
+  solved_reward: 20000
+  warmup_steps: 50000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 20
+
+analysis:
+  ep_freq: 100
+  methods: []
+  # The Hankel low-rank sweep is the focus of this benchmark. save_heatmaps: true adds
+  # a heatmap of each rendered Hankel matrix alongside its spectrum (rollout 0, at the
+  # n_figures milestone sub-trajectory lengths), so figures/ carries both the spectra
+  # and the matrix heatmaps for every analysis tick.
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 5                 # rollout r uses seed = base_seed + r
+    base_seed: 52
+    functions: [Hankel Q, Hankel V, Hankel A]   # dueling => real learned V/A streams
+    save_trajectories: true
+    save_heatmaps: true
+    sub_trajectory:
+      enabled: true
+      min_len: 20
+      stride: 10
+      n_figures: 5
+  # Q-matrix (discretised / latent-binned) analysis is intentionally dropped for the
+  # Rainbow benchmark — the study here is the Hankel low-rank structure, not the
+  # Yang et al. Q-matrix construction.
+  post_methods: []
