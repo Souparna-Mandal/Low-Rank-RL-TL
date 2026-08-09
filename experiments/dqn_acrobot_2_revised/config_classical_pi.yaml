@@ -1,0 +1,58 @@
+experiment:
+  name: acrobot_classical_pi
+  seed: 52
+  device: cuda      # analysis probe tensors; the Q table itself is numpy/CPU
+  save_artifacts: true
+
+environment:
+  # Acrobot's observation is a 6-dim cos/sin encoding of the 4-dim internal
+  # state [theta1, theta2, dtheta1, dtheta2]. Tabular PI needs to teleport and
+  # discretise in that native space, so state_observation swaps the observation
+  # for unwrapped.state over its finite bounds (angles wrapped to +-pi, velocities
+  # bounded to +-4pi / +-9pi by the dynamics). DiscreteStateWrapper then bins it.
+  name: Acrobot-v1
+  render_mode: null
+  generative: true
+  state_observation:
+    low:  [-3.141592653589793, -3.141592653589793, -12.566370614359172, -28.274333882308138]
+    high: [ 3.141592653589793,  3.141592653589793,  12.566370614359172,  28.274333882308138]
+  discrete_config:
+    state_bins: [6, 6, 10, 10]
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: false
+    state: {}    # native state is already bounded by the dynamics — no clip needed
+
+agent:
+  discount_factor: 0.99
+  horizon: 400          # full-episode rollouts; TimeLimit truncates at 500 anyway
+  n_eval_rollouts: 1    # deterministic dynamics -> one rollout per (s, a) is exact
+  record_rollouts: true # keep every MC eval rollout -> runs/<ts>/mc_rollouts/ep*.npz
+
+training:
+  # Cost per iteration ~= n_states * 3 actions * horizon env steps; a not-yet-good
+  # greedy policy runs near-full episodes (sparse -1/step), so early iterations are
+  # the slow ones (minutes each on CPU). Cap kept modest; raise it to run longer.
+  no_iterations: 30
+  eval_episodes_per_iter: 5
+  solved_reward: -100   # Acrobot-v1 is considered solved at avg return >= -100
+
+analysis:
+  # For PI runs the tick index and the rewards.csv "episode" column are the PI iteration.
+  ep_freq: 1
+  methods:
+    - name: q_matrix_tabular
+      outputs: [Q-table]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 10
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # greedy tabular policy => advantage trace is identically zero
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5

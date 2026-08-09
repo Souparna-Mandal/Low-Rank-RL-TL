@@ -12,7 +12,7 @@ import yaml
 
 from environments.base_env import make_environment
 from agents.q_agent import QAgent
-from training import dqn_training_loop
+from training import dqn_training_loop, policy_iteration_loop
 from utils.device import resolve_device
 
 
@@ -39,14 +39,18 @@ def build_env(cfg: dict, render_mode=None):
     return make_environment(env_name, **env_cfg)
 
 
-def build_agent(cfg: dict, env, q_network, nn_extra_kwargs: dict, agent_cls=QAgent):
-    """Build the agent from cfg["agent"]. Pass agent_cls=RainbowDQNAgent (from
-    agents.rainbow_agent) to build the Rainbow benchmark instead of the default
-    QAgent. The config keys under `agent` must match that class's constructor."""
+def build_agent(cfg: dict, env, q_network=None, nn_extra_kwargs: dict = None,
+                agent_cls=QAgent):
+    """Build the agent from cfg["agent"]. Pass agent_cls to select the agent
+    (RainbowDQNAgent, TabularPolicyIterationAgent, ...; default QAgent). Leave
+    q_network=None for network-less agents like tabular PI. The config keys
+    under `agent` must match that class's constructor."""
+    kwargs = dict(cfg["agent"])
+    if q_network is not None:
+        kwargs["q_network"] = q_network
+        kwargs["nn_extra_kwargs"] = nn_extra_kwargs
     return agent_cls(
-        **cfg["agent"],
-        q_network=q_network,
-        nn_extra_kwargs=nn_extra_kwargs,
+        **kwargs,
         env=env,
         device=cfg["experiment"]["_device"],
     )
@@ -60,6 +64,18 @@ def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
         np_seed=cfg["experiment"]["seed"],
         analysis_config=cfg["analysis"],
         atari=bool(cfg["environment"].get("atari")),
+        run_logger=run_logger,
+        DEBUG=DEBUG,
+    )
+
+
+def train_policy_iteration(cfg: dict, agent, env, run_logger=None, DEBUG=False):
+    """policy_iteration_loop driven by cfg["training"]."""
+    return policy_iteration_loop(
+        agent, env,
+        **cfg["training"],
+        np_seed=cfg["experiment"]["seed"],
+        analysis_config=cfg["analysis"],
         run_logger=run_logger,
         DEBUG=DEBUG,
     )

@@ -4,13 +4,14 @@ block dispatched inside the training loop. This is required so that config names
 """
 from functools import partial
 
-from analysis.low_rank.tabular_q_matrix import q_matrix_dqn, q_matrix_rollout
+from analysis.low_rank.tabular_q_matrix import q_matrix_dqn, q_matrix_rollout, q_matrix_tabular
 
 # name (as written in config.yaml) -> callable. The callable is invoked as
 # fn(agent=agent, env=env, **kwargs) and returns one or more matrices.
 ANALYSIS_METHODS = {
     "q_matrix_dqn": q_matrix_dqn,
     "q_matrix_rollout": q_matrix_rollout,
+    "q_matrix_tabular": q_matrix_tabular,
 }
 
 

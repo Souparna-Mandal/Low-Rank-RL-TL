@@ -27,9 +27,11 @@ class RunLogger:
         self.figures_dir = self.dir / "figures"
         self.checkpoints_dir = self.dir / "checkpoints"
         self.trajectories_dir = self.dir / "trajectories"
+        self.mc_rollouts_dir = self.dir / "mc_rollouts"
         self.figures_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir.mkdir(exist_ok=True)
         self.trajectories_dir.mkdir(exist_ok=True)
+        self.mc_rollouts_dir.mkdir(exist_ok=True)
         if config_path is not None:
             shutil.copy(config_path, self.dir / "config.yaml")
         self._rank_csv = self.dir / "rank_stats.csv"
@@ -87,6 +89,15 @@ class RunLogger:
         tag = "final" if episode is None else f"ep{episode:06d}"
         path = self.trajectories_dir / f"{tag}_seed{seed}.npz"
         np.savez_compressed(path, **{self._slug(name): arr for name, arr in seqs.items()})
+        return path
+
+    def save_mc_rollouts(self, episode, rollouts: dict) -> pathlib.Path:
+        """Persist one PI iteration's generative Monte-Carlo evaluation rollouts
+        (flat arrays keyed by name) as a compressed .npz, so truncated/low-rank
+        evaluation can be studied offline. One file per iteration."""
+        tag = "final" if episode is None else f"ep{episode:06d}"
+        path = self.mc_rollouts_dir / f"{tag}.npz"
+        np.savez_compressed(path, **rollouts)
         return path
 
     def log_rewards(self, rewards) -> None:

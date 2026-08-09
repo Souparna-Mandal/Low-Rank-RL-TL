@@ -1,45 +1,39 @@
 import numpy as np
-import gymnasium as gym 
-from gymnasium import ActionWrapper, ObservationWrapper, Wrapper
-from gymnasium.spaces import Dict, Box, MultiDiscrete
+import gymnasium as gym
+from gymnasium import Wrapper
+from gymnasium.spaces import Box
 
-class DiscreteActionWrapper(ActionWrapper):
-    def __init__(self, env, n_actions: list):
+
+class DiscreteStateWrapper(Wrapper):
+    """Discretisation service over a finite Box observation space.
+
+    Observations pass through unchanged (so tensor-based consumers keep
+    working); the wrapper owns the bin geometry and exposes `discretise` for
+    tabular agents. Applied last in make_environment, after clip/normalise,
+    so the bounds it bins over are the limited ones.
+    """
+
+    def __init__(self, env: gym.Env, state_bins: list):
         super().__init__(env)
+        space = env.observation_space
+        assert isinstance(space, Box), "DiscreteStateWrapper requires a Box observation space"
+        assert space.shape == (len(state_bins),), "one bin count per observation dim"
+        self.low = space.low.astype(np.float64)
+        self.high = space.high.astype(np.float64)
+        assert np.isfinite(self.low).all() and np.isfinite(self.high).all(), (
+            "observation bounds must be finite — clip/normalise the state space first")
 
+        self.state_bins = np.asarray(state_bins, dtype=np.int64)
+        self.n_states = int(np.prod(self.state_bins))
+        widths = (self.high - self.low) / self.state_bins
+        per_dim = [self.low[d] + (np.arange(b) + 0.5) * widths[d]
+                   for d, b in enumerate(self.state_bins)]
+        # C-order grid: row i of bin_centres is the state with flat index i.
+        self.bin_centres = np.stack(np.meshgrid(*per_dim, indexing="ij"),
+                                    axis=-1).reshape(self.n_states, -1)
 
-class DiscreteStateWrapper(ObservationWrapper):
-    def __init__(self, env: gym.Env, n_states: list):
-        super().__init__(env)
-        assert isinstance(env.observation_space, Box), ("DiscreteStateWrapper requires a Box observation space")  # Error check
-        self.n_states = np.array(n_states) #list of discrete values in every dimension 
-        self.update_obs_space()
-        self.new_space = self.new_space_bins # list of ndarrays
-        
-    def update_obs_space(self,):
-        self._no_dims = self.env.observation_space.shape
-        assert self._no_dims[0] == len(self.n_states), ("Discretisation config dimensions are not matching")  # Error check
-        
-        self._env_d_type = self.env.observation_space.dtype
-        self.low = self.env.observation_space.low   # np.ndarray of the Lower bounds 
-        self.high = self.env.observation_space.high # np.ndarray of the Upper bounds 
-        
-        self.observation_space = Dict({
-            "index": MultiDiscrete(self.n_states),
-            "value": Box(low=self.low, high=self.high,
-                        shape=self._no_dims, dtype=self._env_d_type)
-        })
-        
-    @property
-    def new_space_bins(self,):
-        new_space = [np.linspace(low,high,count, endpoint=False) + (high-low)/(2*count) 
-                        for low,high,count in zip(self.low, self.high, self.n_states)]
-        return new_space
-
-    def observation(self, obs):
-        new_space_idxs = ((obs -self.low) / (self.high - self.low) * self.n_states).astype(int)
-        new_space_idxs = np.clip(new_space_idxs, 0, self.n_states - 1)
-        
-        new_obs = np.array([self.new_space[d][new_space_idxs[d]] for d in range(self._no_dims[0])],
-                            dtype=self._env_d_type)
-        return {"index": new_space_idxs, "value": new_obs}
+    def discretise(self, obs) -> int:
+        """Flat bin index of an observation; out-of-bounds values clip to edge bins."""
+        ratios = (np.asarray(obs, dtype=np.float64) - self.low) / (self.high - self.low)
+        idxs = np.clip((ratios * self.state_bins).astype(np.int64), 0, self.state_bins - 1)
+        return int(np.ravel_multi_index(idxs, self.state_bins))

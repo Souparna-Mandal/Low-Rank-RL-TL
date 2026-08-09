@@ -1,0 +1,51 @@
+experiment:
+  name: cartpole_classical_pi
+  seed: 52
+  device: cuda      # analysis probe tensors; the Q table itself is numpy/CPU
+  save_artifacts: true
+
+environment:
+  # Raw CartPole + generative access: teleport() requires obs == unwrapped.state,
+  # so no normalise. clip.state supplies the finite bounds DiscreteStateWrapper
+  # bins over (termination thresholds for x/theta, heuristic velocity bounds).
+  name: CartPole-v1
+  render_mode: null
+  generative: true
+  discrete_config:
+    state_bins: [8, 8, 8, 10]
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: false
+    state:
+      min: [-2.4, -3.0, -0.2095, -3.5]
+      max: [2.4, 3.0, 0.2095, 3.5]
+
+agent:
+  discount_factor: 0.99
+  horizon: 500          # generative rollout cap; TimeLimit truncates at 500 anyway
+  n_eval_rollouts: 1    # deterministic dynamics -> one rollout per (s, a) is exact
+
+training:
+  no_iterations: 100
+  eval_episodes_per_iter: 5
+  solved_reward: 475
+
+analysis:
+  # For PI runs the tick index and the rewards.csv "episode" column are the PI iteration.
+  ep_freq: 1
+  methods:
+    - name: q_matrix_tabular
+      outputs: [Q-table]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 10
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # greedy tabular policy => advantage trace is identically zero
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5

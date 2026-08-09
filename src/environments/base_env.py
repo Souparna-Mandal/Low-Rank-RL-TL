@@ -6,20 +6,25 @@ import yaml
 import pathlib
 import numpy as np
 
-from .wrappers.discrete_wrappers import DiscreteActionWrapper, DiscreteStateWrapper
+from .wrappers.discrete_wrappers import DiscreteStateWrapper
+from .wrappers.generative_wrappers import GenerativeStateWrapper
+from .wrappers.observation_wrappers import UnderlyingStateWrapper
 from .wrappers.reward_wrappers import ScaleReward
 
 environments = {}
 
 ## Initialise the Environments ## 
 
-def make_environment(env_name: str, render_mode = None, 
-                    discrete_config: dict = {'no_action_bins': 0,
-                                            'no_state_bins': 0 },
+def make_environment(env_name: str, render_mode = None,
+                    discrete_config: dict = None,
                     **env_kwargs) -> gym.Env:
-    """Create a new environment and return the gym environment type, Pass in the config for 
-    state/action space discretisation via the argument and any extra args like normalising actions by the agents
-    or normalising state observations is done via additional keyword arguments. 
+    """Create a new environment and return the gym environment type.
+
+    discrete_config: {'state_bins': [bins per obs dim]} wraps the env in a
+    DiscreteStateWrapper (applied last, so it bins over the clipped/normalised
+    bounds). `generative: true` adds GenerativeStateWrapper (teleport() for
+    generative-model rollouts). Normalising/clipping of actions and state
+    observations is done via additional keyword arguments.
 
     Args:
         env_name (str): name of an existing gym environment like acrobot-v2
@@ -53,12 +58,18 @@ def make_environment(env_name: str, render_mode = None,
 
     env = gym.make(env_name, render_mode=render_mode)
 
-    # Discretise the State Action Space
-    if discrete_config is not None:
-        if discrete_config['no_action_bins'] > 0:
-            env = DiscreteActionWrapper(env, n_actions=discrete_config['no_action_bins'])
-        if discrete_config['no_state_bins'] > 0:
-            env = DiscreteStateWrapper(env, n_states=discrete_config['no_state_bins'])  
+    # Generative-model access (teleport to arbitrary states). Innermost so
+    # teleport's reset clears the TimeLimit/termination bookkeeping.
+    if env_kwargs.get('generative'):
+        env = GenerativeStateWrapper(env)
+
+    # Native-state observation for envs whose obs is a lossy encoding of the
+    # true state (e.g. Acrobot's cos/sin). Applied before clip/discretise so
+    # those bin the underlying state that teleport writes.
+    state_obs_cfg = env_kwargs.get('state_observation')
+    if state_obs_cfg:
+        env = UnderlyingStateWrapper(env, low=state_obs_cfg['low'],
+                                     high=state_obs_cfg['high'])
 
     # Clip Actions
     if env_kwargs['clip']['action'] : # Boolean Flag
@@ -91,4 +102,9 @@ def make_environment(env_name: str, render_mode = None,
     # Scale Rewards
     if reward_cfg.get('scale') is not None:
         env = ScaleReward(env, reward_cfg['scale'])
+
+    # State discretisation service — applied last so its bin bounds are the
+    # clipped/normalised (finite) ones. Observations pass through unchanged.
+    if discrete_config is not None and discrete_config.get('state_bins'):
+        env = DiscreteStateWrapper(env, state_bins=discrete_config['state_bins'])
     return env
