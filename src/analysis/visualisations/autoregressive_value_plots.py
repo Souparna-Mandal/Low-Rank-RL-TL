@@ -38,14 +38,12 @@ SPLIT_DESCRIPTIONS = {
         "fitted on the first half of every trajectory, scored on forecasting "
         "the second half",
 }
-REGIME_TITLES = {
-    "one_step_ahead": "one step ahead (true history at every step)",
-    "free_running": "free running (predicting from its own output)",
-}
-
-
 def load_prediction_errors(run_directory):
-    """The per-checkpoint prediction errors as a DataFrame."""
+    """The per-checkpoint one-step-ahead fit quality as a DataFrame.
+
+    Errors at longer forecast windows live in the horizon sweep -- see
+    load_horizon_errors.
+    """
     path = pathlib.Path(run_directory) / "autoregressive_value_metrics.csv"
     return pd.read_csv(path)
 
@@ -176,15 +174,20 @@ def plot_horizon_error_over_training(
 
 
 def summarise_horizon_sweep(run_directory, episode=None,
-                            split=HELD_OUT_TRAJECTORY_SPLIT, subset="test"):
-    """Held-out error at each (order, horizon) as a readable pivot table."""
+                            split=HELD_OUT_TRAJECTORY_SPLIT, subset="test",
+                            metric="one_minus_r_squared"):
+    """Error at each (order, forecast window) as a readable pivot table.
+
+    metric is "one_minus_r_squared" or "rmse"; call once with each to report
+    both.
+    """
     errors = load_horizon_errors(run_directory)
     errors = errors[(errors["split"] == split) & (errors["subset"] == subset)]
     if episode is None:
         episode = errors["episode"].max()
     at_episode = errors[errors["episode"] == episode]
     table = at_episode.pivot_table(index="order", columns="forecast_horizon",
-                                   values="one_minus_r_squared")
+                                   values=metric)
     table.columns = [f"tau={int(c)}" for c in table.columns]
     return table
 
@@ -246,13 +249,16 @@ def _order_colours(orders):
 
 def plot_prediction_error_over_training(
         run_directory, split=HELD_OUT_TRAJECTORY_SPLIT,
-        unexplained_variance=True, save_to=None, show=True, figsize=(13, 8)):
+        unexplained_variance=True, save_to=None, show=True, figsize=None):
     """How well each recurrence order predicts, checkpoint by checkpoint.
 
-    Four panels: {one step ahead, free running} x {training, test}. One line per
-    recurrence order. The free-running test panel is the one that matters --
-    it is the only panel where neither the trajectories nor the compounding of
-    the recurrence's own errors were seen during fitting.
+    One column per recurrence order, one row per subset (training, test);
+    within a panel, one line per forecast window tau. At window tau the
+    recurrence predicts tau steps from the true history, is then re-anchored
+    on the values that actually occurred, and predicts the next tau -- so
+    tau = 1 is the one-step-ahead fit and larger windows show how quickly
+    compounding errors lose the signal. The test row is the one that matters:
+    those trajectories were never seen during fitting.
 
     unexplained_variance=True plots 1 - R^2, the fraction of the signal's
     variance left unexplained: 0 is perfect, 1 is no better than predicting the
@@ -260,26 +266,44 @@ def plot_prediction_error_over_training(
     RMSE instead, which is in the value signal's own units and therefore not
     comparable between environments.
     """
-    errors = load_prediction_errors(run_directory)
-    errors = errors[errors["split"] == split]
-    if errors.empty:
+    horizon_errors = load_horizon_errors(run_directory)
+    horizon_errors = horizon_errors[horizon_errors["split"] == split]
+    if horizon_errors.empty:
         raise ValueError(f"no rows for split {split!r} in {run_directory}")
-    prefix = "one_minus_r_squared_" if unexplained_variance else "rmse_"
-    orders = sorted(errors["order"].unique())
-    colours = _order_colours(orders)
+    metric = "one_minus_r_squared" if unexplained_variance else "rmse"
+    orders = sorted(horizon_errors["order"].unique())
+    horizons = sorted(horizon_errors["forecast_horizon"].unique())
+    colour_map = plt.get_cmap("plasma")
+    if figsize is None:
+        figsize = (max(11, 3.4 * len(orders)), 7)
 
-    figure, axes = plt.subplots(2, 2, figsize=figsize, sharex=True)
-    for row, regime in enumerate(("one_step_ahead", "free_running")):
-        for column, subset in enumerate(("training", "test")):
-            axis = axes[row, column]
-            for order in orders:
-                selected = errors[(errors["order"] == order)
-                                  & (errors["subset"] == subset)]
+    figure, axes = plt.subplots(2, len(orders), figsize=figsize, sharex=True,
+                                squeeze=False)
+    for column, order in enumerate(orders):
+        for row, subset in enumerate(("training", "test")):
+            axis = axes[row][column]
+            if 1 not in horizons:
+                # The one-step-ahead fit is the tau = 1 endpoint of the sweep;
+                # draw it from the metrics file when the sweep skipped it.
+                one_step = load_prediction_errors(run_directory)
+                selected = one_step[(one_step["split"] == split)
+                                    & (one_step["order"] == order)
+                                    & (one_step["subset"] == subset)]
                 selected = selected.sort_values("episode")
-                axis.plot(selected["episode"], selected[prefix + regime],
-                          label=f"order {order}", color=colours[order],
-                          linewidth=1.8)
-            axis.set_title(f"{REGIME_TITLES[regime]} — {subset}", fontsize=10)
+                axis.plot(selected["episode"],
+                          selected[f"{metric}_one_step_ahead"],
+                          color="black", linewidth=1.6,
+                          label="one step ahead ($\\tau$ = 1)")
+            for index, horizon in enumerate(horizons):
+                selected = horizon_errors[
+                    (horizon_errors["order"] == order)
+                    & (horizon_errors["subset"] == subset)
+                    & (horizon_errors["forecast_horizon"] == horizon)]
+                selected = selected.sort_values("episode")
+                axis.plot(selected["episode"], selected[metric],
+                          color=colour_map(index / max(len(horizons) - 1, 1)),
+                          linewidth=1.5, label=f"$\\tau$ = {horizon}")
+            axis.set_title(f"order {order} — {subset}", fontsize=10)
             axis.set_yscale("log")
             axis.grid(alpha=0.3)
             if row == 1:
@@ -290,9 +314,10 @@ def plot_prediction_error_over_training(
             if column == 0:
                 axis.set_ylabel("1 - $R^2$  (variance unexplained)"
                                 if unexplained_variance else "RMSE")
-    axes[0, 0].legend(fontsize=8, ncol=2)
+    axes[0][0].legend(fontsize=8, ncol=2)
     figure.suptitle(
-        f"Value predictability over training — {SPLIT_TITLES.get(split, split)}\n"
+        f"Value predictability over training, by forecast window — "
+        f"{SPLIT_TITLES.get(split, split)}\n"
         f"{SPLIT_DESCRIPTIONS.get(split, '')}", fontsize=11)
     figure.tight_layout()
     _finish(figure, save_to, show)
@@ -368,14 +393,19 @@ def plot_example_rollouts(run_directory, episode=None, orders=None,
     """Actual vs predicted value along single trajectories.
 
     One column per recurrence order, one row per subset, so the training and
-    test rows sit directly above one another for the same order. The gap
-    between the one-step-ahead line and the free-running line is how fast the
-    recurrence loses the signal once it stops being told the truth.
+    test rows sit directly above one another for the same order. Each rolling
+    forecast line predicts tau steps from the true history before being
+    re-anchored on what actually happened, so its gap to the actual line is
+    how fast the recurrence loses the signal within a window of that size.
+
+    forecast_horizon=None overlays every window the run saved; pass a single
+    tau to show just that one alongside the one-step-ahead fit.
     """
     arrays, resolved_episode = load_example_rollouts(run_directory, episode)
     if orders is None:
         orders = sorted({int(key.split("__")[0][5:]) for key in arrays
                          if key.endswith("__actual")})
+    colour_map = plt.get_cmap("plasma")
     figure, axes = plt.subplots(len(subsets), len(orders),
                                 figsize=(figsize[0], figsize[1] * len(subsets)),
                                 squeeze=False)
@@ -388,33 +418,35 @@ def plot_example_rollouts(run_directory, episode=None, orders=None,
                 axis.set_visible(False)
                 continue
             one_step = arrays.get(f"{stem}__one_step_ahead")
+            saved_horizons = sorted(
+                int(key.rsplit("_", 1)[1]) for key in arrays
+                if key.startswith(f"{stem}__rolling_horizon_"))
             if forecast_horizon is None:
-                free_running = arrays.get(f"{stem}__free_running")
-                forecast_label = "free running (seeded once)"
+                chosen_horizons = saved_horizons
+            elif forecast_horizon in saved_horizons:
+                chosen_horizons = [forecast_horizon]
             else:
-                free_running = arrays.get(
-                    f"{stem}__rolling_horizon_{forecast_horizon}")
-                forecast_label = f"rolling forecast, $\\tau$ = {forecast_horizon}"
-                if free_running is None:
-                    raise ValueError(
-                        f"this run saved no rolling-horizon arrays for "
-                        f"tau={forecast_horizon}; available: "
-                        f"{sorted(int(k.rsplit('_', 1)[1]) for k in arrays if '__rolling_horizon_' in k) or 'none'}")
+                raise ValueError(
+                    f"this run saved no rolling-horizon arrays for "
+                    f"tau={forecast_horizon}; available: "
+                    f"{saved_horizons or 'none'}")
             axis.plot(np.arange(len(actual)), actual, color="black",
                       linewidth=2.0, label="actual")
             if one_step is not None:
                 axis.plot(np.arange(order, order + len(one_step)), one_step,
                           color="tab:blue", linewidth=1.3, alpha=0.9,
                           label="one step ahead")
-            if free_running is not None:
-                # Rolling-horizon arrays align with actual[order:] like the
-                # one-step ones; the seeded-once free run is aligned to the end.
-                offset = (order if forecast_horizon is not None
-                          else max(0, len(actual) - len(free_running)))
-                axis.plot(np.arange(offset, offset + len(free_running)),
-                          free_running, color="tab:red", linewidth=1.3,
-                          linestyle="--", label=forecast_label)
-                # Free running can diverge; keep the true signal readable.
+            for index, horizon in enumerate(chosen_horizons):
+                forecast = arrays[f"{stem}__rolling_horizon_{horizon}"]
+                # Rolling-horizon arrays align with actual[order:], like the
+                # one-step-ahead ones.
+                axis.plot(np.arange(order, order + len(forecast)), forecast,
+                          color=colour_map(
+                              index / max(len(chosen_horizons) - 1, 1)),
+                          linewidth=1.2, linestyle="--", alpha=0.9,
+                          label=f"$\\tau$ = {horizon}")
+            if chosen_horizons:
+                # A long window can diverge; keep the true signal readable.
                 span = float(np.max(actual) - np.min(actual)) or 1.0
                 axis.set_ylim(float(np.min(actual)) - span,
                               float(np.max(actual)) + span)
@@ -424,7 +456,7 @@ def plot_example_rollouts(run_directory, episode=None, orders=None,
                 axis.set_xlabel("t (steps)")
             if column == 0:
                 axis.set_ylabel("value")
-    axes[0][0].legend(fontsize=8)
+    axes[0][0].legend(fontsize=7, ncol=2)
     figure.suptitle(
         f"Example value rollouts at episode {resolved_episode} — "
         f"{SPLIT_TITLES.get(split, split)}", fontsize=11)
@@ -461,25 +493,25 @@ def plot_reward_with_checkpoints(run_directory, save_to=None, show=True,
 
 
 def summarise_final_checkpoint(run_directory,
-                               split=HELD_OUT_TRAJECTORY_SPLIT):
-    """Held-out errors at the last checkpoint, as a small readable table."""
+                               split=HELD_OUT_TRAJECTORY_SPLIT,
+                               metric="one_minus_r_squared"):
+    """Held-out test error at the last checkpoint, one row per recurrence
+    order and one column per forecast window.
+
+    Each "tau=k" column re-anchors on the true values after every k predicted
+    steps, so tau=1 is the one-step-ahead fit; a separate "one step" column is
+    added only when the sweep skipped window 1. metric is "one_minus_r_squared"
+    or "rmse"; call once with each to report both.
+    """
     errors = load_prediction_errors(run_directory)
-    errors = errors[errors["split"] == split]
+    errors = errors[(errors["split"] == split) & (errors["subset"] == "test")]
     last_episode = errors["episode"].max()
-    final = errors[(errors["episode"] == last_episode)
-                   & (errors["subset"] == "test")]
-    columns = ["order", "rmse_one_step_ahead",
-               "one_minus_r_squared_one_step_ahead", "rmse_free_running",
-               "one_minus_r_squared_free_running", "free_running_diverged",
-               "mean_trajectory_length"]
-    return (final[columns].sort_values("order").reset_index(drop=True)
-            .rename(columns={
-                "rmse_one_step_ahead": "one step RMSE",
-                "one_minus_r_squared_one_step_ahead": "one step 1-R^2",
-                "rmse_free_running": "free run RMSE",
-                "one_minus_r_squared_free_running": "free run 1-R^2",
-                "free_running_diverged": "diverged",
-                "mean_trajectory_length": "mean trajectory length"}))
+    table = summarise_horizon_sweep(run_directory, episode=last_episode,
+                                    split=split, subset="test", metric=metric)
+    if "tau=1" not in table.columns:
+        final = errors[errors["episode"] == last_episode].set_index("order")
+        table.insert(0, "one step", final[f"{metric}_one_step_ahead"])
+    return table
 
 
 def _finish(figure, save_to, show):

@@ -40,19 +40,24 @@ def test_recovers_known_order_two_structure_on_held_out_trajectories():
     held_out = results[2][HELD_OUT_TRAJECTORY_SPLIT]
     # fit_intercept defaults True, so the lag weights are all but the last entry
     assert np.allclose(held_out["coefficients"][:2], true_coefficients, atol=1e-4)
-    # An exact recurrence must predict held-out trajectories essentially perfectly,
-    # including under free running where errors would otherwise compound.
+    # An exact recurrence must predict held-out trajectories essentially
+    # perfectly at EVERY forecast window, including the longest one, where
+    # errors would otherwise compound for 64 steps between re-anchorings.
     assert held_out["test"]["one_minus_r_squared_one_step_ahead"] < 1e-6
-    assert held_out["test"]["one_minus_r_squared_free_running"] < 1e-4
-    assert not held_out["test"]["free_running_diverged"]
+    longest_window = max(held_out["test_horizons"])
+    assert held_out["test_horizons"][longest_window]["one_minus_r_squared"] < 1e-4
+    assert not held_out["test_horizons"][longest_window]["diverged"]
 
 
 def test_prefix_suffix_split_forecasts_the_unseen_half():
     sequences, _ = _order_two_sequences()
     results = evaluate_autoregressive_orders(sequences, orders=(2,))
     prefix_suffix = results[2][PREFIX_SUFFIX_SPLIT]
-    # Fitted only on first halves, forecasting the second halves it never saw.
-    assert prefix_suffix["test"]["one_minus_r_squared_free_running"] < 1e-4
+    # Fitted only on first halves, forecasting the second halves it never saw
+    # -- essentially perfectly at every window, since the recurrence is exact.
+    longest_window = max(prefix_suffix["test_horizons"])
+    assert (prefix_suffix["test_horizons"][longest_window]["one_minus_r_squared"]
+            < 1e-4)
     assert len(prefix_suffix["training_sequences"][0]) == 40
     assert len(prefix_suffix["test_sequences"][0]) == 40
 
@@ -69,9 +74,9 @@ def test_unpredictable_noise_is_not_reported_as_predictable():
             "white noise should be near-unpredictable one step ahead"
 
 
-def test_free_running_divergence_is_recorded_not_hidden():
-    """An explosive recurrence must be flagged rather than reported as a
-    plausible finite error."""
+def test_divergence_at_long_windows_is_recorded_not_hidden():
+    """An unstable fitted recurrence must be flagged per forecast window rather
+    than reported as a plausible finite error."""
     explosive = []
     for start in range(1, 6):
         sequence = np.zeros(60)
@@ -80,9 +85,10 @@ def test_free_running_divergence_is_recorded_not_hidden():
             sequence[t] = 1.9 * sequence[t - 1] - 0.9 * sequence[t - 2]
         explosive.append(sequence)
     results = evaluate_autoregressive_orders(explosive, orders=(2,))
-    metrics = results[2][HELD_OUT_TRAJECTORY_SPLIT]["test"]
-    assert np.isfinite(metrics["one_minus_r_squared_one_step_ahead"])
-    assert "free_running_diverged" in metrics
+    split = results[2][HELD_OUT_TRAJECTORY_SPLIT]
+    assert np.isfinite(split["test"]["one_minus_r_squared_one_step_ahead"])
+    for metrics in split["test_horizons"].values():
+        assert isinstance(metrics["diverged"], bool)
 
 
 def test_constant_value_sequences_do_not_raise():
@@ -99,20 +105,21 @@ def test_constant_value_sequences_do_not_raise():
     assert evaluate_autoregressive_orders(nearly_constant, orders=(4,))
 
 
-def test_rolling_horizon_sweep_endpoints_match_the_other_regimes():
-    """The sweep must contain the other two regimes as its endpoints: horizon 1
-    is one-step-ahead, and a horizon past the trajectory length is free
-    running. If that stops holding, the three numbers are not comparable."""
+def test_rolling_horizon_sweep_endpoints_behave_as_documented():
+    """Window 1 must equal the one-step-ahead fit exactly, and any window past
+    the trajectory length must give the same single seeded-once forecast, so
+    the sweep genuinely spans from one-step-ahead to fully free running."""
     generator = np.random.default_rng(11)
     sequences = [np.cumsum(generator.normal(size=70)) + 20.0 for _ in range(8)]
     results = evaluate_autoregressive_orders(
-        sequences, orders=(2,), forecast_horizons=(1, 8, 1000))
+        sequences, orders=(2,), forecast_horizons=(1, 8, 1000, 2000))
     split = results[2][HELD_OUT_TRAJECTORY_SPLIT]
     horizons = split["test_horizons"]
     assert abs(horizons[1]["one_minus_r_squared"]
                - split["test"]["one_minus_r_squared_one_step_ahead"]) < 1e-9
     assert abs(horizons[1000]["one_minus_r_squared"]
-               - split["test"]["one_minus_r_squared_free_running"]) < 1e-9
+               - horizons[2000]["one_minus_r_squared"]) < 1e-12, \
+        "windows past the trajectory length must all be the same free run"
 
 
 def test_error_grows_with_forecast_horizon_then_saturates():
@@ -164,6 +171,13 @@ def test_row_flattening_shapes_match_the_csv_columns():
     assert {r["split"] for r in rows} == {HELD_OUT_TRAJECTORY_SPLIT,
                                           PREFIX_SUFFIX_SPLIT}
     assert all(r["episode"] == 100 for r in rows)
+    # This file holds ONLY the one-step-ahead fit; every longer forecast window
+    # is a row in horizon_metric_rows instead.
+    assert set(rows[0]) == {
+        "episode", "order", "split", "subset",
+        "rmse_one_step_ahead", "one_minus_r_squared_one_step_ahead",
+        "n_sequences_scored", "n_trajectories_collected",
+        "mean_trajectory_length"}
 
     coefficients = coefficient_rows(episode=100, results=results)
     # order 2 -> lags 1,2 + intercept; order 4 -> lags 1..4 + intercept
@@ -177,8 +191,8 @@ def test_row_flattening_shapes_match_the_csv_columns():
 
 
 def test_example_rollouts_carry_the_configured_forecast_windows():
-    """The rollout panel must be able to draw the rolling-horizon forecast, not
-    just the seeded-once free run -- that is the whole point of the tau sweep."""
+    """The rollout panel must be able to draw the rolling-horizon forecast at
+    every configured window -- that is the whole point of the tau sweep."""
     sequences, _ = _order_two_sequences()
     results = evaluate_autoregressive_orders(
         sequences, orders=(2,), forecast_horizons=(1, 8, 32))
@@ -205,9 +219,14 @@ def test_example_rollout_arrays_are_plottable():
         stem = key[: -len("__actual")]
         actual = arrays[key]
         one_step = arrays[f"{stem}__one_step_ahead"]
-        free_running = arrays[f"{stem}__free_running"]
         assert len(one_step) == len(actual) - 2, "one-step drops `order` points"
-        assert len(free_running) > 0 and np.isfinite(free_running).all()
+        rolling_keys = [k for k in arrays
+                        if k.startswith(f"{stem}__rolling_horizon_")]
+        assert rolling_keys, "every example must carry the forecast windows"
+        for rolling_key in rolling_keys:
+            forecast = arrays[rolling_key]
+            assert len(forecast) == len(actual) - 2
+            assert np.isfinite(forecast).all()
 
 
 class _ConstantValueNetwork:

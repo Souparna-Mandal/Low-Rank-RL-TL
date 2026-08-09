@@ -28,28 +28,33 @@ one_step_ahead
     Each prediction is made from the TRUE previous values, so errors never
     accumulate. Measures raw fit quality, and is the optimistic number.
 
-free_running
-    Seeded with `order` true values, then the recurrence runs on its own
-    output. Errors compound, so this is the honest test of the low-rank claim:
-    a recurrence can look excellent one step ahead and still diverge here.
-    Divergence is recorded rather than hidden -- see `free_running_diverged`.
+rolling horizon (one row per forecast window in `forecast_horizons`)
+    At window size tau the recurrence forecasts tau steps from the true
+    history, is then re-anchored on the values that actually occurred, and
+    forecasts the next tau -- the way such a model would really be used.
+    Errors compound within a window, so the sweep over tau shows exactly how
+    far ahead the recurrence stays useful. tau = 1 reproduces one_step_ahead,
+    and a tau past the trajectory length is a fully free-running forecast, so
+    both extremes live inside this single sweep. Divergence within a window is
+    recorded rather than hidden -- see the per-horizon `diverged` flag.
 
 Every number the probe reports is available both as a plain RMSE (in the value
-signal's own units) and as a normalised RMSE (divided by the signal's
-root-mean-square), the latter being what makes Acrobot and CartPole comparable.
+signal's own units) and as 1 - R^2, the fraction of the signal's variance the
+prediction leaves unexplained, which is what makes Acrobot and CartPole
+comparable.
 """
 import numpy as np
 import torch
 
 from analysis.low_rank.recurrence import (fit_autoregressive_coefficients,
-                                          forecast_free_running,
                                           forecast_rolling_horizon,
                                           one_minus_r_squared,
                                           predict_one_step_ahead,
                                           root_mean_squared_error)
 
 # Orders probed by default. 2 is the order the low-rank work has focused on; 8
-# is included so over-parameterisation shows up as free-running divergence.
+# is included so over-parameterisation shows up as divergence at the longer
+# forecast windows.
 DEFAULT_ORDERS = (2, 3, 4, 8)
 
 # Forecast window sizes for the rolling-horizon regime: predict this many steps
@@ -63,7 +68,7 @@ DEFAULT_FORECAST_HORIZONS = (1, 2, 4, 8, 16, 32, 64)
 HELD_OUT_TRAJECTORY_SPLIT = "held_out_trajectory_split"
 PREFIX_SUFFIX_SPLIT = "prefix_suffix_split"
 
-# A free-running forecast on an unstable recurrence overflows fast. Anything
+# A long forecast window on an unstable recurrence overflows fast. Anything
 # beyond this multiple of the true signal's scale is called divergence rather
 # than being reported as a meaningless finite error.
 DIVERGENCE_SCALE_MULTIPLE = 1e6
@@ -117,28 +122,19 @@ def collect_greedy_value_sequences(agent, env, seeds, max_steps=10_000):
     return value_sequences
 
 
-def _prediction_metrics(coefficients, value_sequences, order, fit_intercept,
-                        free_running_seeds=None):
-    """One-step-ahead and free-running errors for a set of sequences.
+def _one_step_ahead_metrics(coefficients, value_sequences, order,
+                            fit_intercept):
+    """One-step-ahead errors for a set of sequences.
 
-    Args:
-        coefficients: the fitted recurrence.
-        value_sequences: sequences to score.
-        order: recurrence order (how many values seed the free run).
-        free_running_seeds: optional list, one per sequence, of the history the
-            free run should start from. Used by the prefix/suffix split, where
-            the forecast must start at the end of the prefix rather than at the
-            start of the sequence. When None each sequence seeds from its own
-            first `order` values and the whole remainder is forecast.
+    Every prediction is made from the TRUE previous values, so this is the raw
+    fit quality; how errors compound when the recurrence forecasts further
+    ahead is `_rolling_horizon_metrics`' job.
 
     Returns:
-        Dict of metrics, with NaN where a split had nothing long enough to
-        score and a boolean recording whether the free run diverged.
+        Dict of metrics, with NaN where nothing was long enough to score.
     """
     one_step_predictions, one_step_actuals = [], []
-    free_running_predictions, free_running_actuals = [], []
-
-    for index, value_sequence in enumerate(value_sequences):
+    for value_sequence in value_sequences:
         if len(value_sequence) <= order:
             continue
         one_step_predictions.append(
@@ -146,43 +142,20 @@ def _prediction_metrics(coefficients, value_sequences, order, fit_intercept,
                                    fit_intercept=fit_intercept))
         one_step_actuals.append(value_sequence[order:])
 
-        if free_running_seeds is None:
-            seed_values, actual_future = (value_sequence[:order],
-                                          value_sequence[order:])
-        else:
-            seed_values, actual_future = free_running_seeds[index], value_sequence
-        if len(seed_values) < order or len(actual_future) == 0:
-            continue
-        free_running_predictions.append(
-            forecast_free_running(coefficients, seed_values,
-                                  horizon=len(actual_future),
-                                  fit_intercept=fit_intercept))
-        free_running_actuals.append(actual_future)
-
-    def _score(predictions, actuals, label):
-        if not predictions:
-            return {f"rmse_{label}": float("nan"),
-                    f"one_minus_r_squared_{label}": float("nan")}
-        predicted = np.concatenate(predictions)
-        actual = np.concatenate(actuals)
-        if not np.isfinite(predicted).all():
-            return {f"rmse_{label}": float("inf"),
-                    f"one_minus_r_squared_{label}": float("inf")}
-        return {f"rmse_{label}": root_mean_squared_error(predicted, actual),
-                f"one_minus_r_squared_{label}":
-                    one_minus_r_squared(predicted, actual)}
-
-    metrics = {}
-    metrics.update(_score(one_step_predictions, one_step_actuals,
-                          "one_step_ahead"))
-    metrics.update(_score(free_running_predictions, free_running_actuals,
-                          "free_running"))
-    normalised_free_running = metrics["one_minus_r_squared_free_running"]
-    metrics["free_running_diverged"] = bool(
-        not np.isfinite(normalised_free_running)
-        or normalised_free_running > DIVERGENCE_SCALE_MULTIPLE)
-    metrics["n_sequences_scored"] = len(one_step_predictions)
-    return metrics
+    if not one_step_predictions:
+        return {"rmse_one_step_ahead": float("nan"),
+                "one_minus_r_squared_one_step_ahead": float("nan"),
+                "n_sequences_scored": 0}
+    predicted = np.concatenate(one_step_predictions)
+    actual = np.concatenate(one_step_actuals)
+    if not np.isfinite(predicted).all():
+        return {"rmse_one_step_ahead": float("inf"),
+                "one_minus_r_squared_one_step_ahead": float("inf"),
+                "n_sequences_scored": len(one_step_predictions)}
+    return {"rmse_one_step_ahead": root_mean_squared_error(predicted, actual),
+            "one_minus_r_squared_one_step_ahead":
+                one_minus_r_squared(predicted, actual),
+            "n_sequences_scored": len(one_step_predictions)}
 
 
 def _rolling_horizon_metrics(coefficients, value_sequences, order,
@@ -239,10 +212,10 @@ def _evaluate_held_out_trajectory_split(value_sequences, order,
         fit_intercept=fit_intercept)
     return {
         "coefficients": coefficients,
-        "training": _prediction_metrics(coefficients, training_sequences, order,
+        "training": _one_step_ahead_metrics(coefficients, training_sequences,
+                                            order, fit_intercept),
+        "test": _one_step_ahead_metrics(coefficients, test_sequences, order,
                                         fit_intercept),
-        "test": _prediction_metrics(coefficients, test_sequences, order,
-                                    fit_intercept),
         "training_horizons": _rolling_horizon_metrics(
             coefficients, training_sequences, order, fit_intercept, horizons),
         "test_horizons": _rolling_horizon_metrics(
@@ -255,16 +228,13 @@ def _evaluate_held_out_trajectory_split(value_sequences, order,
 def _evaluate_prefix_suffix_split(value_sequences, order, ridge_penalty,
                                   fit_intercept, horizons):
     """Fit on the first half of each trajectory, forecast the second half."""
-    prefixes, suffixes, suffix_seed_histories = [], [], []
+    prefixes, suffixes = [], []
     for value_sequence in value_sequences:
         midpoint = len(value_sequence) // 2
         if midpoint <= order or len(value_sequence) - midpoint == 0:
             continue
         prefixes.append(value_sequence[:midpoint])
         suffixes.append(value_sequence[midpoint:])
-        # The forecast must start from the real values immediately before the
-        # suffix, not from the start of the trajectory.
-        suffix_seed_histories.append(value_sequence[midpoint - order:midpoint])
     if not prefixes:
         return None
     coefficients = fit_autoregressive_coefficients(
@@ -272,18 +242,16 @@ def _evaluate_prefix_suffix_split(value_sequences, order, ridge_penalty,
         fit_intercept=fit_intercept)
     return {
         "coefficients": coefficients,
-        "training": _prediction_metrics(coefficients, prefixes, order,
+        "training": _one_step_ahead_metrics(coefficients, prefixes, order,
+                                            fit_intercept),
+        "test": _one_step_ahead_metrics(coefficients, suffixes, order,
                                         fit_intercept),
-        "test": _prediction_metrics(coefficients, suffixes, order,
-                                    fit_intercept,
-                                    free_running_seeds=suffix_seed_histories),
         "training_horizons": _rolling_horizon_metrics(
             coefficients, prefixes, order, fit_intercept, horizons),
         "test_horizons": _rolling_horizon_metrics(
             coefficients, suffixes, order, fit_intercept, horizons),
         "training_sequences": prefixes,
         "test_sequences": suffixes,
-        "suffix_seed_histories": suffix_seed_histories,
     }
 
 
@@ -323,7 +291,12 @@ def evaluate_autoregressive_orders(value_sequences, orders=DEFAULT_ORDERS,
 
 
 def metric_rows(episode, results, value_sequences):
-    """Flatten `results` into one row per (order, split, subset) for the CSV."""
+    """Flatten the one-step-ahead fit quality into one row per
+    (order, split, subset) for the CSV.
+
+    Everything beyond one step ahead lives in `horizon_metric_rows`, which has
+    one row per forecast window.
+    """
     mean_length = (float(np.mean([len(s) for s in value_sequences]))
                    if value_sequences else float("nan"))
     rows = []
@@ -339,11 +312,6 @@ def metric_rows(episode, results, value_sequences):
                     "rmse_one_step_ahead": metrics["rmse_one_step_ahead"],
                     "one_minus_r_squared_one_step_ahead":
                         metrics["one_minus_r_squared_one_step_ahead"],
-                    "rmse_free_running": metrics["rmse_free_running"],
-                    "one_minus_r_squared_free_running":
-                        metrics["one_minus_r_squared_free_running"],
-                    "free_running_diverged":
-                        int(metrics["free_running_diverged"]),
                     "n_sequences_scored": metrics["n_sequences_scored"],
                     "n_trajectories_collected": len(value_sequences),
                     "mean_trajectory_length": mean_length,
@@ -404,13 +372,14 @@ def example_rollout_arrays(results, n_examples=2, fit_intercept=True,
     """Actual vs predicted sequences for a few trajectories, for plotting.
 
     Picks the first `n_examples` trajectories of each subset of each split, and
-    for each stores the true values alongside both the one-step-ahead and the
-    free-running prediction. Keys are flat strings so the whole thing saves as
+    for each stores the true values alongside the one-step-ahead prediction and
+    the rolling-horizon forecast at every configured window, all aligned with
+    value_sequence[order:]. Keys are flat strings so the whole thing saves as
     one .npz that the notebook and the viewer can both read:
 
         order2__held_out_trajectory_split__test__0__actual
         order2__held_out_trajectory_split__test__0__one_step_ahead
-        order2__held_out_trajectory_split__test__0__free_running
+        order2__held_out_trajectory_split__test__0__rolling_horizon_8
     """
     arrays = {}
     for order, per_split in sorted(results.items()):
@@ -426,20 +395,9 @@ def example_rollout_arrays(results, n_examples=2, fit_intercept=True,
                     arrays[f"{prefix}__one_step_ahead"] = predict_one_step_ahead(
                         coefficients, value_sequence,
                         fit_intercept=fit_intercept)
-                    seeds = split.get("suffix_seed_histories")
-                    seed_values = (seeds[index]
-                                   if seeds is not None and subset == "test"
-                                   else value_sequence[:order])
-                    horizon = (len(value_sequence)
-                               if seeds is not None and subset == "test"
-                               else len(value_sequence) - order)
-                    arrays[f"{prefix}__free_running"] = forecast_free_running(
-                        coefficients, seed_values, horizon=horizon,
-                        fit_intercept=fit_intercept)
-                    # The rolling-horizon forecast at each configured window, so
-                    # the plots can show the re-anchoring sawtooth rather than
-                    # only the seeded-once extreme. Aligned with
-                    # value_sequence[order:], like one_step_ahead.
+                    # The rolling-horizon forecast at each configured window,
+                    # so the plots can show the re-anchoring sawtooth at every
+                    # window size the run swept.
                     for forecast_horizon in forecast_horizons:
                         arrays[f"{prefix}__rolling_horizon_{forecast_horizon}"] = \
                             forecast_rolling_horizon(

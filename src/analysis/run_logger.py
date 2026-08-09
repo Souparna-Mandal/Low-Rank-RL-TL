@@ -118,18 +118,19 @@ class RunLogger:
     AUTOREGRESSIVE_METRIC_COLUMNS = [
         "episode", "order", "split", "subset",
         "rmse_one_step_ahead", "one_minus_r_squared_one_step_ahead",
-        "rmse_free_running", "one_minus_r_squared_free_running",
-        "free_running_diverged", "n_sequences_scored",
+        "n_sequences_scored",
         "n_trajectories_collected", "mean_trajectory_length",
     ]
     AUTOREGRESSIVE_COEFFICIENT_COLUMNS = ["episode", "order", "split", "lag",
                                           "coefficient"]
 
     def log_autoregressive_metrics(self, rows) -> None:
-        """Append prediction-error rows to autoregressive_value_metrics.csv.
+        """Append one-step-ahead fit rows to autoregressive_value_metrics.csv.
 
         One row per (episode, recurrence order, split, training/test subset),
         as produced by analysis.low_rank.autoregressive_value_probe.metric_rows.
+        Errors at longer forecast windows go through
+        log_autoregressive_horizon_metrics instead, one row per window.
         """
         self._append_rows(self.dir / "autoregressive_value_metrics.csv",
                           self.AUTOREGRESSIVE_METRIC_COLUMNS, rows)

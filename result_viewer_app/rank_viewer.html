@@ -998,7 +998,7 @@ function autoregressivePredictionErrorCard(){
   const t=arTable("autoregressive_metrics"); if(!t)return null;
   const card=el("div",{class:"card"});
   card.append(el("h2",{text:"Value predictability over training"}),
-    el("p",{class:"desc",text:"How well one global linear recurrence, fitted per checkpoint, reproduces the value signal of the frozen greedy policy. Lower is more predictable; the error is normalised by the signal's own root-mean-square, so it is comparable across environments. One line per recurrence order."}));
+    el("p",{class:"desc",text:"How well one global linear recurrence, fitted per checkpoint, predicts the value signal of the frozen greedy policy one step ahead. The error is 1 − R², the fraction of the signal's variance the prediction leaves unexplained: 0 is perfect, 1 is no better than predicting the signal's own mean. One line per recurrence order. Errors at longer forecast windows are in the card below, one curve point per window."}));
   const colour=arOrderColour();
   const orders=arOrders();
   const legend=el("div",{class:"legend"});
@@ -1019,9 +1019,7 @@ function autoregressivePredictionErrorCard(){
     for(const subset of ["training","test"]){
       for(const [column,label,hint] of [
         ["one_minus_r_squared_one_step_ahead","One step ahead — "+subset,
-         "each prediction made from the true previous values, so errors never accumulate"],
-        ["one_minus_r_squared_free_running","Free running — "+subset,
-         "seeded once then predicting from its own output, so errors compound"]]){
+         "each prediction made from the true previous values, so errors never accumulate"]]){
         const series=orders.map(o=>({
           name:"order "+o, color:colour[o],
           pts:t.rows.filter(r=>+r[t.index.order]===o
@@ -1195,7 +1193,7 @@ function autoregressiveRolloutCard(){
   const head=el("div",{class:"headrow"});
   head.append(el("div",{},
     el("h2",{text:"Example value rollouts: actual vs predicted"}),
-    el("p",{class:"desc",text:"The true value sequence of one trajectory against what the fitted recurrence predicts for it, one panel per order. One-step-ahead sees the real history at every step; free-running is seeded once and then runs on its own output, so the gap between the two lines is exactly how fast the recurrence loses the signal."})),
+    el("p",{class:"desc",text:"The true value sequence of one trajectory against what the fitted recurrence predicts for it, one panel per order. One-step-ahead sees the real history at every step; the rolling forecast predicts τ steps and is then re-anchored on the values that actually occurred, so its gap to the actual line is how fast the recurrence loses the signal within a window of that size."})),
     el("div",{class:"pill-row"},el("label",{text:"Checkpoint"}),epSelect));
   card.append(head);
 
@@ -1206,11 +1204,10 @@ function autoregressiveRolloutCard(){
   splitSelect.value=STATE.arRolloutSplit||"held_out_trajectory_split";
   subsetSelect.value=STATE.arRolloutSubset||"test";
   STATE.arRolloutSplit=splitSelect.value; STATE.arRolloutSubset=subsetSelect.value;
-  // Forecast window. "seeded once" is the pure free run (never re-anchored);
-  // any numeric τ re-anchors on the true values every τ steps, which is what
-  // forecast_horizons in the config configures.
+  // Forecast window: the recurrence re-anchors on the true values every τ
+  // steps, which is what forecast_horizons in the config configures. Options
+  // are filled in from whatever windows the checkpoint actually saved.
   const horizonSelect=el("select");
-  horizonSelect.append(el("option",{value:"free",text:"seeded once (never re-anchored)"}));
   controls.append(el("label",{text:"Split"}),splitSelect,
                   el("label",{text:"Subset"}),subsetSelect,
                   el("label",{text:"Forecast window τ"}),horizonSelect);
@@ -1239,15 +1236,20 @@ function autoregressiveRolloutCard(){
       .map(k=>k.slice(0,-"__actual".length)))].sort();
     if(!stems.length){host.append(el("p",{class:"muted-note",text:"No example rollouts for this split and subset."}));return;}
     // Populate the τ selector from whatever rolling-horizon arrays this
-    // checkpoint actually saved (older runs have none, and fall back to the
-    // seeded-once free run).
+    // checkpoint actually saved.
     const availableHorizons=[...new Set(Object.keys(data)
       .map(k=>(k.match(/__rolling_horizon_(\d+)$/)||[])[1])
       .filter(Boolean).map(Number))].sort((a,b)=>a-b);
-    if(horizonSelect.options.length===1&&availableHorizons.length){
+    if(!availableHorizons.length){
+      host.append(el("p",{class:"muted-note",text:"This run saved no rolling-horizon arrays; re-run the experiment to plot forecasts."}));
+      return;
+    }
+    if(!horizonSelect.options.length){
       for(const h of availableHorizons)
         horizonSelect.append(el("option",{value:String(h),text:"τ = "+h}));
-      if(STATE.arRolloutHorizon!=null) horizonSelect.value=String(STATE.arRolloutHorizon);
+      horizonSelect.value=String(
+        STATE.arRolloutHorizon!=null&&availableHorizons.includes(STATE.arRolloutHorizon)
+          ? STATE.arRolloutHorizon : availableHorizons[availableHorizons.length-1]);
     }
     const chosenHorizon=horizonSelect.value;
 
@@ -1256,28 +1258,20 @@ function autoregressiveRolloutCard(){
       const actual=data[stem+"__actual"]||[];
       const oneStep=data[stem+"__one_step_ahead"]||[];
       const order=+(stem.match(/^order(\d+)/)||[0,0])[1];
-      const rolling=chosenHorizon==="free"
-        ? null : data[`${stem}__rolling_horizon_${chosenHorizon}`];
-      const freeRunning=chosenHorizon==="free"
-        ? (data[stem+"__free_running"]||[]) : [];
-      // one-step predictions start `order` steps in; free-running is aligned to
-      // the end of the sequence so it lines up with what it is forecasting.
-      const freeOffset=Math.max(0,actual.length-freeRunning.length);
+      const rolling=data[`${stem}__rolling_horizon_${chosenHorizon}`]||[];
+      // one-step and rolling predictions both align with actual[order:].
       const series=[
         {name:"actual",color:"--s1",pts:actual.map((v,i)=>[i,v]),endLabel:false},
         {name:"one step",color:"--s3",pts:oneStep.map((v,i)=>[i+order,v]),endLabel:false},
-        rolling
-          ? {name:`τ = ${chosenHorizon}`,color:"--s5",
-             pts:Array.from(rolling,(v,i)=>[i+order,v]),endLabel:false}
-          : {name:"free running",color:"--s5",
-             pts:freeRunning.map((v,i)=>[i+freeOffset,v]),endLabel:false},
+        {name:`τ = ${chosenHorizon}`,color:"--s5",
+         pts:Array.from(rolling,(v,i)=>[i+order,v]),endLabel:false},
       ].filter(s=>s.pts.length);
       const index=(stem.match(/__(\d+)$/)||[0,"?"])[1];
       grid.append(lineChart({title:`Order ${order} · example ${index}`,
         hint:"value along the trajectory",series,xLabel:"t (steps)",xPrefix:"t = "}));
     }
     const legend=el("div",{class:"legend"});
-    for(const [nm,cv] of [["actual","--s1"],["one step ahead","--s3"],["free running","--s5"]]){
+    for(const [nm,cv] of [["actual","--s1"],["one step ahead","--s3"],["rolling forecast, re-anchored every τ steps","--s5"]]){
       const item=el("span",{class:"item fixed"});
       item.style.color=cssv(cv);
       item.append(el("span",{class:"key"}),el("span",{class:"nm",text:nm}));
@@ -1290,7 +1284,7 @@ function autoregressiveRolloutCard(){
   splitSelect.onchange=()=>{STATE.arRolloutSplit=splitSelect.value;paint();};
   subsetSelect.onchange=()=>{STATE.arRolloutSubset=subsetSelect.value;paint();};
   horizonSelect.onchange=()=>{
-    STATE.arRolloutHorizon=horizonSelect.value==="free"?null:+horizonSelect.value;
+    STATE.arRolloutHorizon=+horizonSelect.value;
     paint();};
   paint();
   return card;

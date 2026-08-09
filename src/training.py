@@ -69,10 +69,13 @@ def _print_autoregressive_summary(summary):
         if held_out is None:
             continue
         test = held_out["test"]
-        diverged = " (free-running diverged)" if test["free_running_diverged"] else ""
+        per_window = "  ".join(
+            f"tau={horizon} {metrics['one_minus_r_squared']:.4f}"
+            + ("!" if metrics["diverged"] else "")
+            for horizon, metrics in sorted(held_out["test_horizons"].items()))
         print(f"  order {order}: held-out test 1 - R^2  "
-              f"one-step {test['one_minus_r_squared_one_step_ahead']:.4f}, "
-              f"free-running {test['one_minus_r_squared_free_running']:.4f}{diverged}")
+              f"one-step {test['one_minus_r_squared_one_step_ahead']:.4f} | "
+              f"by forecast window: {per_window}")
 
 
 def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
