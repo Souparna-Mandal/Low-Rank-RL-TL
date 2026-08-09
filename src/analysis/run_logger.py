@@ -21,8 +21,11 @@ class RunLogger:
     Optional convenience for notebook cells (figure_path, checkpoint).
     """
 
-    def __init__(self, exp_dir, config_path=None, run_id: str | None = None):
+    def __init__(self, exp_dir, config_path=None, run_id: str | None = None,
+                 name: str | None = None):
         run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
+        if name:  # experiment.name from the config -> runs/<name>_<timestamp>/
+            run_id = f"{name}_{run_id}"
         self.dir = pathlib.Path(exp_dir) / "runs" / run_id
         self.figures_dir = self.dir / "figures"
         self.checkpoints_dir = self.dir / "checkpoints"
