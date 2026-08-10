@@ -41,7 +41,13 @@ agent:
   window_len: 16            # sub-trajectory window T; Hankel is 9x8
   n_windows: 8              # penalty windows per gradient step
   gate_threshold: 1      # skip windows with relative tail energy above this
-  hankel_log: true         # true -> penalty on sign(Q)*log1p(|Q|) of the window values, not raw Q
+  hankel_log_sigma: true   # penalty tail = sum_i log1p(sigma_hat_i / hankel_eps_log) over the
+                           # normalised singular values AFTER the SVD (gating and the rel_tail
+                           # diagnostic stay on the raw ratio). Replaces the removed hankel_log
+                           # value-lift — results recorded under the old sign(Q)*log1p(|Q|)
+                           # semantics are not comparable to runs of this config.
+  hankel_eps_log: 1.0e-6   # eps inside the log1p (keeps the penalty bounded with finite
+                           # gradients; sigma = 0 occurs on rank-deficient windows)
   warmup_grad_steps: 500   # lambda = 0 for the first grad steps ...
   ramp_grad_steps: 1     # ... then ramps linearly to hankel_weight
   window_half_life: null    # episodes; set (e.g. 20) to recency-bias penalty windows
