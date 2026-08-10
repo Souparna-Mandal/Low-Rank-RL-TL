@@ -5,6 +5,7 @@ notebook still supplies are objects like the Q-network class and its
 derived nn_extra_kwargs.
 """
 import pathlib
+import random
 
 import numpy as np
 import torch
@@ -17,14 +18,18 @@ from utils.device import resolve_device
 
 
 def load_config(path="config.yaml") -> dict:
-    """Load config.yaml, resolve the device, and seed torch/numpy. The resolved
-    device is stashed at cfg["experiment"]["_device"] for the builders to read."""
+    """Load config.yaml, resolve the device, and seed torch/numpy/random. The
+    resolved device is stashed at cfg["experiment"]["_device"] for the builders
+    to read. Python's `random` is seeded too because the replay buffers sample
+    through it — without this, matched-seed variant comparisons are unmatched
+    at the replay-sampling level."""
     with open(path) as f:
         cfg = yaml.safe_load(f)
     cfg["experiment"]["_device"] = resolve_device(cfg["experiment"]["device"])
     seed = cfg["experiment"]["seed"]
     torch.manual_seed(seed)
     np.random.seed(seed)
+    random.seed(seed)
     return cfg
 
 

@@ -543,7 +543,8 @@ function render(){
   // try/catch: render() has already cleared #app, so an exception escaping here
   // would leave the whole viewer blank with no clue why. A broken panel should
   // cost you that panel, not the page.
-  for(const build of [autoregressivePredictionErrorCard,
+  for(const build of [trainDiagnosticsCard,
+                      autoregressivePredictionErrorCard,
                       autoregressiveHorizonCard,
                       autoregressiveCoefficientCard,
                       autoregressiveRolloutCard]){
@@ -565,7 +566,8 @@ function render(){
     det.append(el("pre",{text:d.config}));
     app.append(el("div",{class:"card"},det));
   }
-  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config)
+  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config
+     &&!(d.train_diagnostics&&d.train_diagnostics.rows.length))
     app.append(el("div",{class:"empty"},"This run has no artifacts yet."));
 }
 
@@ -965,6 +967,67 @@ function rewardCard(){
   const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
   card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
     episodeAxis:true,xLabel:"episode"}));
+  return card;
+}
+
+// ================= TRAINING DIAGNOSTICS (train_diagnostics.csv) =================
+// One small-multiple chart per numeric diagnostic column agent.train() returns:
+// loss terms, the penalty schedule, and — for recurrence-regularised agents —
+// the learned AR coefficients. Column set is whatever the agent logs, so the
+// card adapts to any agent's diagnostics dict.
+const DIAG_HINTS={
+  td_loss:"Huber TD loss, averaged over the train() call's gradient steps",
+  penalty_raw:"unweighted regulariser value (Hankel tail / recurrence residual)",
+  penalty_weighted:"lambda_eff × penalty_raw — the term actually added to the loss",
+  lambda_eff:"effective penalty weight after warm-up gating",
+  residual_rms:"RMS of the recurrence residual over retained samples",
+  b_h:"samples in the batch with enough same-episode predecessors",
+  unique_eps:"distinct episodes contributing penalty samples per batch",
+  sum_c:"sum of the AR coefficients — 1 at the constant-reward Bellman recurrence",
+  companion_radius:"spectral radius of the AR companion matrix — ~1/gamma is the healthy reference",
+  gate_frac:"fraction of penalty windows dropped as off-manifold",
+  converged_frac:"fraction of penalty windows already below the convergence tail",
+  ext_gate_frac:"fraction of windows dropped by the external keep-mask",
+  batch_eff_rank:"mean effective rank of the penalty windows' Hankel batch",
+  rel_tail:"mean relative singular-value tail energy of the penalty windows",
+  nan_skips:"cumulative optimiser steps skipped on non-finite loss/grad",
+};
+const DIAG_ORDER=["td_loss","penalty_raw","penalty_weighted","lambda_eff",
+  "residual_rms","b_h","unique_eps","sum_c","companion_radius"];
+function trainDiagnosticsCard(){
+  const t=STATE.data&&STATE.data.train_diagnostics;
+  if(!t||!t.rows||!t.rows.length)return null;
+  const ei=t.columns.indexOf("episode"); if(ei<0)return null;
+  const cols=t.columns.filter(c=>c!=="episode").sort((a,b)=>{
+    const ia=DIAG_ORDER.indexOf(a),ib=DIAG_ORDER.indexOf(b);
+    return (ia<0?DIAG_ORDER.length:ia)-(ib<0?DIAG_ORDER.length:ib)||a.localeCompare(b);
+  });
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Training diagnostics"}),
+    el("p",{class:"desc",text:"Per-train() diagnostics returned by the agent "
+      +"(train_diagnostics.csv): loss terms, the penalty schedule and, for "
+      +"recurrence-regularised agents, the learned AR coefficients. Values are "
+      +"averaged per episode when an episode logs several train() calls."}));
+  const grid=el("div",{class:"grid-charts"});
+  for(const col of cols){
+    const ci=t.columns.indexOf(col);
+    const acc={};
+    for(const row of t.rows){
+      const x=+row[ei],y=parseFloat(row[ci]);
+      if(!isFinite(x)||!isFinite(y))continue;
+      (acc[x]=acc[x]||[]).push(y);
+    }
+    const pts=Object.keys(acc).map(Number).sort((a,b)=>a-b).map(e=>[e,mean(acc[e])]);
+    if(!pts.length)continue;
+    grid.append(lineChart({title:col,hint:DIAG_HINTS[col]||"",
+      series:[{name:col,color:"--accent",pts}],noEndLabel:true,
+      episodeAxis:true,xLabel:"episode"}));
+  }
+  card.append(grid);
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/train_diagnostics.csv`,
+      download:"train_diagnostics.csv",text:"train_diagnostics.csv"})));
   return card;
 }
 

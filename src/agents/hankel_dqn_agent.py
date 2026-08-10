@@ -66,19 +66,48 @@ class EpisodicReplayBuffer:
         nxt = ep["states"][t + 1:t + 2] if t < last else ep["final_next_state"]
         return ep["states"][t:t + 1], ep["actions"][t:t + 1], ep["rewards"][t:t + 1], nxt
 
-    def sample_transitions(self, batch_size: int):
+    def sample_transitions(self, batch_size: int, with_handles: bool = False):
         """Uniform without replacement over all stored transitions — same
         distribution as ReplayBuffer.sample. Returns (states, actions, rewards,
-        next_states) with next_states a list of (1, obs) tensors or None."""
+        next_states) with next_states a list of (1, obs) tensors or None.
+        with_handles appends the list of (ep_idx, t) positions of the sampled
+        transitions (the indices this method already resolves internally), so
+        callers can retrieve each sample's same-episode neighbours; the RNG
+        stream is identical either way."""
         lengths = [len(ep["states"]) for ep in self._episodes] + [len(self._open_states)]
         cum = np.cumsum([0] + lengths)
         flat = random.sample(range(cum[-1]), batch_size)
-        states, actions, rewards, nexts = [], [], [], []
+        states, actions, rewards, nexts, handles = [], [], [], [], []
         for f in flat:
             ep_idx = int(np.searchsorted(cum, f, side="right")) - 1
-            s, a, r, nxt = self._transition(ep_idx, f - cum[ep_idx])
+            t = f - cum[ep_idx]
+            s, a, r, nxt = self._transition(ep_idx, t)
             states.append(s); actions.append(a); rewards.append(r); nexts.append(nxt)
-        return torch.cat(states), torch.cat(actions), torch.cat(rewards), nexts
+            handles.append((ep_idx, t))
+        out = (torch.cat(states), torch.cat(actions), torch.cat(rewards), nexts)
+        return out + (handles,) if with_handles else out
+
+    def gather_predecessors(self, handles, r: int):
+        """The r temporally preceding same-episode transitions of each
+        (ep_idx, t) handle, most recent lag first: output[:, j] holds the
+        transition at t-(j+1), matching the c_1..c_r lag convention. Never
+        crosses an episode boundary by construction; raises on any handle with
+        t < r (callers filter first). Returns (states (n, r, obs),
+        actions (n, r), rewards (n, r))."""
+        states, actions, rewards = [], [], []
+        for ep_idx, t in handles:
+            if t < r:
+                raise ValueError(f"handle (ep={ep_idx}, t={t}) lacks {r} predecessors")
+            if ep_idx == len(self._episodes):  # open episode
+                s = torch.cat(self._open_states[t - r:t])
+                a = torch.cat(self._open_actions[t - r:t])
+                w = torch.cat(self._open_rewards[t - r:t])
+            else:
+                ep = self._episodes[ep_idx]
+                s, a, w = (ep["states"][t - r:t], ep["actions"][t - r:t],
+                           ep["rewards"][t - r:t])
+            states.append(s.flip(0)); actions.append(a.flip(0)); rewards.append(w.flip(0))
+        return torch.stack(states), torch.stack(actions), torch.stack(rewards)
 
     def sample_windows(self, n_windows: int, window_len: int, exclude_terminal: bool = True,
                        with_next: bool = False, half_life: float | None = None):

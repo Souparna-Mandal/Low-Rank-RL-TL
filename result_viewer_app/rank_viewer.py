@@ -49,7 +49,8 @@ def scan_runs(root: pathlib.Path) -> list[dict]:
     out = []
     for stats in sorted(root.glob("*/runs/*/")):
         artifacts = [p for p in (stats / "rank_stats.csv", stats / "rewards.csv",
-                                 stats / "hankel_sweep.csv")
+                                 stats / "hankel_sweep.csv",
+                                 stats / "train_diagnostics.csv")
                      if p.exists()]
         has_figs = (stats / "figures").is_dir() and any((stats / "figures").glob("*.png"))
         if not artifacts and not has_figs:
@@ -84,6 +85,7 @@ def run_sig(run_dir: pathlib.Path) -> str:
     frontend polls this instead of re-downloading the multi-MB payload."""
     parts = []
     for name in ("rank_stats.csv", "hankel_sweep.csv", "rewards.csv",
+                 "train_diagnostics.csv",
                  "autoregressive_value_metrics.csv",
                  "autoregressive_value_coefficients.csv",
                  "autoregressive_value_horizon_metrics.csv"):
@@ -113,6 +115,10 @@ def load_run(run_dir: pathlib.Path) -> dict:
         payload["config"] = cfg.read_text(errors="replace")
 
     payload["stats"] = _csv_table(run_dir / "rank_stats.csv")
+
+    # Per-train() diagnostics (td_loss, penalty terms, learned recurrence
+    # coefficients, ...) — written by agents whose train() returns a dict.
+    payload["train_diagnostics"] = _csv_table(run_dir / "train_diagnostics.csv")
 
     # Autoregressive value-recurrence probe. Both tables are small (a handful
     # of rows per checkpoint) so they ship whole rather than being projected
