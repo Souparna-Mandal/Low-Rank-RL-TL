@@ -134,9 +134,10 @@ class HankelDQNAgent(QAgent):
         decays linearly to 0 over decay steps.
         hankel_signal: "q" penalises Q(s_t,a_t) along the window, "v" penalises
         max_a Q(s_t,·) — the sequence that drives the greedy policy.
-        hankel_log: compute the penalty on the signed log sign(v)*log1p(|v|)
-        of the window values instead of the raw values (values can be
-        negative/zero, so a plain log is undefined; see HankelRankPenalty).
+        hankel_log_sigma: penalise sum_i log1p(sigma_hat_i / hankel_eps_log)
+        over the normalised tail singular values instead of their linear sum
+        (gating and rel_tail stay on the raw ratio; see HankelRankPenalty).
+        hankel_eps_log: eps_log of the log1p form above.
         engage_reward_threshold/engage_reward_window: latch the penalty on only
         once the rolling mean episode return crosses the threshold (per-seed
         timing; replaces the grad-step warm-up; ramp runs from engagement).
@@ -153,7 +154,7 @@ class HankelDQNAgent(QAgent):
                  ramp_grad_steps: int = 0, decay_grad_steps: int = 0,
                  penalize_terminal_windows: bool = False,
                  td_source: str = "iid", hankel_signal: str = "q",
-                 hankel_log: bool = False,
+                 hankel_log_sigma: bool = False, hankel_eps_log: float = 1e-6,
                  hankel_jitter: float = 0.0, td_gate_scale: float | None = None,
                  engage_reward_threshold: float | None = None,
                  engage_reward_window: int = 10,
@@ -179,7 +180,8 @@ class HankelDQNAgent(QAgent):
         self._engaged_at: int | None = None
         self.hankel_penalty = HankelRankPenalty(hankel_order, gate_threshold,
                                                 jitter=hankel_jitter,
-                                                log_transform=hankel_log)
+                                                log_sigma=hankel_log_sigma,
+                                                eps_log=hankel_eps_log)
         self._grad_steps = 0
         self.nan_skips = 0
 

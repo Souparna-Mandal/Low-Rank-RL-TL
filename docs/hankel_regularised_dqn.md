@@ -164,9 +164,18 @@ unoccupied.
 - `HankelDQNAgent(QAgent)` config keys (under `agent:` — the constructor-kwarg
   convention): `hankel_weight, hankel_order, window_len, n_windows, gate_threshold,
   warmup_grad_steps, ramp_grad_steps, penalize_terminal_windows, td_source,
-  hankel_log`. `hankel_log: true` computes the penalty on the signed log
-  sign(v)·log1p(|v|) of each window's value sequence (values can be negative/zero,
-  so a plain log is undefined) instead of the raw values.
+  hankel_log_sigma, hankel_eps_log`. The former `hankel_log` value-sequence
+  signed-log lift (sign(v)·log1p(|v|) applied to the window *before* the Hankel
+  construction) has been removed — it was never the intended semantics.
+  `hankel_log_sigma: true` (`log_sigma` on `HankelRankPenalty`) instead applies the
+  log *after* the SVD: the per-window penalty tail becomes
+  Σ_{i≥order} log1p(σ̂_i / eps_log) over the normalised singular values
+  σ̂_i = σ_i / sg(Σσ), with `hankel_eps_log` mapping to `eps_log`. All gating and
+  the `rel_tail` diagnostic still use the raw relative-tail ratio. Any historical
+  results run with `hankel_log: true` (e.g.
+  `experiments/dqn_acrobot_2_revised/config_hankel.yaml`) used the removed
+  value-lift semantics and are not comparable to `hankel_log_sigma` runs; such
+  configs now fail loudly with a TypeError.
   `td_source: windows` is the ablation where TD pairs come from inside the penalty
   windows (correlated batches; terminal anchors preserved via each window's
   post-window state).
