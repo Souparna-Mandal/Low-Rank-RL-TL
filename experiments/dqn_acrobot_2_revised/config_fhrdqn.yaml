@@ -14,7 +14,10 @@
 
 experiment:
   name: dqn_acrobot_2_fhrdqn
-  seed: 52
+  seed: 52               # fallback when `seeds` is absent or empty
+  # The comparison notebook trains both arms once per seed and reports
+  # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
+  seeds: [52, 53, 54]
   device: auto
   # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under
   # runs/<timestamp>/ instead of rendering analysis figures inline.
@@ -81,21 +84,21 @@ training:
   no_eps_to_avg: 10
 
 analysis:
-  # Hankel-rank diagnostics are present but OFF by default so comparison runs
-  # stay fast — flip the toggles for the mechanism plots (spectra figures show
+  # Low-rank Hankel + Q-function diagnostics — ON by default so every
+  # comparison run records the mechanism plots (spectra figures show
   # log10(sigma + machine-eps) of the raw value-sequence Hankel; see
-  # plot_matrix_spectra in src/analysis/low_rank/rank.py).
+  # plot_matrix_spectra in src/analysis/low_rank/rank.py). Set methods: []
+  # and hankel_sweep.enabled: false for a faster reward-only run.
   ep_freq: 50
-  methods: []
-  # methods:                       # <- swap in for Q-matrix rank tracking
-  #   - name: q_matrix_dqn
-  #     kwargs:
-  #       state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
-  #       batch_size: 64
-  #     outputs: [Q-function]
+  methods:                         # Q-matrix rank tracking over a state grid
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        batch_size: 64
+      outputs: [Q-function]
   hankel_sweep:
-    enabled: false                 # <- true for greedy-rollout Hankel spectra +
-                                   #    effective-rank evolution in the viewer
+    enabled: true                  # greedy-rollout Hankel spectra +
+                                   # effective-rank evolution in the viewer
     n_rollouts: 5
     base_seed: 52
     functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial

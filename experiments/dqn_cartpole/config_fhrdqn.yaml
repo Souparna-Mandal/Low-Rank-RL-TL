@@ -13,7 +13,10 @@
 
 experiment:
   name: dqn_cartpole_fhrdqn
-  seed: 0
+  seed: 0                # fallback when `seeds` is absent or empty
+  # The comparison notebook trains both arms once per seed and reports
+  # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
+  seeds: [0, 1, 2]
   # CPU: the Q-net is a 2x128 MLP and the penalty is one batched forward plus a
   # length-r matvec — no SVDs, so cuda also works, but CartPole at this size is
   # fastest on CPU.
@@ -86,21 +89,21 @@ training:
   no_eps_to_avg: 10
 
 analysis:
-  # Hankel-rank diagnostics are present but OFF by default so comparison runs
-  # stay fast — flip the toggles below when you want the mechanism plots
-  # (spectra figures show log10(sigma + machine-eps) of the raw value-sequence
-  # Hankel; see plot_matrix_spectra in src/analysis/low_rank/rank.py).
+  # Low-rank Hankel + Q-function diagnostics — ON by default so every
+  # comparison run records the mechanism plots (spectra figures show
+  # log10(sigma + machine-eps) of the raw value-sequence Hankel; see
+  # plot_matrix_spectra in src/analysis/low_rank/rank.py). Set methods: []
+  # and hankel_sweep.enabled: false for a faster reward-only run.
   ep_freq: 50
-  methods: []
-  # methods:                       # <- swap in for Q-matrix rank tracking
-  #   - name: q_matrix_dqn
-  #     kwargs:
-  #       state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
-  #       batch_size: 64
-  #     outputs: [Q-function]
+  methods:                         # Q-matrix rank tracking over a state grid
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
   hankel_sweep:
-    enabled: false                 # <- true for greedy-rollout Hankel spectra +
-                                   #    effective-rank evolution in the viewer
+    enabled: true                  # greedy-rollout Hankel spectra +
+                                   # effective-rank evolution in the viewer
     n_rollouts: 3
     base_seed: 52
     functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial

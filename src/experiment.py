@@ -17,15 +17,19 @@ from training import dqn_training_loop, policy_iteration_loop
 from utils.device import resolve_device
 
 
-def load_config(path="config.yaml") -> dict:
+def load_config(path="config.yaml", seed=None) -> dict:
     """Load config.yaml, resolve the device, and seed torch/numpy/random. The
     resolved device is stashed at cfg["experiment"]["_device"] for the builders
     to read. Python's `random` is seeded too because the replay buffers sample
     through it — without this, matched-seed variant comparisons are unmatched
-    at the replay-sampling level."""
+    at the replay-sampling level. Pass seed to override
+    cfg["experiment"]["seed"] — multi-seed comparison notebooks call this once
+    per entry of cfg["experiment"]["seeds"]."""
     with open(path) as f:
         cfg = yaml.safe_load(f)
     cfg["experiment"]["_device"] = resolve_device(cfg["experiment"]["device"])
+    if seed is not None:
+        cfg["experiment"]["seed"] = seed
     seed = cfg["experiment"]["seed"]
     torch.manual_seed(seed)
     np.random.seed(seed)
