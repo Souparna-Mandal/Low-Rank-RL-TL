@@ -35,7 +35,7 @@ environment:
 
 network:
   # MLP Q-network is defined inside exp1_fhrdqn_compare.ipynb
-  hidden_sizes: [8,]
+  hidden_sizes: [16,]
 
 agent:
   replay_buffer_capacity: 10000
@@ -48,10 +48,10 @@ agent:
   TD_LR: 0.005           # soft target-network updates
   buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
   gd_steps_ceil: 1       # hard cap on gradient steps per training call
-  grad_clip_norm: 10.0   # max global L2 norm for gradient clipping per step
+  grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
                          # (network only — the recurrence coefficients are exempt)
   # --- FHR learned-recurrence penalty (fhr_weight 0 => exact QAgent) ---
-  fhr_weight: 0.01        # lambda on the recurrence residual. NOT transferable
+  fhr_weight: 0.5        # lambda on the recurrence residual. NOT transferable
                           # from the HRDQN Acrobot config (lambda 1 there was on
                           # a dimensionless normalised tail; this residual
                           # carries Q units, |Q| up to ~100 on Acrobot) — sweep.
@@ -65,7 +65,7 @@ agent:
                           # 500 mirrors the sibling config_hankel.yaml warm-up;
                           # note the cadence here is 1 grad step per train()
                           # call every 2 env steps, unlike CartPole's 40/call.
-  c_learning_rate: 0.005  # lr of the c/d param group: weight_decay 0, excluded
+  c_learning_rate: 0.05  # lr of the c/d param group: weight_decay 0, excluded
                           # from grad clipping and the target network.
 
 training:

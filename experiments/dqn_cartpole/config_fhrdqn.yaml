@@ -17,7 +17,7 @@ experiment:
   # CPU: the Q-net is a 2x128 MLP and the penalty is one batched forward plus a
   # length-r matvec — no SVDs, so cuda also works, but CartPole at this size is
   # fastest on CPU.
-  device: cpu
+  device: auto
   save_artifacts: true
 
 environment:
@@ -37,7 +37,7 @@ environment:
 
 network:
   # MLP Q-network is defined by the comparison notebook.
-  hidden_sizes: [128, 128]
+  hidden_sizes: [64,64]
 
 agent:
   replay_buffer_capacity: 100000
@@ -54,7 +54,7 @@ agent:
                         # (network only — the recurrence coefficients are exempt)
   double: True
   # --- FHR learned-recurrence penalty (fhr_weight 0 => exact QAgent) ---
-  fhr_weight: 0.01        # lambda on the recurrence residual. NOT transferable
+  fhr_weight: 0.5        # lambda on the recurrence residual. NOT transferable
                           # from HRDQN configs: that penalty was a dimensionless
                           # normalised tail, this one carries Q units — re-sweep.
   fhr_order: 2            # r: number of Q-value lags = target Hankel rank.
@@ -66,12 +66,12 @@ agent:
                           # rewards, making the exact Bellman recurrence
                           # representable already at order 1 (c_1 = 1/gamma,
                           # d_1 = -1/gamma is then the init).
-  warmup_grad_steps: 2000 # hard warm-up K0: lambda = 0 for this many gradient
+  warmup_grad_steps: 500 # hard warm-up K0: lambda = 0 for this many gradient
                           # steps, then full fhr_weight in one step (no ramp) —
                           # early Q is low-rank-but-wrong, so regularising it
                           # from step 0 consolidates bad structure (campaign-
                           # falsified; the warm-up is load-bearing).
-  c_learning_rate: 0.005  # lr of the c/d param group: weight_decay 0 (AdamW's
+  c_learning_rate: 0.05  # lr of the c/d param group: weight_decay 0 (AdamW's
                           # default decay would drag the coefficients toward 0),
                           # excluded from grad clipping and the target network.
 
