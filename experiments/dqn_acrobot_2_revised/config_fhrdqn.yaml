@@ -38,7 +38,7 @@ environment:
 
 network:
   # MLP Q-network is defined inside exp1_fhrdqn_compare.ipynb
-  hidden_sizes: [16,]
+  hidden_sizes: [8,]
 
 agent:
   replay_buffer_capacity: 10000
