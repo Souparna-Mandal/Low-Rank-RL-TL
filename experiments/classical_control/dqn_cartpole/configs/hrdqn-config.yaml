@@ -1,0 +1,103 @@
+# HR-DQN on CartPole-v1 — the `gated_order1` recipe.
+#
+# Recreates the speed-campaign round-2 winner (docs/hankel_speedup_campaign.md):
+#   target Hankel rank r = 1, lambda = 1e-2, warm-up 2000 grad steps + linear
+#   ramp 2000, safety gate rho = 0.25 (skip windows whose relative tail energy
+#   is above rho), Q-signal, i.i.d. TD batches, no decay, no progress latch.
+# Everything outside the `agent:` Hankel block is the same proven schedule the
+# campaign's baseline used, so `hankel_weight: 0.0` turns this file into
+# classical Double-DQN — that is exactly what run_hrdqn_quick.py's `baseline`
+# variant overrides (one config, one code path, one difference).
+
+experiment:
+  name: dqn_cartpole_hrdqn_gated_order1
+  seed: 0
+  # CPU: the Q-net is a 2x128 MLP and the penalty SVDs are 9x8 blocks, where
+  # LAPACK beats a GPU launch. Set to auto/cuda if you want the device sweep.
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state:
+      min: [-4.8, -10, -0.41887903, -10,]
+      max: [4.8, 10, 0.41887903, 10]
+  clip:
+    action: False
+    state :
+      min: [ null, -100, null, -100]
+      max: [ null, 100, null, 100]
+
+network:
+  # MLP Q-network is defined by the runner (run_hrdqn_quick.py) / notebook.
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 100000
+  batch_size: 128
+  nn_learning_rate: 0.0005
+  eps_start: 1.0
+  eps_min: 0.01
+  decay_rate: 0.99992
+  discount_factor: 0.99
+  TD_LR: 0.3            # soft target-network updates
+  buffer_util: 1        # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  gd_steps_ceil: 40     # hard cap on gradient steps per training call
+  grad_clip_norm: 10.0  # max global L2 norm for gradient clipping per step
+  double: True
+  # --- Hankel low-rank regulariser: gated_order1 (hankel_weight 0 => exact QAgent) ---
+  hankel_weight: 0.01       # lambda on the truncated singular-value tail
+  hankel_order: 1           # target Hankel rank r=1: the converged on-policy
+                            # value sequence saturates at energy-rank 1, so r=1
+                            # aims at the solution manifold, not the r=2 shell
+  window_len: 16            # sub-trajectory window T; Hankel is 9x8
+  n_windows: 8              # penalty windows per gradient step
+  gate_threshold: 0.25      # rho: skip windows with relative tail energy above this
+  warmup_grad_steps: 2000   # lambda = 0 for the first grad steps ...
+  ramp_grad_steps: 2000     # ... then ramps linearly to hankel_weight
+  # Pinned at their neutral values so the recipe survives any default change.
+  decay_grad_steps: 0            # no late release of the penalty
+  window_half_life: null         # uniform penalty windows over the buffer
+  hankel_signal: q               # penalise Q(s_t,a_t) along the window (not max_a Q)
+  td_source: iid                 # TD pairs from the i.i.d. sampler, not the windows
+  hankel_jitter: 0.0
+  penalize_terminal_windows: False
+  td_gate_scale: null            # round-2 TD-consistency gate off
+  engage_reward_threshold: null  # clock warm-up, not the round-4 progress latch
+  engage_reward_window: 10
+
+training:
+  no_episodes: 1500
+  target_network_update_steps: 100
+  train_frequency_steps: 50
+  use_episode_training: True   # one train() call per episode -> one diagnostics row per episode
+  solved_reward: 475           # CartPole-v1 solved at >= 475 avg reward
+  warmup_steps: 1500
+  early_stopping_patience_eps: 50   # solve-ep = first episode whose rolling-50 mean crosses 475
+  no_eps_to_avg: 10
+
+analysis:
+  # Kept light so the run stays quick, but on — this is what fills the viewer's
+  # rank-metric charts and spectra scrubber alongside the loss diagnostics.
+  ep_freq: 50
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim (CartPole obs_dim = 4)
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5

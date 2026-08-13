@@ -21,13 +21,17 @@ class RunLogger:
     Optional convenience for notebook cells (figure_path, checkpoint).
     """
 
-    def __init__(self, exp_dir, config_path=None, run_id: str | None = None):
+    def __init__(self, exp_dir, config_path=None, run_id: str | None = None,
+                 name: str | None = None):
         run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
+        if name:  # experiment.name from the config -> runs/<name>_<timestamp>/
+            run_id = f"{name}_{run_id}"
         self.dir = pathlib.Path(exp_dir) / "runs" / run_id
         self.figures_dir = self.dir / "figures"
         self.checkpoints_dir = self.dir / "checkpoints"
         self.trajectories_dir = self.dir / "trajectories"
         self.mc_rollouts_dir = self.dir / "mc_rollouts"
+        self.autoregressive_rollouts_dir = self.dir / "autoregressive_rollouts"
         self.figures_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir.mkdir(exist_ok=True)
         self.trajectories_dir.mkdir(exist_ok=True)
@@ -99,6 +103,90 @@ class RunLogger:
         path = self.mc_rollouts_dir / f"{tag}.npz"
         np.savez_compressed(path, **rollouts)
         return path
+
+    def log_train_diagnostics(self, episode, **metrics) -> None:
+        """Append one row of agent.train() diagnostics (td_loss, penalty terms,
+        rank/gate stats, ...) to train_diagnostics.csv. Columns come from the
+        metric keys on first write, so any agent's diagnostics dict fits."""
+        path = self.dir / "train_diagnostics.csv"
+        header_needed = not path.exists()
+        keys = sorted(metrics)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if header_needed:
+                writer.writerow(["episode"] + keys)
+            writer.writerow([episode] + [f"{metrics[k]:.6g}" for k in keys])
+
+    # -- autoregressive value-recurrence probe ------------------------------
+    AUTOREGRESSIVE_METRIC_COLUMNS = [
+        "episode", "order", "split", "subset",
+        "rmse_one_step_ahead", "one_minus_r_squared_one_step_ahead",
+        "n_sequences_scored",
+        "n_trajectories_collected", "mean_trajectory_length",
+    ]
+    AUTOREGRESSIVE_COEFFICIENT_COLUMNS = ["episode", "order", "split", "lag",
+                                          "coefficient"]
+
+    def log_autoregressive_metrics(self, rows) -> None:
+        """Append one-step-ahead fit rows to autoregressive_value_metrics.csv.
+
+        One row per (episode, recurrence order, split, training/test subset),
+        as produced by analysis.low_rank.autoregressive_value_probe.metric_rows.
+        Errors at longer forecast windows go through
+        log_autoregressive_horizon_metrics instead, one row per window.
+        """
+        self._append_rows(self.dir / "autoregressive_value_metrics.csv",
+                          self.AUTOREGRESSIVE_METRIC_COLUMNS, rows)
+
+    AUTOREGRESSIVE_HORIZON_COLUMNS = [
+        "episode", "order", "split", "subset", "forecast_horizon",
+        "rmse", "one_minus_r_squared", "diverged", "mean_trajectory_length",
+    ]
+
+    def log_autoregressive_horizon_metrics(self, rows) -> None:
+        """Append the rolling-horizon sweep to
+        autoregressive_value_horizon_metrics.csv.
+
+        One row per (episode, order, split, subset, forecast horizon), where the
+        horizon is how many steps are forecast before the recurrence is
+        re-anchored on the values that actually occurred.
+        """
+        self._append_rows(
+            self.dir / "autoregressive_value_horizon_metrics.csv",
+            self.AUTOREGRESSIVE_HORIZON_COLUMNS, rows)
+
+    def log_autoregressive_coefficients(self, rows) -> None:
+        """Append fitted coefficients to autoregressive_value_coefficients.csv.
+
+        One row per (episode, order, split, lag), so each order's coefficient
+        trajectory over training plots directly. lag 0 is the intercept.
+        """
+        self._append_rows(self.dir / "autoregressive_value_coefficients.csv",
+                          self.AUTOREGRESSIVE_COEFFICIENT_COLUMNS, rows)
+
+    def save_autoregressive_example_rollouts(self, episode, arrays) -> pathlib.Path:
+        """Persist actual-vs-predicted example sequences for one checkpoint.
+
+        Saved under autoregressive_rollouts/epNNNNNN.npz so the notebook and the
+        result viewer can plot the same arrays without recomputing them.
+        """
+        self.autoregressive_rollouts_dir.mkdir(exist_ok=True)
+        tag = "final" if episode is None else f"ep{episode:06d}"
+        path = self.autoregressive_rollouts_dir / f"{tag}.npz"
+        np.savez_compressed(path, **arrays)
+        return path
+
+    @staticmethod
+    def _append_rows(path, columns, rows) -> None:
+        """Append dict rows to a CSV, writing the header on first use."""
+        if not rows:
+            return
+        header_needed = not path.exists()
+        with open(path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+            if header_needed:
+                writer.writeheader()
+            writer.writerows(rows)
 
     def log_rewards(self, rewards) -> None:
         with open(self.dir / "rewards.csv", "w", newline="") as f:

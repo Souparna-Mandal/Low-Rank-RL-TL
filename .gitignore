@@ -51,3 +51,6 @@ Thumbs.db
 claude
 
 results_viewer_app/
+# HR-DQN benchmark caches (reproducible via exp1_hankel.ipynb)
+results_hankel/
+results_recurrence/
