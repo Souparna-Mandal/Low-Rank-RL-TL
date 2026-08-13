@@ -1,0 +1,29 @@
+# FHR Optuna study settings for CartPole-v1, consumed by ../../src/run_fhrdqn_optuna.py
+# (run from the experiment directory). Search stage fixes the Q-net at [128, 128] and
+# tunes the five FHR params. Note the training cadence here is 40 gradient
+# steps per train() call (one call per episode), so warmup_grad_steps 0-5000
+# spans roughly the first 0-125 episodes.
+
+study:
+  name: cartpole_fhr_128x128
+  hidden_sizes: [128, 128]      # fixed for the search stage
+  seeds: [0, 1]                 # common random numbers across trials
+  n_trials: 36
+  n_jobs: 3                     # parallel trials x len(seeds) = 6 trainings
+  n_startup_trials: 10
+  episodes: null                # null = training.no_episodes (1500)
+  enqueue:
+    - {fhr_weight: 0.5, fhr_order: 2, reward_lags: false,
+       warmup_grad_steps: 500, c_learning_rate: 0.05}
+
+search_space:                   # list = categorical; {low, high, [step], [log]}
+  fhr_weight: {low: 0.01, high: 2.0, log: true}
+  fhr_order: {low: 1, high: 4}
+  reward_lags: [false, true]
+  warmup_grad_steps: {low: 0, high: 5000, step: 250}
+  c_learning_rate: {low: 0.001, high: 0.2, log: true}
+
+transfer:
+  sizes: [[16], [32, 32], [64, 64], [128, 128]]
+  seeds: [0, 1, 2]              # 2 held out from the search
+  max_workers: 6

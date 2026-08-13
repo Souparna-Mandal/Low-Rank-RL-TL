@@ -52,5 +52,5 @@ claude
 
 results_viewer_app/
 # HR-DQN benchmark caches (reproducible via exp1_hankel.ipynb)
-experiments/*/results_hankel/
-experiments/*/results_recurrence/
+results_hankel/
+results_recurrence/

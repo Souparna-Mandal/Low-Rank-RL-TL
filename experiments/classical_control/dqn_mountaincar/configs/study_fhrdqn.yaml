@@ -1,0 +1,31 @@
+# FHR Optuna study settings for MountainCar-v0, consumed by
+# ../../src/run_fhrdqn_optuna.py (run from the experiment directory). MountainCar runs are the
+# most expensive (mid-episode training, ~200k gradient steps over 2000
+# episodes), so the search caps episodes at 1500 — this morning's FHR arm
+# solved by ~1050-1350, so the cap still separates good configs — and spends a
+# smaller trial budget with an earlier TPE start. The transfer stage uses the
+# config's full 2000 episodes.
+
+study:
+  name: mountaincar_fhr_64x64
+  hidden_sizes: [64, 64]        # fixed for the search stage
+  seeds: [21, 56]               # common random numbers across trials
+  n_trials: 20
+  n_jobs: 3                     # parallel trials x len(seeds) = 6 trainings
+  n_startup_trials: 6           # small budget -> start TPE earlier
+  episodes: 1500                # search-stage cap (config trains 2000)
+  enqueue:
+    - {fhr_weight: 0.5, fhr_order: 2, reward_lags: false,
+       warmup_grad_steps: 500, c_learning_rate: 0.05}
+
+search_space:                   # list = categorical; {low, high, [step], [log]}
+  fhr_weight: {low: 0.01, high: 2.0, log: true}
+  fhr_order: {low: 1, high: 4}
+  reward_lags: [false, true]
+  warmup_grad_steps: {low: 0, high: 5000, step: 250}
+  c_learning_rate: {low: 0.001, high: 0.2, log: true}
+
+transfer:
+  sizes: [[16], [32, 32], [64, 64], [128, 128]]
+  seeds: [21, 56, 102]          # 102 held out from the search
+  max_workers: 6

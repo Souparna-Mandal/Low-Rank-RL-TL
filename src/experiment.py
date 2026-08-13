@@ -90,12 +90,14 @@ def train_policy_iteration(cfg: dict, agent, env, run_logger=None, DEBUG=False):
     )
 
 
-def make_run_logger(cfg: dict, config_path: str = "config.yaml"):
-    """A RunLogger under runs/<experiment.name>_<timestamp>/ when
+def make_run_logger(cfg: dict, config_path: str = "config.yaml", base_dir=None):
+    """A RunLogger under <base_dir>/runs/<experiment.name>_<timestamp>/ when
     experiment.save_artifacts is set, else None (analysis renders inline).
-    Imported lazily. Pass config_path"""
+    base_dir defaults to the cwd; experiments that keep artifacts in a
+    subdirectory pass e.g. base_dir="cached". Imported lazily."""
     from analysis.run_logger import RunLogger
     if cfg["experiment"].get("save_artifacts", True):
-        return RunLogger(pathlib.Path.cwd(), config_path=config_path,
+        return RunLogger(pathlib.Path(base_dir or pathlib.Path.cwd()),
+                         config_path=config_path,
                          name=cfg["experiment"].get("name"))
     return None

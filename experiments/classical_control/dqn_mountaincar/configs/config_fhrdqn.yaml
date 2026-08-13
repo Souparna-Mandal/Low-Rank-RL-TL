@@ -1,0 +1,127 @@
+# FHR-DQN on MountainCar-v0 — learned-recurrence (AR/ARX) penalty, no SVDs.
+#
+# Base DQN blocks are identical to config.yaml (the tuned MountainCar recipe:
+# normalised obs, mid-episode training every 2 steps, Polyak targets); the agent
+# gains the FHR learned-recurrence block. The penalty rides the TD batch: every
+# sampled transition with at least fhr_order same-episode predecessors contributes
+#   Huber( Q(s_t,a_t),  sum_j c_j Q(s_{t-j},a_{t-j})  [+ sum_k d_k r_{t-k}] )
+# with one global learned coefficient vector. MountainCar's constant -1/step
+# reward means the exact Bellman recurrence has roots {1, 1/gamma}, so the
+# pure-AR order-2 init (1 + 1/gamma, -1/gamma) annihilates Bellman-consistent
+# value sequences here just as on CartPole and Acrobot. fhr_weight: 0.0 turns
+# this file into the plain config.yaml agent — exactly what the comparison
+# notebook's baseline arm overrides (one config, one code path, one difference).
+
+experiment:
+  name: dqn_mountaincar_fhrdqn
+  seed: 52               # fallback when `seeds` is absent or empty
+  # The comparison notebook trains both arms once per seed and reports
+  # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
+  seeds: [21, 56, 102]
+  device: auto
+  # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
+
+environment:
+  name: MountainCar-v0
+  render_mode: null
+  discrete_config: null
+  # Position/velocity rescaled to [-1, 1] (raw ranges differ by 14x).
+  normalise:
+    action: {}
+    state:
+      min: [-1, -1]
+      max: [1, 1]
+  clip:
+    action: False
+    state: []
+
+network:
+  # MLP Q-network is defined inside exp1_fhrdqn_compare.ipynb
+  hidden_sizes: [64, 64]
+
+agent:
+  replay_buffer_capacity: 100000
+  batch_size: 128
+  nn_learning_rate: 0.0005
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99997    # per-step; reaches eps_min around ~100k env steps (~ep 500)
+  discount_factor: 0.99
+  TD_LR: 0.005           # soft target-network updates (Polyak-style, every 2 steps)
+  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  gd_steps_ceil: 1       # hard cap on gradient steps per training call
+  grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
+                         # (network only — the recurrence coefficients are exempt)
+  double: True
+  # --- FHR learned-recurrence penalty (fhr_weight 0 => exact QAgent) ---
+  # Values below = Optuna best trial #19 (study mountaincar_fhr_64x64, seeds
+  # 21/56, search capped at 1500 eps): -109.2 vs -115.0 lambda=0 baseline.
+  # All top-5 trials used reward_lags: True — the ARX variant is the one clear
+  # structural preference the search found; lambda itself barely matters among
+  # the winners (0.013-0.76 all reach the ~-109/-110 solve plateau). Note the
+  # earlier multi-seed comparison won 3/3 seeds even at the old (0.5, r=2,
+  # no-ARX, warm 500, c_lr 0.05) block — MountainCar is FHR's best case.
+  fhr_weight: 0.0191      # lambda on the recurrence residual (Q units,
+                          # |Q| up to ~100 on MountainCar).
+  fhr_order: 4            # r: number of Q-value lags = target Hankel rank
+                          # (theory-minimal pure-AR order is 2, roots
+                          # {1, 1/gamma}; the search preferred 4 with ARX).
+  reward_lags: True       # ARX: also learn d_k on the r preceding rewards
+                          # (exact Bellman representable already at order 1).
+  warmup_grad_steps: 750  # hard warm-up K0: lambda = 0 for this many gradient
+                          # steps, then full fhr_weight in one step (no ramp).
+                          # Cadence: 1 grad step per train() call every 2 env
+                          # steps.
+  c_learning_rate: 0.0367 # lr of the c/d param group: weight_decay 0, excluded
+                          # from grad clipping and the target network.
+
+training:
+  no_episodes: 2000
+  target_network_update_steps: 2
+  train_frequency_steps: 2
+  use_episode_training: False   # train mid-episode every train_frequency_steps
+                                # -> one diagnostics row per gradient step (the
+                                # comparison notebook aggregates per episode)
+  solved_reward: -110           # MountainCar-v0 solved at avg reward >= -110
+  warmup_steps: 10000           # pure random prefill (~50 episodes)
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 25
+
+analysis:
+  # Low-rank Hankel + Q-function diagnostics — ON by default so every
+  # comparison run records the mechanism plots (spectra figures show
+  # log10(sigma + machine-eps) of the raw value-sequence Hankel; see
+  # plot_matrix_spectra in src/analysis/low_rank/rank.py). Set methods: []
+  # and hankel_sweep.enabled: false for a faster reward-only run.
+  ep_freq: 50
+  methods:                         # Q-matrix rank tracking over a state grid
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [32, 32]   # one bin-count per obs dim (MountainCar obs_dim = 2)
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true                  # greedy-rollout Hankel spectra +
+                                   # effective-rank evolution in the viewer
+    n_rollouts: 5
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false                 # <- true for held-out AR-fit quality of the
+                                   #    frozen greedy policy's value sequences
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2
