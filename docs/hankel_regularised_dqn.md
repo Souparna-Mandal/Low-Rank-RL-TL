@@ -177,8 +177,8 @@ unoccupied.
   `nan_skips`.
 - Diagnostics per `train()` (logged to `train_diagnostics.csv` via the run logger, or
   captured by the benchmark): `td_loss, lambda_eff, penalty_raw, penalty_weighted,
-  gate_frac` (above ρ), `converged_frac` (tail ≈ 0), `batch_eff_rank` (energy-rank of
-  the penalty windows), `rel_tail, nan_skips`.
+  gate_frac` (above ρ), `converged_frac` (tail ≈ 0), `batch_eff_rank` (0.999 energy-rank
+  of the penalty windows), `rel_tail, nan_skips`.
 
 ## Benchmark
 
@@ -204,7 +204,10 @@ effective λ is env-dependent (light for CartPole, strong for Acrobot). Forensic
 replay windows sit near the low-rank manifold from early training (relative tail
 ≈ 1.5–2% → ≈ 0 under the penalty), `gate_frac` ≈ 0 throughout (no off-policy
 contamination; `window_half_life` unused), and final on-policy energy-rank
-saturates at 1 for every variant. The `windows_lo` collapse shows the separate
+saturates at 1 for every variant — but that was measured at the old 0.90 energy
+threshold, which reports rank 1 for any spectrum whose leading mode holds 90% of
+the energy (an order-5 recurrence included), so it is a property of the cutoff as
+much as of the runs. The diagnostic now uses 0.999; re-measure before citing it. The `windows_lo` collapse shows the separate
 i.i.d. TD sampler is load-bearing: window-TD batches are both correlated (~8
 independent segments/step) and biased (episodes shorter than the window never
 enter the TD loss, so failures are never learned from).

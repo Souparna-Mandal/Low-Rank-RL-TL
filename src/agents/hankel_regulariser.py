@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 
 
-def _energy_rank(svals: torch.Tensor, energy_frac: float = 0.90) -> torch.Tensor:
+def _energy_rank(svals: torch.Tensor, energy_frac: float = 0.999) -> torch.Tensor:
     """Batched analogue of analysis.low_rank.rank.energy_rank: smallest k whose
     squared singular values capture energy_frac of the Frobenius energy
-    (0 for an all-zero spectrum, matching the reference)."""
+    (0 for an all-zero spectrum, matching the reference). The default tracks the
+    reference's, so `batch_eff_rank` and the sweep's eff_rank mean the same thing."""
     energy = svals.pow(2)
     total = energy.sum(dim=1, keepdim=True)
     cum = energy.cumsum(dim=1) / total.clamp_min(1e-12)
