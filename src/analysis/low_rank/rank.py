@@ -31,9 +31,14 @@ def plot_matrix_spectra(svals: np.ndarray, matrix_name: str,
         plt.close(fig)
     return svals
 
-def energy_rank(s_vals: np.ndarray, energy_frac: float = 0.90) -> int:
+def energy_rank(s_vals: np.ndarray, energy_frac: float = 0.999) -> int:
     """Smallest k such that the top-k singular values capture `energy_frac` of the
     matrix's Frobenius energy (sum of squared singular values, = ||A||_F^2).
+    Returns 0 for an all-zero spectrum.
+
+    This is the only place the fraction is configurable: `_svd_and_metrics` and
+    everything above it call this with the default, so 0.999 is the effective
+    rank every run and config reports. Change it here to change it everywhere.
     """
     s = np.sort(np.abs(np.asarray(s_vals, dtype=float)))[::-1]
     energy = s**2
@@ -43,7 +48,7 @@ def energy_rank(s_vals: np.ndarray, energy_frac: float = 0.90) -> int:
     cum_frac = np.cumsum(energy) / total
     return int(np.searchsorted(cum_frac, energy_frac) + 1)   # first index reaching the fraction, +1 for count
 
-def _svd_and_metrics(matrix: np.ndarray, energy_frac: float = 0.90):
+def _svd_and_metrics(matrix: np.ndarray):
     """SVD once and derive every rank property. Returns (s_vals, metrics_tuple)
     so callers that also want to plot the spectrum can reuse the same SVD.
 
@@ -53,8 +58,10 @@ def _svd_and_metrics(matrix: np.ndarray, energy_frac: float = 0.90):
     m,n = matrix.shape
     U, s_vals, Vt = np.linalg.svd(matrix, full_matrices=False)
 
-    # Effective rank: how many singular values are needed to capture `energy_frac` of the Frobenius energy.
-    rank = max(energy_rank(s_vals, energy_frac), 1)
+    # Effective rank: how many singular values are needed to capture `energy_rank`'s
+    # default fraction of the Frobenius energy. Floored at 1 so an all-zero matrix
+    # still indexes a (degenerate) top-1 subspace below.
+    rank = max(energy_rank(s_vals), 1)
     # Stable rank: energy-based (sum sigma_i^2 / sigma_1^2), in [1, min(m,n)].
     stable_rank = float((s_vals**2).sum() / s_vals[0]**2)
 
@@ -83,31 +90,31 @@ def _svd_and_metrics(matrix: np.ndarray, energy_frac: float = 0.90):
                nnz_rows, nnz_cols)
     return s_vals, metrics
 
-def compute_rank_metrics(matrix: np.ndarray, energy_frac: float = 0.90):
+def compute_rank_metrics(matrix: np.ndarray):
     """The rank properties of `matrix` WITHOUT plotting its spectrum — for sweeps
     that run many SVDs and don't want a matplotlib figure per matrix.
 
     Returns the 10-tuple `(rank, stable_rank, spikiness, (m,n), irs, ics,
     row_coherence, col_coherence, nnz_rows, nnz_cols)` — identical to
-    `row_rank_property_check`'s return value.
+    `row_rank_property_check`'s return value. `rank` is the energy rank at
+    `energy_rank`'s default fraction; call `energy_rank` directly for another.
     """
-    return _svd_and_metrics(matrix, energy_frac)[1]
+    return _svd_and_metrics(matrix)[1]
 
 def row_rank_property_check(matrix: np.ndarray, matrix_name: str,
-                            energy_frac: float = 0.90,
                             save_to=None, show: bool = True): # This should be a 2-d numpy array
     """
     We calculate for a low rank matrix the information like how much exploitable pattern is present.
 
-    All leverage/coherence quantities are computed on the *top-r left-singular subspace* U[:, :r]
-    For a (near) square matrix the full U is a complete orthonormal basis, so
-    every row of it has norm 1 and the old.
+    The same 10-tuple as `compute_rank_metrics`, plus the spectrum figure — written to
+    `save_to` when given, drawn inline when `show`.
 
-    Args:
-        energy_frac: the rank is the number of singular values needed to capture this
-                     fraction of the Frobenius energy (see `energy_rank`). Default 0.90.
+    All leverage/coherence quantities are computed on the *top-r left-singular subspace* U[:, :r],
+    r = the energy rank. Restricting to the top r is what makes them informative: for a
+    (near) square matrix the full U is a complete orthonormal basis, so every row of it has
+    norm 1 and the leverage scores come out uniform whatever the matrix looks like.
     """
-    s_vals, metrics = _svd_and_metrics(matrix, energy_frac)
+    s_vals, metrics = _svd_and_metrics(matrix)
     # plotting the spectrum of the Matrix
     plot_matrix_spectra(s_vals, matrix_name, save_to=save_to, show=show)
     return metrics
