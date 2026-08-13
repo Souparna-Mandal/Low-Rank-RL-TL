@@ -109,20 +109,76 @@ def run_sig(run_dir: pathlib.Path) -> str:
     return "|".join(parts)
 
 
-def _read_rewards(run_dir: pathlib.Path) -> list | None:
+# Envs whose reward is ±1 per step, so |episode reward| recovers the episode
+# length from a legacy two-column rewards.csv: exact for CartPole (+1/step)
+# and MountainCar (-1/step), within one step on Acrobot (terminal step pays 0).
+DERIVABLE_STEPS_ENVS = ("CartPole", "MountainCar", "Acrobot")
+
+
+def _env_name_and_episodic(run_dir: pathlib.Path) -> tuple[str | None, bool]:
+    """(environment.name, rows-are-episodes?) from the run's config.yaml copy,
+    stdlib-only. A policy-iteration config (training.no_iterations) writes one
+    rewards.csv row per PI iteration whose reward is a mean greedy return —
+    |reward| is not an episode length there, so steps must not be derived."""
+    cfg = run_dir / "config.yaml"
+    if not cfg.exists():
+        return None, False
+    text = cfg.read_text(errors="replace")
+    name, in_env = None, False
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace():
+            in_env = line.startswith("environment:")
+            continue
+        if in_env:
+            m = re.match(r"\s+name:\s*([^\s#]+)", line)
+            if m:
+                name = m.group(1).strip("'\"")
+                break
+    return name, "no_episodes" in text
+
+
+def _read_rewards(run_dir: pathlib.Path) -> tuple[list | None, str | None]:
+    """rewards.csv -> ([[episode, reward, steps|None], ...], steps_source).
+    steps_source is "logged" when the CSV has a steps column, "derived" when a
+    legacy two-column file belongs to a ±1-reward-per-step env (steps filled in
+    as |reward|), and None when no env-steps axis is possible."""
     path = run_dir / "rewards.csv"
     if not path.exists():
-        return None
+        return None, None
     pts = []
+    has_steps = False
     with open(path, newline="") as f:
         reader = csv.reader(f)
-        next(reader, None)
+        header = next(reader, None) or []
+        has_steps = "steps" in header
+        si = header.index("steps") if has_steps else -1
         for row in reader:
             try:
-                pts.append([int(row[0]), float(row[1])])
+                ep, rew = int(row[0]), float(row[1])
             except (ValueError, IndexError):
                 continue  # torn last line during a rewrite
-    return pts
+            st = None
+            if has_steps:
+                try:
+                    st = float(row[si])
+                except (ValueError, IndexError):
+                    pass  # torn steps cell — leave null, frontend skips it
+            pts.append([ep, rew, st])
+    if not pts:
+        return pts, None
+    if has_steps:
+        return pts, "logged"
+    env, episodic = _env_name_and_episodic(run_dir)
+    if episodic and env and env.startswith(DERIVABLE_STEPS_ENVS):
+        for p in pts:
+            # a nan/inf reward cell has no derivable step count — leave it
+            # None (round() would raise) like a torn steps cell
+            if math.isfinite(p[1]):
+                p[2] = abs(round(p[1]))
+        return pts, "derived"
+    return pts, None
 
 
 def _num(v) -> float | None:
@@ -144,8 +200,9 @@ def load_summary(run_dir: pathlib.Path) -> dict:
     per (episode, matrix), and train_diagnostics collapsed to per-episode
     column means. No figures/trajectories — overlaying several seeds of
     several experiments must stay cheap over a tunnel."""
+    rewards, steps_source = _read_rewards(run_dir)
     out = {"sig": run_sig(run_dir),
-           "rewards": _read_rewards(run_dir),
+           "rewards": rewards, "steps_source": steps_source,
            "stats": _csv_table(run_dir / "rank_stats.csv"),
            "sweep_evo": None, "diag": None}
 
@@ -261,7 +318,7 @@ def load_run(run_dir: pathlib.Path) -> dict:
                     "seed": int(seed),
                 })
 
-    payload["rewards"] = _read_rewards(run_dir)
+    payload["rewards"], payload["steps_source"] = _read_rewards(run_dir)
 
     figdir = run_dir / "figures"
     if figdir.is_dir():

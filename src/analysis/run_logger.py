@@ -188,11 +188,21 @@ class RunLogger:
                 writer.writeheader()
             writer.writerows(rows)
 
-    def log_rewards(self, rewards) -> None:
+    def log_rewards(self, rewards, steps=None) -> None:
+        """Rewrite rewards.csv. steps is the per-episode env-step count (same
+        length as rewards); when given, a third column is written so learning
+        curves can use an env-steps / samples x-axis. Legacy two-column files
+        (no steps) are still produced when steps is None, e.g. by the PI loop
+        where a row is an iteration, not an episode."""
         with open(self.dir / "rewards.csv", "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["episode", "reward"])
-            writer.writerows(enumerate(rewards))
+            if steps is None:
+                writer.writerow(["episode", "reward"])
+                writer.writerows(enumerate(rewards))
+            else:
+                writer.writerow(["episode", "reward", "steps"])
+                writer.writerows((i, r, s) for i, (r, s)
+                                 in enumerate(zip(rewards, steps)))
 
     def checkpoint(self, agent, name: str = "latest") -> pathlib.Path:
         path = self.checkpoints_dir / f"{name}.pt"

@@ -113,10 +113,12 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
     state, info = env.reset(seed = np_seed)
     s_tn_upd, s_train, step_count = 0,0,0
     episode_rewards_training = []
+    episode_steps_training = []  # env steps per episode -> rewards.csv steps column
     best_window_avg = float("-inf")
     for episode in tqdm(range(no_episodes)):
         # Do a policy rollout and explore with the current agent
         epsiode_total_reward = 0
+        episode_steps = 0
         terminated = truncated = False
         # This is one rollout from the current policy pi = DQN(theeta) 
         # which is updated once every episode
@@ -129,7 +131,8 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             # the raw game score in info — log raw so reward curves and solved_reward
             # stay comparable across runs with and without scaling.
             epsiode_total_reward += info.get("raw_reward", reward)
-            
+            episode_steps += 1
+
             if step_count > warmup_steps: # start the counters for training and updating target network
                 # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
                 agent.decay_epsilon()
@@ -152,6 +155,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         # reset the environment for next episode
         state, _ = env.reset()
         episode_rewards_training.append(epsiode_total_reward)
+        episode_steps_training.append(episode_steps)
         
         # We will do the training only when the episode had ended... and ensure that at least train_frequency_steps have passed since the last training
         # This is mainly relevant only when use_episode_training is True
@@ -184,7 +188,8 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         if episode % analysis_config.get("ep_freq", 1) == 0:
             run_analysis_tick(agent, env, analysis_config, run_logger, episode)
             if run_logger is not None:
-                run_logger.log_rewards(episode_rewards_training)
+                run_logger.log_rewards(episode_rewards_training,
+                                       steps=episode_steps_training)
                 run_logger.checkpoint(agent, "latest")
             # The Hankel analysis above rolls out `env` to termination, leaving it in a stale/terminated
             # state. Reset before the next training episode so we don't resume from a hijacked env.
@@ -199,7 +204,8 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                 break
 
     if run_logger is not None:
-        run_logger.log_rewards(episode_rewards_training)
+        run_logger.log_rewards(episode_rewards_training,
+                               steps=episode_steps_training)
         run_logger.checkpoint(agent, "final")
         print(f"run artifacts saved under {run_logger.dir}")
     return episode_rewards_training

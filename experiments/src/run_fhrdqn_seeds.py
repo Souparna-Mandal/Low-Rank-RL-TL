@@ -10,16 +10,34 @@ directory as cwd (config paths and cached/ are resolved against cwd):
     python ../../src/run_fhrdqn_seeds.py --max-workers 3 # gentler fan-out
     python ../../src/run_fhrdqn_seeds.py --force         # rerun pairs already in the manifest
 
+Numbered FHR experiments: the config's experiment.fhr_experiments block maps an
+experiment number to ONE full FHR parameter set — any subset of fhr_weight,
+fhr_order, reward_lags, warmup_grad_steps, c_learning_rate; unspecified params
+inherit the agent block. --experiment N trains that arm (run names tagged
+_exp<N>) plus the shared baseline (fhr_weight 0, plain _baseline names — reused
+from the manifest if already trained), over all config seeds. Several numbers
+train several experiments in one launch. Everything records into the single
+cached/fhrdqn_runs_manifest.json under arm keys "baseline"/"fhr"/"exp<N>", so
+the result viewer's compare mode shows baseline vs each exp<N> as variants:
+
+    python ../../src/run_fhrdqn_seeds.py --experiment 2
+    python ../../src/run_fhrdqn_seeds.py --experiment 1 2 3
+
+Run at most one launcher at a time per experiment dir — concurrent launchers
+would race on the manifest file and the shared baseline arm.
+
 Child mode (one training in this process; used internally by the launcher):
 
     python ../../src/run_fhrdqn_seeds.py --arm fhr --seed 21
+    python ../../src/run_fhrdqn_seeds.py --arm fhr --seed 21 \
+        --agent-overrides '{"fhr_weight": 0.1, "fhr_order": 2}' --name-tag exp2
 
 Completed runs are recorded in cached/fhrdqn_runs_manifest.json (run dirs
 relative to the experiment dir), so a relaunch only runs missing/failed pairs. The
 comparison notebooks import launch_all()/load_runs() from this file and read
 rewards from each run dir's rewards.csv — the training loop rewrites that file
 at every analysis tick, so partially finished runs are readable too. Child
-stdout/stderr goes to cached/logs/fhrdqn_<arm>_seed<N>.log. Children are pinned to one
+stdout/stderr goes to cached/logs/fhrdqn[_exp<N>]_<arm>_seed<N>.log. Children are pinned to one
 BLAS/OMP thread each (the fable launcher precedent) so the fan-out doesn't
 oversubscribe the CPU.
 """
@@ -61,10 +79,14 @@ class QNetwork(nn.Module):
         return self.net(x)
 
 
-def run_one(arm, seed, episodes=None):
+def run_one(arm, seed, episodes=None, agent_overrides=None, name_tag=None):
     """Child mode: one full training run in this process (cwd = experiment dir).
     The baseline arm strips the FHR term (fhr_weight = 0.0) — the single
-    difference from the FHR arm. Returns the run directory."""
+    difference from the FHR arm; a numbered-experiment arm applies its FHR
+    parameter set on top of the config's agent block via `agent_overrides`.
+    name_tag (e.g. exp2) lands in the run-dir name before the seed token so the
+    result viewer groups each experiment as its own variant. Returns the run
+    directory."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from experiment import load_config, build_env, build_agent, train, make_run_logger
@@ -72,8 +94,13 @@ def run_one(arm, seed, episodes=None):
 
     cfg = load_config(CONFIG, seed=seed)          # seeds torch / numpy / random
     if arm == "baseline":
-        cfg["experiment"]["name"] += "_baseline"
         cfg["agent"]["fhr_weight"] = 0.0
+    elif agent_overrides:
+        cfg["agent"].update(agent_overrides)
+    if name_tag:
+        cfg["experiment"]["name"] += f"_{name_tag}"
+    elif arm == "baseline":
+        cfg["experiment"]["name"] += "_baseline"  # shared-baseline naming
     cfg["experiment"]["name"] += f"_seed{seed}"
     if episodes is not None:                      # smoke-test override
         cfg["training"]["no_episodes"] = episodes
@@ -98,7 +125,7 @@ def _load_manifest(exp_dir):
     if path.exists():
         with open(path) as f:
             return json.load(f)
-    return {"seeds": [], "runs": {arm: {} for arm in ARMS}}
+    return {"seeds": [], "runs": {}}
 
 
 def _run_recorded(exp_dir, manifest, arm, seed):
@@ -106,20 +133,80 @@ def _run_recorded(exp_dir, manifest, arm, seed):
     return rel is not None and (exp_dir / rel / "rewards.csv").exists()
 
 
-def launch_all(max_workers=6, force=False, exp_dir=None, episodes=None):
+# The FHR parameter set a numbered experiment may override — everything else
+# (net size, replay, epsilon schedule, ...) stays identical to the baseline so
+# an exp<N>-vs-baseline gap is attributable to the FHR block alone.
+FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
+              "warmup_grad_steps", "c_learning_rate")
+
+
+def _experiment_overrides(exp_dir, experiment):
+    """experiment.fhr_experiments[<experiment>] from the config: ONE full FHR
+    parameter set (any subset of FHR_PARAMS; the rest inherit the agent block)
+    that the numbered experiment trains against the shared baseline."""
+    with open(exp_dir / CONFIG) as f:
+        cfg = yaml.safe_load(f)
+    sweeps = cfg["experiment"].get("fhr_experiments") or {}
+    overrides = sweeps.get(experiment, sweeps.get(str(experiment)))
+    if overrides is None:
+        raise ValueError(
+            f"experiment {experiment} is not defined under "
+            f"experiment.fhr_experiments in {CONFIG} "
+            f"(defined: {sorted(map(str, sweeps)) or 'none'})")
+    if not isinstance(overrides, dict) or not overrides:
+        raise ValueError(
+            f"experiment {experiment} must be a non-empty mapping of FHR "
+            f"params, e.g. {{fhr_weight: 0.1, fhr_order: 2}} — got "
+            f"{overrides!r} (the old list-of-weights form is not supported)")
+    unknown = sorted(set(overrides) - set(FHR_PARAMS))
+    if unknown:
+        raise ValueError(f"experiment {experiment} overrides unknown FHR "
+                         f"params {unknown} — allowed: {list(FHR_PARAMS)}")
+    if float(overrides.get("fhr_weight", 1.0)) == 0.0:
+        raise ValueError("fhr_weight 0 is the baseline arm, which every "
+                         "launch already includes — drop it from the sweep")
+    return overrides
+
+
+def _arm_specs(exp_dir, experiments):
+    """[(manifest/log key, extra child argv)] for one launch: the legacy two
+    arms, or the shared baseline + one arm per requested experiment number.
+    Overrides travel to the child as JSON (exact float round-trip)."""
+    if not experiments:
+        return [("baseline", ["--arm", "baseline"]), ("fhr", ["--arm", "fhr"])]
+    if len(set(experiments)) != len(experiments):
+        raise ValueError(f"duplicate experiment numbers: {experiments}")
+    specs = [("baseline", ["--arm", "baseline"])]   # shared with legacy runs
+    for n in experiments:
+        overrides = _experiment_overrides(exp_dir, n)
+        specs.append((f"exp{n}", ["--arm", "fhr",
+                                  "--agent-overrides", json.dumps(overrides),
+                                  "--name-tag", f"exp{n}"]))
+    return specs
+
+
+def launch_all(max_workers=6, force=False, exp_dir=None, episodes=None,
+               experiments=None):
     """Fan out one subprocess per (arm, seed) from the config's seed list.
-    Pairs already recorded in the manifest are skipped unless force=True.
-    Returns the manifest dict; raises if any run fails (successes are kept,
-    so a relaunch resumes from the failures)."""
+    Pairs already recorded in the manifest are skipped unless force=True —
+    including the shared baseline, so several experiments reuse one baseline
+    training. experiments=[N, ...] (or a single int) swaps the legacy fhr arm
+    for one exp<N>-tagged arm per requested entry of the config's
+    experiment.fhr_experiments. Returns the manifest dict; raises if any run
+    fails (successes are kept, so a relaunch resumes from the failures)."""
     exp_dir = pathlib.Path(exp_dir or pathlib.Path.cwd()).resolve()
+    if isinstance(experiments, int):
+        experiments = [experiments]
     seeds = _config_seeds(exp_dir)
     manifest = _load_manifest(exp_dir)
     manifest["seeds"] = seeds
-    jobs = [(arm, s) for arm in ARMS for s in seeds
-            if force or not _run_recorded(exp_dir, manifest, arm, s)]
-    skipped = 2 * len(seeds) - len(jobs)
+    specs = _arm_specs(exp_dir, experiments)
+    mpath = MANIFEST
+    jobs = [(key, extra, s) for key, extra in specs for s in seeds
+            if force or not _run_recorded(exp_dir, manifest, key, s)]
+    skipped = len(specs) * len(seeds) - len(jobs)
     if skipped:
-        print(f"skipping {skipped} already-completed run(s) recorded in {MANIFEST}")
+        print(f"skipping {skipped} already-completed run(s) recorded in {mpath}")
     if not jobs:
         return manifest
 
@@ -131,10 +218,10 @@ def launch_all(max_workers=6, force=False, exp_dir=None, episodes=None):
     failures = []
 
     def work(job):
-        arm, seed = job
-        log_path = exp_dir / LOGS / f"fhrdqn_{arm}_seed{seed}.log"
+        key, extra, seed = job
+        log_path = exp_dir / LOGS / f"fhrdqn_{key}_seed{seed}.log"
         cmd = [sys.executable, str(pathlib.Path(__file__).resolve()),
-               "--arm", arm, "--seed", str(seed)]
+               *extra, "--seed", str(seed)]
         if episodes is not None:
             cmd += ["--episodes", str(episodes)]
         t0 = time.time()
@@ -148,45 +235,57 @@ def launch_all(max_workers=6, force=False, exp_dir=None, episodes=None):
                 run_dir = line.removeprefix("RUN_DIR=")
                 break
         if proc.returncode != 0 or run_dir is None:
-            print(f"[{arm} seed {seed}] FAILED after {mins:.1f} min — see {log_path}")
+            print(f"[{key} seed {seed}] FAILED after {mins:.1f} min — see {log_path}")
             with lock:
-                failures.append((arm, seed, str(log_path)))
+                failures.append((key, seed, str(log_path)))
             return
-        rel = os.path.relpath(run_dir, exp_dir)
+        # a relative RUN_DIR is relative to the child's cwd (exp_dir), not the
+        # launcher's — resolve it there before recording it in the manifest
+        rel = os.path.relpath(os.path.join(exp_dir, run_dir), exp_dir)
         with lock:
-            manifest["runs"].setdefault(arm, {})[str(seed)] = rel
-            with open(exp_dir / MANIFEST, "w") as f:
+            manifest["runs"].setdefault(key, {})[str(seed)] = rel
+            with open(exp_dir / mpath, "w") as f:
                 json.dump(manifest, f, indent=2)
-        print(f"[{arm} seed {seed}] done in {mins:.1f} min -> {rel}")
+        print(f"[{key} seed {seed}] done in {mins:.1f} min -> {rel}")
 
-    print(f"launching {len(jobs)} run(s), {min(max_workers, len(jobs))} at a time: {jobs}")
+    print(f"launching {len(jobs)} run(s), {min(max_workers, len(jobs))} at a "
+          f"time: {[(k, s) for k, _, s in jobs]}")
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         list(pool.map(work, jobs))
     if failures:
         raise RuntimeError(f"{len(failures)} run(s) failed (completed runs are "
-                           f"kept in {MANIFEST}; relaunch to retry): {failures}")
+                           f"kept in {mpath}; relaunch to retry): {failures}")
     return manifest
 
 
 def load_runs(arm, exp_dir=None):
-    """Manifest -> [{seed, cfg, rewards, run_dir}] in config-seed order, the
-    structure the comparison notebooks' aggregation cells expect. cfg is the
-    config.yaml copied into the run dir (note: the baseline copy does not
-    reflect the in-memory fhr_weight=0 override)."""
+    """Manifest -> [{seed, cfg, rewards, steps, run_dir}] in config-seed order,
+    the structure the comparison notebooks' aggregation cells expect. arm is
+    "baseline", the legacy "fhr", or a numbered experiment's "exp<N>". steps is
+    the per-episode env-step count column of rewards.csv, or None on runs that
+    predate it (the notebooks fall back to |reward| there — exact for the
+    ±1-reward-per-step classic-control envs). cfg is the config.yaml copied
+    into the run dir (note: the copy reflects neither the baseline's
+    fhr_weight=0 override nor an experiment's FHR overrides)."""
     exp_dir = pathlib.Path(exp_dir or pathlib.Path.cwd()).resolve()
     manifest = _load_manifest(exp_dir)
+    if not manifest["seeds"]:
+        raise RuntimeError(f"no runs recorded in {MANIFEST} under {exp_dir} — "
+                           f"launch_all() first")
     runs = []
     for seed in manifest["seeds"]:
         rel = manifest["runs"].get(arm, {}).get(str(seed))
         if rel is None or not (exp_dir / rel / "rewards.csv").exists():
-            raise RuntimeError(f"no completed {arm} run for seed {seed} — "
-                               f"launch_all() it first ({LOGS}/ has any failures)")
+            raise RuntimeError(f"no completed {arm} run for seed {seed} in "
+                               f"{MANIFEST} — launch_all() it first "
+                               f"({LOGS}/ has any failures)")
         run_dir = exp_dir / rel
-        rewards = np.loadtxt(run_dir / "rewards.csv", delimiter=",", skiprows=1,
-                             ndmin=2)[:, 1]
+        table = np.loadtxt(run_dir / "rewards.csv", delimiter=",", skiprows=1,
+                           ndmin=2)
         with open(run_dir / "config.yaml") as f:
             cfg = yaml.safe_load(f)
-        runs.append({"seed": seed, "cfg": cfg, "rewards": rewards,
+        runs.append({"seed": seed, "cfg": cfg, "rewards": table[:, 1],
+                     "steps": table[:, 2] if table.shape[1] > 2 else None,
                      "run_dir": run_dir})
     return runs
 
@@ -213,9 +312,9 @@ def _load_run_agent(run_dir, device="cpu"):
 
 
 def record_final_videos(arm, exp_dir=None):
-    """One greedy-policy episode per manifest run of `arm`, saved as
-    <run_dir>/videos/epfinal-episode-0.mp4 -> [(seed, mp4 path)]. The rollout
-    is reset with the run's own seed."""
+    """One greedy-policy episode per manifest run of `arm` ("baseline", "fhr",
+    or "exp<N>"), saved as <run_dir>/videos/epfinal-episode-0.mp4 ->
+    [(seed, mp4 path)]. The rollout is reset with the run's own seed."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from analysis.visualisations.rollout_video import record_greedy_episode
@@ -241,15 +340,27 @@ def main():
                         help="parallel trainings in launcher mode (default 6)")
     parser.add_argument("--force", action="store_true",
                         help="rerun (arm, seed) pairs already in the manifest")
+    parser.add_argument("--experiment", type=int, nargs="+", default=None,
+                        help="launcher mode: numbered experiment(s) from the "
+                             "config's experiment.fhr_experiments — trains the "
+                             "shared baseline plus one exp<N> arm per number")
+    parser.add_argument("--agent-overrides", default=None,
+                        help="child mode: JSON dict of FHR params applied on "
+                             "top of the config's agent block")
+    parser.add_argument("--name-tag", default=None,
+                        help="child mode: run-name tag placed before the seed "
+                             "token, e.g. exp2")
     args = parser.parse_args()
     if args.arm is not None:
         if args.seed is None:
             parser.error("--arm requires --seed")
-        run_dir = run_one(args.arm, args.seed, episodes=args.episodes)
+        overrides = json.loads(args.agent_overrides) if args.agent_overrides else None
+        run_dir = run_one(args.arm, args.seed, episodes=args.episodes,
+                          agent_overrides=overrides, name_tag=args.name_tag)
         print(f"RUN_DIR={run_dir}")
     else:
         launch_all(max_workers=args.max_workers, force=args.force,
-                   episodes=args.episodes)
+                   episodes=args.episodes, experiments=args.experiment)
 
 
 if __name__ == "__main__":

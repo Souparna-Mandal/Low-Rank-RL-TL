@@ -23,6 +23,20 @@ experiment:
   # The comparison notebook trains both arms once per seed and reports
   # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
   seeds: [52, 53, 54]
+  # Numbered FHR experiments for run_fhrdqn_seeds.py --experiment N [M ...]:
+  # each entry is ONE full FHR parameter set — any subset of fhr_weight,
+  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate; unspecified
+  # params inherit the agent block below. A launch trains the shared baseline
+  # (fhr_weight 0, plain _baseline run names, reused if already recorded in
+  # cached/fhrdqn_runs_manifest.json) plus one _exp<N>-tagged arm per number,
+  # so the result viewer's compare mode shows baseline vs each experiment.
+  # Edit/add entries freely — fhr_weight 0 is rejected (baseline covers it).
+  fhr_experiments:
+    1: {fhr_weight: 1, fhr_order: 3, reward_lags: False,
+        warmup_grad_steps: 2000, c_learning_rate: 0.0136}  # = agent block below
+    2: {fhr_weight: 0.0271}  # the earlier tuned lambda, everything else inherited
+    3: {fhr_weight: 1, fhr_order: 2}
+                             # theory-minimal order-2 recurrence at current lambda
   device: auto
   # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under
   # runs/<timestamp>/ instead of rendering analysis figures inline.

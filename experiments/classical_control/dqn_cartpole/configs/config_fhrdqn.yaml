@@ -17,6 +17,20 @@ experiment:
   # The comparison notebook trains both arms once per seed and reports
   # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
   seeds: [0, 1, 2]
+  # Numbered FHR experiments for run_fhrdqn_seeds.py --experiment N [M ...]:
+  # each entry is ONE full FHR parameter set — any subset of fhr_weight,
+  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate; unspecified
+  # params inherit the agent block below. A launch trains the shared baseline
+  # (fhr_weight 0, plain _baseline run names, reused if already recorded in
+  # cached/fhrdqn_runs_manifest.json) plus one _exp<N>-tagged arm per number,
+  # so the result viewer's compare mode shows baseline vs each experiment.
+  # Edit/add entries freely — fhr_weight 0 is rejected (baseline covers it).
+  fhr_experiments:
+    1: {fhr_weight: 0.147, fhr_order: 4, reward_lags: True,
+        warmup_grad_steps: 1250, c_learning_rate: 0.0149}  # = agent block below
+    2: {fhr_weight: 0.5}     # higher lambda, everything else inherited
+    3: {fhr_weight: 0.147, fhr_order: 2, reward_lags: False}
+                             # theory-minimal pure-AR order-2 recurrence
   # CPU: the Q-net is a 2x128 MLP and the penalty is one batched forward plus a
   # length-r matvec — no SVDs, so cuda also works, but CartPole at this size is
   # fastest on CPU.

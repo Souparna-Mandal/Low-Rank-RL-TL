@@ -188,7 +188,7 @@ details.tbl td:first-child,details.tbl th:first-child{text-align:left}
         <input type="checkbox" id="livechk" checked>
         <span class="dot"></span><span id="livestat">Live</span>
       </label>
-      <button id="cmpbtn" title="Overlay several experiments, averaged across seeds">⇄ Compare</button>
+      <button id="cmpbtn" title="Compare experiments across seeds: mean ± range, seeds overlaid, or side-by-side panels">⇄ Compare</button>
       <button id="refreshbtn" title="Refresh now">⟳</button>
       <button id="themebtn" title="Toggle light / dark">◐</button>
     </div>
@@ -235,6 +235,69 @@ const mean=vs=>vs.reduce((a,b)=>a+b,0)/vs.length;
 const arrMin=(a,f)=>{let m=Infinity;for(const v of a){const x=f?f(v):v;if(x<m)m=x;}return m;};
 const arrMax=(a,f)=>{let m=-Infinity;for(const v of a){const x=f?f(v):v;if(x>m)m=x;}return m;};
 
+// ---- env-steps (samples) axis helpers ----
+// rewards rows are [episode, reward, steps|null]; steps is null on legacy runs
+// of envs where it can't be derived, or on a torn final line mid-rewrite.
+// cumSteps: Map episode -> cumulative env steps at the END of that episode, so
+// any per-episode series can be re-based onto a sample-count x-axis.
+function cumSteps(rewards){
+  if(!rewards||!rewards.length||rewards[0].length<3)return null;
+  const map=new Map(); let tot=0;
+  for(const r of rewards){
+    if(r[2]==null)break;            // torn tail — later rows have no x yet
+    tot+=r[2]; map.set(r[0],tot);
+  }
+  return map.size?map:null;
+}
+const fmtSteps=v=>Math.abs(v)>=1e6?(v/1e6).toFixed(v%1e6?1:0)+"M"
+  :Math.abs(v)>=1000?(v/1000).toFixed(v%1000?1:0)+"k":String(Math.round(v));
+// trailing moving average over [x,y] points (x kept at the window's end)
+function rollingPts(pts,w){
+  if(w<=1||pts.length<w)return pts.slice();
+  const out=[]; let acc=0;
+  for(let i=0;i<pts.length;i++){
+    acc+=pts[i][1];
+    if(i>=w)acc-=pts[i-w][1];
+    if(i>=w-1)out.push([pts[i][0],acc/w]);
+  }
+  return out;
+}
+// running total of y over [x,y] points — cumulative-reward curves
+function cumulativePts(pts){
+  let tot=0; return pts.map(p=>[p[0],tot+=p[1]]);
+}
+// Seed aggregation for x-axes that don't align across runs (env steps): sample
+// every curve onto a shared grid by linear interpolation, then aggregate the
+// seeds whose own span covers each grid point — an early-stopped seed drops
+// out of the mean instead of being extrapolated. band = min–max across seeds.
+function gridAgg(perSeed,n=400){
+  const curves=perSeed.filter(c=>c&&c.length)
+    .map(c=>[...c].sort((a,b)=>a[0]-b[0]));
+  if(!curves.length)return {pts:[],band:[]};
+  const lo=arrMin(curves,c=>c[0][0]), hi=arrMax(curves,c=>c[c.length-1][0]);
+  if(!(hi>lo))return seedAgg(curves);
+  // uniform grid, plus each single-point curve's exact x — a singleton only
+  // matches its own x, so it must be a grid point to contribute at all
+  const gxs=new Set();
+  for(let i=0;i<n;i++)gxs.add(lo+(hi-lo)*i/(n-1));
+  for(const c of curves)if(c.length===1)gxs.add(c[0][0]);
+  const pts=[],band=[];
+  for(const x of [...gxs].sort((a,b)=>a-b)){
+    const vals=[];
+    for(const c of curves){
+      if(x<c[0][0]-1e-9||x>c[c.length-1][0]+1e-9)continue;
+      let a=0,b=c.length-1;               // binary search for x's segment
+      while(b-a>1){const mid=(a+b)>>1;(c[mid][0]<=x)?a=mid:b=mid;}
+      const [x0,y0]=c[a],[x1,y1]=c[b];
+      vals.push(x1===x0?y0:y0+(y1-y0)*(x-x0)/(x1-x0));
+    }
+    if(!vals.length)continue;
+    pts.push([x,mean(vals)]);
+    band.push([x,arrMin(vals),arrMax(vals)]);
+  }
+  return {pts,band};
+}
+
 // sequential ramp (single hue): early = light/recessive, late = dark/prominent
 function seqColor(t){
   const lo=cssv("--seq-early").split(",").map(Number);
@@ -253,7 +316,7 @@ function seqColor(t){
     const next=cur==="dark"?"light":"dark";
     document.documentElement.dataset.theme=next;
     localStorage.setItem("rv-theme",next);
-    if(STATE.data)rerender();
+    if(STATE.data||STATE.compare)rerender();
   };
 })();
 
@@ -265,9 +328,14 @@ const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
   arCoeffSplit:null,arRolloutEp:undefined,arRolloutSplit:null,
   arRolloutSubset:null,arRolloutCache:{},arRolloutHorizon:null,
   arHorizonEp:null,arHorizonSplit:null,
+  // learning-curve axis/mode selections (single-run reward card)
+  rwX:null,rwY:"ret",rwRollW:50,
   // compare mode: overlay experiments averaged across seeds
   compare:false,cmpSel:new Set(),cmpCache:{},cmpHidden:new Set(),
-  cmpStatus:null,cmpStatsMatrix:null,cmpSweepMatrix:null};
+  cmpStatus:null,cmpStatsMatrix:null,cmpSweepMatrix:null,
+  // compare axis/view selections: x = episodes|env steps, view = how seeds
+  // are drawn (mean ± range, all seeds overlaid, side-by-side panels)
+  cmpX:null,cmpY:"ret",cmpRollW:50,cmpView:"mean"};
 
 // Fetch JSON with a stall watchdog: over an SSH/VSCode tunnel a dropped link
 // leaves fetch() pending forever with no error, so the page sat on "Loading..."
@@ -459,6 +527,7 @@ async function loadRun(exp,run){
   STATE.cur={exp,run};
   STATE.hidden=new Set(); STATE.ep=null; STATE.tauIdx=null; STATE.followLast=false;
   STATE.pending=null; STATE.trajEp=undefined; STATE.trajCache={}; STATE.persistEp=null;
+  STATE.rwX=null;   // re-pick the learning-curve x-axis for the new run
   STATE.loading=true;
   stopPlay();
   $("#app").innerHTML='<div class="empty" id="loadmsg">Loading... (long runs can be a few MB over a tunnel)</div>';
@@ -612,7 +681,7 @@ function makeZoomable(panel,img,label){
 // ================= RENDER =================
 function render(){
   if(STATE.compare){renderCompare();return;}
-  CHARTS.length=0; EP_HOOKS.length=0;
+  resetChartRegistries();
   const app=$("#app"); app.innerHTML="";
   const d=STATE.data;
 
@@ -672,6 +741,9 @@ function tiles(){
     const best=arrMax(rw,r=>r[1]), last=rw[rw.length-1][1];
     box.append(tile("Best reward",fmtN(best),`over ${rw.length.toLocaleString()} episodes`,true));
     box.append(tile("Final reward",fmtN(last),`episode ${rw[rw.length-1][0].toLocaleString()}`));
+    const cs=cumSteps(rw);
+    if(cs)box.append(tile("Env steps",fmtSteps([...cs.values()].pop()),
+      d.steps_source==="derived"?"derived from |reward|":"samples collected"));
   }
   if(STATE.sweepRows){
     const rows=STATE.sweepRows;
@@ -1055,13 +1127,74 @@ function metricsCard(){
   return card;
 }
 function rewardCard(){
+  const d=STATE.data;
+  const cs=cumSteps(d.rewards), src=d.steps_source;
+  if(STATE.rwX==null)STATE.rwX=cs?"steps":"ep";     // default to samples axis
+  if(STATE.rwX==="steps"&&!cs)STATE.rwX="ep";
+  const onSteps=STATE.rwX==="steps";
+
   const card=el("div",{class:"card"});
-  card.append(el("h2",{text:"Episode reward"}),
-    el("p",{class:"desc",text:"Training reward per episode."}));
-  const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
-  card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
-    episodeAxis:true,xLabel:"episode"}));
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Learning curve"}),
+    el("p",{class:"desc",text:"Training reward against "
+      +(onSteps?"environment steps — the sample-count axis learning curves are "
+        +"reported on in the literature":"training episodes")
+      +(onSteps&&src==="derived"
+        ?". Steps are derived from |reward| (±1-reward-per-step env; this run "
+         +"predates the steps column)":"")+"."})),
+    rewardControls(cs));
+  card.append(head);
+
+  // base [x, episode return] points in the chosen x
+  const base=[];
+  for(const r of d.rewards){
+    const x=onSteps?cs.get(r[0]):r[0];
+    if(x==null)continue;
+    base.push([x,r[1]]);
+  }
+  const acc="--accent";
+  const series=[];
+  if(STATE.rwY==="cum"){
+    series.push({name:"cumulative reward",color:acc,pts:cumulativePts(base)});
+  }else{
+    const smooth=STATE.rwRollW>1&&base.length>=STATE.rwRollW;
+    series.push({name:"return",color:acc,pts:base,
+      opacity:smooth?.3:1,width:smooth?1.4:2,hover:!smooth});
+    if(smooth)series.push({name:`rolling-${STATE.rwRollW} return`,color:acc,
+      pts:rollingPts(base,STATE.rwRollW)});
+  }
+  card.append(lineChart({series,wide:true,noEndLabel:true,
+    episodeAxis:!onSteps,
+    epToX:onSteps?(ep=>cs.get(ep)):undefined,
+    xLabel:onSteps?"env steps (samples)":"episode",
+    xPrefix:onSteps?"step ":undefined}));
   return card;
+}
+// x-axis / y-mode / smoothing pickers for the learning curve
+function rewardControls(cs){
+  const xSel=el("select",{"aria-label":"X axis"});
+  xSel.append(el("option",{value:"ep",text:"x: episodes"}));
+  const stepOpt=el("option",{value:"steps",text:"x: env steps (samples)"});
+  if(!cs)stepOpt.disabled=true;
+  xSel.append(stepOpt);
+  xSel.value=STATE.rwX;
+  xSel.onchange=()=>{STATE.rwX=xSel.value;rerender();};
+
+  const ySel=el("select",{"aria-label":"Y mode"});
+  for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
+    ySel.append(el("option",{value:v,text:t}));
+  ySel.value=STATE.rwY;
+  ySel.onchange=()=>{STATE.rwY=ySel.value;rerender();};
+
+  const sSel=el("select",{"aria-label":"Smoothing"});
+  for(const w of [1,10,25,50,100])
+    sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
+  sSel.value=String(STATE.rwRollW);
+  sSel.disabled=STATE.rwY==="cum";
+  sSel.onchange=()=>{STATE.rwRollW=+sSel.value;rerender();};
+
+  return el("div",{class:"pill-row"},xSel,ySel,sSel);
 }
 
 // ================= TRAINING DIAGNOSTICS (train_diagnostics.csv) =================
@@ -1540,17 +1673,52 @@ function seedAgg(perSeed){
   return {pts:xs.map(x=>[x,mean(by.get(x))]),
           band:xs.map(x=>{const v=by.get(x);return [x,arrMin(v),arrMax(v)];})};
 }
+// cached episode -> cumulative-env-steps map for one run summary
+function sumStepsOf(s){
+  if(s._cs===undefined)s._cs=cumSteps(s.rewards);
+  return s._cs;
+}
+// re-base [episode, y] points onto the run's env-steps axis when the compare
+// x-axis is steps; null when this run has no step data (it drops off the axis)
+function cmpOnX(s,pts){
+  if(STATE.cmpX!=="steps")return pts;
+  const cs=sumStepsOf(s);
+  if(!cs||!pts)return null;
+  const out=[];
+  for(const p of pts){const x=cs.get(p[0]);if(x!=null)out.push([x,p[1]]);}
+  return out.length?out:null;
+}
+const cmpXLabel=()=>STATE.cmpX==="steps"?"env steps (samples)":"episode";
+const cmpXPrefix=()=>STATE.cmpX==="steps"?"step ":undefined;
 // one chart series per visible group: extract per-seed [episode, value] points
-// from each seed's summary, then seed-average them
-function cmpSeries(groups,extract){
+// from each seed's summary, re-base onto the chosen x-axis, optionally
+// transform (smoothing / cumulative), then seed-average. Exact-x alignment is
+// only valid on the episode axis; env-steps curves aggregate by interpolation.
+function cmpSeries(groups,extract,transform){
   const out=[];
   for(const g of groups){
     if(STATE.cmpHidden.has(g.label))continue;
-    const per=g.sums.map(extract).filter(p=>p&&p.length);
+    let per=g.sums.map(s=>cmpOnX(s,extract(s))).filter(p=>p&&p.length);
+    if(transform)per=per.map(transform).filter(p=>p&&p.length);
     if(!per.length)continue;
-    const agg=seedAgg(per);
+    const agg=STATE.cmpX==="steps"?gridAgg(per):seedAgg(per);
     out.push({name:g.label,color:g.color,pts:agg.pts,band:agg.band});
   }
+  return out;
+}
+// per-seed curves of one group: [{seed, run, pts}] after re-base + transform
+function cmpSeedEntries(g,extract,transform){
+  const out=[];
+  for(const r of g.runs){
+    const s=STATE.cmpCache[r.exp+"::"+r.run];
+    if(!s)continue;
+    let pts=cmpOnX(s,extract(s));
+    if(pts&&transform)pts=transform(pts);
+    if(!pts||!pts.length)continue;
+    const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
+    out.push({seed:m?m[1]:null,run:r.run,pts});
+  }
+  out.sort((a,b)=>(+a.seed||0)-(+b.seed||0));
   return out;
 }
 // [episode, value] points for one column of a {columns, rows} table, optionally
@@ -1596,14 +1764,151 @@ function cmpMatrixCard(loaded,which,stateKey,title,desc){
   for(const [key,label,hint] of METRICS){
     const series=cmpSeries(loaded,s=>tableSeries(s[which],STATE[stateKey],key));
     if(series.length)grid.append(lineChart({title:label,hint,series,
-      noEndLabel:true,xLabel:"episode"}));
+      noEndLabel:true,xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
   }
   card.append(grid);
   return card;
 }
 
+// axis + seed-view + reward-mode pickers, shared by every compare chart
+function cmpControls(anySteps){
+  const xSel=el("select",{"aria-label":"X axis"});
+  xSel.append(el("option",{value:"ep",text:"x: episodes"}));
+  const stepOpt=el("option",{value:"steps",text:"x: env steps (samples)"});
+  if(!anySteps)stepOpt.disabled=true;
+  xSel.append(stepOpt);
+  xSel.value=STATE.cmpX;
+  xSel.onchange=()=>{STATE.cmpX=xSel.value;rerender();};
+
+  const vSel=el("select",{"aria-label":"Seed view"});
+  for(const [v,t] of [["mean","seeds: mean ± range"],["overlay","seeds: overlaid"],
+                      ["side","seeds: side-by-side"]])
+    vSel.append(el("option",{value:v,text:t}));
+  vSel.value=STATE.cmpView;
+  vSel.onchange=()=>{STATE.cmpView=vSel.value;rerender();};
+
+  const ySel=el("select",{"aria-label":"Reward y"});
+  for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
+    ySel.append(el("option",{value:v,text:t}));
+  ySel.value=STATE.cmpY;
+  ySel.onchange=()=>{STATE.cmpY=ySel.value;rerender();};
+
+  const sSel=el("select",{"aria-label":"Smoothing"});
+  for(const w of [1,10,25,50,100])
+    sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
+  sSel.value=String(STATE.cmpRollW);
+  sSel.disabled=STATE.cmpY==="cum";
+  sSel.onchange=()=>{STATE.cmpRollW=+sSel.value;rerender();};
+
+  return el("div",{class:"pill-row",style:"margin-top:8px"},xSel,vSel,ySel,sSel);
+}
+
+// dash patterns distinguishing seeds of one variant in the overlaid view
+const DASHES=["","7 4","2 3","9 3 2 3","1 4","12 3"];
+function cmpRewardCard(loaded){
+  const extract=s=>(s.rewards||[]).map(r=>[r[0],r[1]]);
+  // a seed shorter than the rolling window is dropped (and counted) rather
+  // than mixed in raw — a jagged unsmoothed curve inside a chart labelled
+  // "rolling-N" would read as real signal
+  const W=STATE.cmpRollW;
+  let dropped=0;
+  const transform=STATE.cmpY==="cum"?cumulativePts
+    :W>1?(pts=>{if(pts.length>=W)return rollingPts(pts,W);dropped++;return null;}):null;
+  const appendDroppedNote=target=>{if(dropped)target.append(el("p",{class:"muted-note",
+    text:`${dropped} seed run(s) are shorter than the rolling-${W} window and `
+      +"are not drawn — lower the smoothing to see them."}));};
+  const yTitle=STATE.cmpY==="cum"?"Cumulative reward"
+    :W>1?`Episode return (rolling-${W})`:"Episode return";
+
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:yTitle}),
+    el("p",{class:"desc",text:
+      (STATE.cmpY==="cum"
+        ?"Total training reward accumulated so far — steeper is better; on the "
+         +"env-steps axis a horizontal gap between variants is a sample-efficiency gap"
+        :"Training reward per episode")
+      +(STATE.cmpX==="steps"
+        ?" · against environment steps (samples), so variants whose episodes "
+         +"differ in length stay comparable":" · against training episodes")+"."}));
+
+  const vis=loaded.filter(g=>!STATE.cmpHidden.has(g.label));
+  if(STATE.cmpView==="mean"){
+    const series=cmpSeries(loaded,extract,transform);
+    if(!series.length){card.append(el("p",{class:"muted-note",
+      text:dropped?`All seed runs are shorter than the rolling-${W} window — `
+        +"lower the smoothing.":"No reward data on this axis."}));return card;}
+    appendDroppedNote(card);
+    card.append(lineChart({series,wide:true,noEndLabel:true,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+    return card;
+  }
+
+  const perGroup=vis.map(g=>({g,entries:cmpSeedEntries(g,extract,transform)}))
+    .filter(e=>e.entries.length);
+  if(!perGroup.length){card.append(el("p",{class:"muted-note",
+    text:dropped?`All seed runs are shorter than the rolling-${W} window — `
+      +"lower the smoothing.":"No reward data on this axis."}));return card;}
+  appendDroppedNote(card);
+
+  if(STATE.cmpView==="overlay"){
+    // every seed its own line on one chart: colour = variant, dash = seed.
+    // dash is keyed on the seed's position in the global seed list, so the
+    // same seed gets the same dash in every variant even with unequal sets
+    const globalSeeds=[...new Set(perGroup.flatMap(e=>e.entries.map(x=>x.seed)
+      .filter(s=>s!=null)))].sort((a,b)=>+a-+b);
+    const series=[];
+    for(const {g,entries} of perGroup)
+      entries.forEach((e,i)=>{
+        const di=e.seed!=null?globalSeeds.indexOf(e.seed):i;
+        series.push({
+          name:`${g.label}${e.seed!=null?` · seed ${e.seed}`:""}`,color:g.color,
+          dash:DASHES[di%DASHES.length],width:1.6,endLabel:false,pts:e.pts});
+      });
+    card.append(el("p",{class:"muted-note",
+      text:"One line per seed — colour = variant, dash pattern = seed."}));
+    card.append(lineChart({series,wide:true,noEndLabel:true,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+    return card;
+  }
+
+  // side-by-side: one panel per variant; identical axes + synced hover so the
+  // panels line up point-for-point. Seed colours are consistent across panels.
+  const seedList=[...new Set(perGroup.flatMap(e=>e.entries.map(x=>x.seed)
+    .filter(s=>s!=null)))].sort((a,b)=>+a-+b);
+  const seedColor={};seedList.forEach((s,i)=>seedColor[s]=SLOTS[i%SLOTS.length]);
+  if(seedList.length){
+    const leg=el("div",{class:"legend"});
+    for(const s of seedList){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(seedColor[s]);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"seed "+s}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      leg.append(item);
+    }
+    card.append(leg);
+  }
+  const allPts=perGroup.flatMap(e=>e.entries.flatMap(x=>x.pts));
+  const xDomain=[arrMin(allPts,p=>p[0]),arrMax(allPts,p=>p[0])];
+  const yDomain=[arrMin(allPts,p=>p[1]),arrMax(allPts,p=>p[1])];
+  const grid=el("div",{class:"grid-charts",
+    style:"grid-template-columns:repeat(auto-fit,minmax(420px,1fr))"});
+  for(const {g,entries} of perGroup){
+    const series=entries.map((e,i)=>({
+      name:e.seed!=null?`seed ${e.seed}`:e.run,
+      color:e.seed!=null?seedColor[e.seed]:SLOTS[i%SLOTS.length],
+      endLabel:false,pts:e.pts}));
+    grid.append(lineChart({title:g.label,titleColor:g.color,series,
+      xDomain,yDomain,syncKey:"cmp-reward",noEndLabel:true,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+  }
+  card.append(grid);
+  card.append(el("p",{class:"muted-note",
+    text:"Panels share axes and hover — the crosshair tracks the same x in every panel."}));
+  return card;
+}
+
 function renderCompare(){
-  CHARTS.length=0;EP_HOOKS.length=0;
+  resetChartRegistries();
   stopPlay();
   const app=$("#app");app.innerHTML="";
   const groups=runGroups();
@@ -1645,6 +1950,12 @@ function renderCompare(){
     return;
   }
 
+  // env-step availability across the loaded runs decides the default x-axis
+  const allSums=loaded.flatMap(g=>g.sums);
+  const nSteps=allSums.filter(s=>sumStepsOf(s)).length;
+  if(STATE.cmpX==null)STATE.cmpX=nSteps===allSums.length&&nSteps>0?"steps":"ep";
+  if(STATE.cmpX==="steps"&&!nSteps)STATE.cmpX="ep";
+
   // shared legend — click to hide/show a variant in every chart
   const bar=el("div",{class:"legend"});
   for(const g of loaded){
@@ -1661,19 +1972,27 @@ function renderCompare(){
     bar.append(item);
   }
   const legCard=el("div",{class:"card"});
-  legCard.append(bar,
-    el("p",{class:"muted-note",text:"Line = mean across seeds · band = min–max "
-      +"across seeds. Click a name to toggle it in every chart."}));
+  legCard.append(bar,cmpControls(nSteps>0));
+  legCard.append(el("p",{class:"muted-note",text:{
+    mean:"Line = mean across seeds · band = min–max across seeds. Click a name "
+      +"to toggle it in every chart.",
+    overlay:"Reward chart draws every seed as its own line; the metric charts "
+      +"below stay seed-averaged. Click a name to toggle a variant everywhere.",
+    side:"Reward panels sit side by side with identical axes and synced hover; "
+      +"the metric charts below stay seed-averaged. Click a name to toggle a "
+      +"variant everywhere."}[STATE.cmpView]}));
+  if(STATE.cmpX==="steps"){
+    const nDer=allSums.filter(s=>sumStepsOf(s)&&s.steps_source==="derived").length;
+    const nMiss=allSums.length-nSteps;
+    const notes=[];
+    if(nDer)notes.push(`${nDer} run(s) predate the steps column — env steps `
+      +"derived from |reward| (exact for CartPole/MountainCar, ±1 per episode on Acrobot)");
+    if(nMiss)notes.push(`${nMiss} run(s) have no env-step data and are hidden on this axis`);
+    if(notes.length)legCard.append(el("p",{class:"muted-note",text:notes.join(" · ")}));
+  }
   app.append(legCard);
 
-  const rewardSeries=cmpSeries(loaded,s=>s.rewards);
-  if(rewardSeries.length){
-    const c=el("div",{class:"card"});
-    c.append(el("h2",{text:"Episode reward"}),
-      el("p",{class:"desc",text:"Training reward per episode, seed-averaged."}));
-    c.append(lineChart({series:rewardSeries,wide:true,noEndLabel:true,xLabel:"episode"}));
-    app.append(c);
-  }
+  app.append(cmpRewardCard(loaded));
 
   const diagCols=[...new Set(loaded.flatMap(g=>g.sums.flatMap(
     s=>s.diag?s.diag.columns.filter(c=>c!=="episode"):[])))]
@@ -1691,7 +2010,7 @@ function renderCompare(){
     for(const col of diagCols){
       const series=cmpSeries(loaded,s=>tableSeries(s.diag,null,col));
       if(series.length)grid.append(lineChart({title:col,hint:DIAG_HINTS[col]||"",
-        series,noEndLabel:true,xLabel:"episode"}));
+        series,noEndLabel:true,xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
     }
     c.append(grid);
     app.append(c);
@@ -1711,10 +2030,18 @@ function renderCompare(){
 
 const CHARTS=[];
 const EP_HOOKS=[];
+// charts sharing a syncKey mirror each other's hover crosshair + tooltip —
+// side-by-side seed panels stay comparable point-for-point. Reset per render.
+const HOVER_SYNC={};
+function resetChartRegistries(){
+  CHARTS.length=0;EP_HOOKS.length=0;
+  for(const k in HOVER_SYNC)delete HOVER_SYNC[k];
+}
 function syncMarkers(ep){for(const c of CHARTS)c.marker(ep);for(const h of EP_HOOKS)h(ep);}
 
 function lineChart(opts){
-  const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix}=opts;
+  const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix,
+         xDomain,yDomain,syncKey}=opts;
   const W=wide?960:440, H=wide?300:230;
   const anyEnd=!noEndLabel&&series.some(s=>s.endLabel!==false);
   const m={l:56,r:anyEnd?70:16,t:12,b:34};
@@ -1734,6 +2061,9 @@ function lineChart(opts){
   let ymin=arrMin(all,p=>p[1]), ymax=arrMax(all,p=>p[1]);
   for(const s of series)if(s.band)for(const b of s.band){
     ymin=Math.min(ymin,b[1]);ymax=Math.max(ymax,b[2]);}
+  // caller-shared domains (side-by-side panels must line up exactly)
+  if(xDomain){xmin=xDomain[0];xmax=xDomain[1];}
+  if(yDomain){ymin=yDomain[0];ymax=yDomain[1];}
   if(xmax===xmin)xmax=xmin+1;
   if(ymax===ymin){ymax+=1;ymin-=1;}
   const pad=(ymax-ymin)*0.08; ymax+=pad; ymin-=pad;
@@ -1756,7 +2086,7 @@ function lineChart(opts){
   // x ticks + axis label
   for(const v of ticks(xmin,xmax,wide?6:4)){
     const t=mk("text",{x:X(v),y:H-16,"text-anchor":"middle",class:"axis-txt"});
-    t.textContent=v>=1000?(v/1000).toFixed(v%1000?1:0)+"k":String(Math.round(v));svg.append(t);
+    t.textContent=fmtSteps(v);svg.append(t);
   }
   if(xLabel){
     const t=mk("text",{x:W-m.r,y:H-2,"text-anchor":"end",class:"axis-lab"});
@@ -1816,27 +2146,37 @@ function lineChart(opts){
   svg.append(overlay);
 
   const xs=[...new Set(hoverSeries.flatMap(s=>s.pts.map(p=>p[0])))].sort((a,b)=>a-b);
-  function move(ev){
+  // nearest point of one series to x value xv (pts are sorted by x)
+  function nearestPt(pts,xv){
+    let a=0,b=pts.length-1;
+    while(b-a>1){const mid=(a+b)>>1;(pts[mid][0]<=xv)?a=mid:b=mid;}
+    return Math.abs(pts[a][0]-xv)<=Math.abs(pts[b][0]-xv)?pts[a]:pts[b];
+  }
+  function showAt(xv){
     if(!xs.length)return;
     const r=svg.getBoundingClientRect();
-    const px=(ev.clientX-r.left)/r.width*W;
-    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
     let near=xs[0]; for(const x of xs)if(Math.abs(x-xv)<Math.abs(near-xv))near=x;
     cross.setAttribute("x1",X(near));cross.setAttribute("x2",X(near));cross.setAttribute("opacity",.7);
     hoverDots.innerHTML="";
     const rows=[];
+    // per-series nearest within a 1%-of-span tolerance: seed curves on an
+    // env-steps axis never share exact x values, but should all report
+    const tol=(xmax-xmin)/100;
     for(const s of hoverSeries){
-      const p=s.pts.find(q=>q[0]===near); if(!p)continue;
+      if(!s.pts.length)continue;
+      const p=nearestPt(s.pts,near);
+      if(p[0]!==near&&Math.abs(p[0]-near)>tol)continue;
       const c=col(s);
-      hoverDots.append(mk("circle",{cx:X(near),cy:Y(p[1]),r:4,fill:c,
+      hoverDots.append(mk("circle",{cx:X(p[0]),cy:Y(p[1]),r:4,fill:c,
         stroke:"var(--surface)","stroke-width":2}));
       let extra="";
-      if(s.band){const b=s.band.find(q=>q[0]===near);
+      if(s.band){const b=s.band.find(q=>q[0]===p[0]);
         if(b)extra=`  (${fmtN(b[1])}–${fmtN(b[2])})`;}
       rows.push({name:s.name,color:c,v:fmtN(p[1])+extra});
     }
     tip.innerHTML="";
-    tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))+near.toLocaleString()}));
+    tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))
+      +(Number.isInteger(near)?near.toLocaleString():fmtN(near))}));
     for(const rw of rows){
       const row=el("div",{class:"row"});row.style.color=rw.color;
       row.append(el("span",{class:"k"}),
@@ -1849,12 +2189,28 @@ function lineChart(opts){
     let tx=(X(near)/W)*r.width+12; if(tx>r.width-150)tx=(X(near)/W)*r.width-150;
     tip.style.left=Math.max(0,tx)+"px"; tip.style.top="6px";
   }
-  overlay.addEventListener("pointermove",move);
-  overlay.addEventListener("pointerleave",()=>{cross.setAttribute("opacity",0);hoverDots.innerHTML="";tip.style.opacity=0;});
+  function hideHover(){cross.setAttribute("opacity",0);hoverDots.innerHTML="";tip.style.opacity=0;}
+  overlay.addEventListener("pointermove",ev=>{
+    const r=svg.getBoundingClientRect();
+    const px=(ev.clientX-r.left)/r.width*W;
+    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
+    if(syncKey)for(const h of HOVER_SYNC[syncKey]||[])h.showAt(xv);
+    else showAt(xv);
+  });
+  overlay.addEventListener("pointerleave",()=>{
+    if(syncKey)for(const h of HOVER_SYNC[syncKey]||[])h.hide();
+    else hideHover();
+  });
+  if(syncKey)(HOVER_SYNC[syncKey]=HOVER_SYNC[syncKey]||[]).push({showAt,hide:hideHover});
 
   box.append(svg,tip);
-  if(episodeAxis)
-    CHARTS.push({marker:ep=>{if(ep>=xmin&&ep<=xmax){marker.setAttribute("x1",X(ep));marker.setAttribute("x2",X(ep));}
+  // scrubber-synced marker: on episode axes directly, on re-based axes via the
+  // caller's episode -> x mapping (opts.epToX), so e.g. the learning curve on
+  // env steps still tracks the episode selected in the spectra scrubber
+  if(episodeAxis||opts.epToX)
+    CHARTS.push({marker:ep=>{
+      const x=opts.epToX?opts.epToX(ep):ep;
+      if(x!=null&&x>=xmin&&x<=xmax){marker.setAttribute("x1",X(x));marker.setAttribute("x2",X(x));}
       else{marker.setAttribute("x1",-99);marker.setAttribute("x2",-99);}}});
   return box;
 }
