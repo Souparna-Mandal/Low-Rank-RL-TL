@@ -291,6 +291,165 @@ def test_tiny_e2e_cartpole():
             assert col in header, f"missing diagnostics column {col}"
 
 
+def test_rampdown_trigger_and_linear_ramp():
+    a = _make_fhr(0.2, warmup=0, rampdown_reward_threshold=100.0,
+                  rampdown_penalty_threshold=1.0, rampdown_patience_eps=3,
+                  rampdown_episodes=4)
+    # reward below threshold: high residual alone never triggers
+    for ep in range(3):
+        a._ep_penalty_vals = [5.0]
+        a.notify_episode_end(ep, 50.0)
+    assert a._rd_k is None and a._lambda_eff() == 0.2
+    # one low-residual episode inside the window blocks the trigger
+    for ep, pen in ((3, 5.0), (4, 0.1), (5, 5.0)):
+        a._ep_penalty_vals = [pen]
+        a.notify_episode_end(ep, 150.0)
+    assert a._rd_k is None
+    a._ep_penalty_vals = [5.0]
+    a.notify_episode_end(6, 150.0)          # window (4, 5, 6) still holds the 0.1
+    assert a._rd_k is None
+    a._ep_penalty_vals = [5.0]
+    a.notify_episode_end(7, 150.0)          # window (5, 6, 7): all high + reward high
+    assert a._rd_k == 1
+    # linear ramp over 4 episodes: lambda = 0.2 * (0.75, 0.5, 0.25, 0), then stays 0
+    got = []
+    for ep in (8, 9, 10, 11):
+        got.append(a._lambda_eff())
+        a._ep_penalty_vals = [5.0]
+        a.notify_episode_end(ep, 150.0)
+    assert np.allclose(got, [0.15, 0.10, 0.05, 0.0]), got
+    assert a._lambda_eff() == 0.0
+    # an episode with NO penalty samples reads as NaN and can never trigger
+    b = _make_fhr(0.2, warmup=0, rampdown_reward_threshold=10.0,
+                  rampdown_penalty_threshold=0.0, rampdown_patience_eps=1,
+                  rampdown_episodes=0)
+    b.notify_episode_end(0, 100.0)          # _ep_penalty_vals empty -> NaN
+    assert b._rd_k is None and b._lambda_eff() == 0.2
+
+
+def test_rampdown_immediate_disabled_and_warmup_gated():
+    # rampdown_episodes = 0: lambda cut to 0 the moment it triggers; with no
+    # penalty threshold the reward window alone gates
+    a = _make_fhr(0.3, warmup=0, rampdown_reward_threshold=10.0,
+                  rampdown_patience_eps=2, rampdown_episodes=0)
+    a.notify_episode_end(0, 20.0)
+    assert a._rd_k is None and a._lambda_eff() == 0.3
+    a.notify_episode_end(1, 20.0)
+    assert a._rd_k == 1 and a._lambda_eff() == 0.0
+    # disabled (reward threshold None): the hook never schedules anything
+    b = _make_fhr(0.3, warmup=0)
+    for ep in range(5):
+        b._ep_penalty_vals = [9.9]
+        b.notify_episode_end(ep, 1e9)
+    assert b._rd_k is None and b._lambda_eff() == 0.3
+    # warm-up gates the trigger: conditions met but lambda still in warm-up
+    c = _make_fhr(0.2, warmup=10 ** 9, rampdown_reward_threshold=10.0,
+                  rampdown_patience_eps=1, rampdown_episodes=0)
+    c._ep_penalty_vals = [5.0]
+    c.notify_episode_end(0, 100.0)
+    assert c._rd_k is None and c._lambda_eff() == 0.0
+    # constructor validation
+    for bad in (dict(rampdown_episodes=-1), dict(rampdown_patience_eps=0)):
+        try:
+            _make_fhr(0.1, **bad)
+            assert False, f"expected ValueError for {bad}"
+        except ValueError:
+            pass
+
+
+def test_rampdown_window_ignores_warmup_and_baseline_arm():
+    # warm-up era episodes must not pre-fill the trigger window — otherwise a
+    # good-enough policy fires the trigger on the first post-warm-up hook and
+    # the penalty phase is skipped entirely
+    a = _make_fhr(0.3, warmup=5, rampdown_reward_threshold=50.0,
+                  rampdown_patience_eps=3, rampdown_episodes=0)
+    for ep in range(4):                      # high-reward episodes in warm-up
+        a.notify_episode_end(ep, 100.0)
+    assert a._rd_window == [] and a._rd_k is None
+    a._grad_steps = 5                        # warm-up over
+    a.notify_episode_end(4, 100.0)
+    a.notify_episode_end(5, 100.0)
+    assert a._rd_k is None                   # only 2 post-warm-up episodes
+    a.notify_episode_end(6, 100.0)
+    assert a._rd_k == 1                      # 3rd qualifying episode triggers
+    # the baseline arm (fhr_weight 0) stays inert even in reward-only mode:
+    # no spurious trigger line / rampdown_scale ramp in its diagnostics
+    b = _make_fhr(0.0, warmup=0, rampdown_reward_threshold=10.0,
+                  rampdown_patience_eps=1, rampdown_episodes=0)
+    b.notify_episode_end(0, 100.0)
+    assert b._rd_k is None and b._rampdown_scale() == 1.0
+
+
+def test_rampdown_relative_penalty_threshold():
+    # "50%" bar = half the mean of the topk largest per-episode residuals seen
+    # so far; the bar is undefined (condition fails) until topk episodes exist
+    a = _make_fhr(0.2, warmup=0, rampdown_reward_threshold=100.0,
+                  rampdown_penalty_threshold="50%", rampdown_penalty_topk=3,
+                  rampdown_patience_eps=2, rampdown_episodes=0)
+    for ep, pen in enumerate((4.0, 6.0, 8.0)):   # low reward: only builds history
+        a._ep_penalty_vals = [pen]
+        a.notify_episode_end(ep, 0.0)
+    assert a._penalty_bar() == 0.5 * (4 + 6 + 8) / 3
+    a._ep_penalty_vals = [3.5]; a.notify_episode_end(3, 150.0)
+    assert a._rd_k is None                       # window mean reward still low
+    a._ep_penalty_vals = [3.5]; a.notify_episode_end(4, 150.0)
+    assert a._rd_k == 1                          # 3.5 >= bar 3.0, reward high
+    # bar undefined until topk history entries exist
+    b = _make_fhr(0.2, warmup=0, rampdown_reward_threshold=10.0,
+                  rampdown_penalty_threshold="50%", rampdown_penalty_topk=5,
+                  rampdown_patience_eps=1, rampdown_episodes=0)
+    for ep in range(4):
+        b._ep_penalty_vals = [9.0]
+        b.notify_episode_end(ep, 100.0)
+    assert b._rd_k is None                       # only 4 of 5 history entries
+    b._ep_penalty_vals = [9.0]
+    b.notify_episode_end(4, 100.0)
+    assert b._rd_k == 1                          # bar 4.5, residual 9
+    # residuals that collapsed relative to their historical highs never trigger
+    c = _make_fhr(0.2, warmup=0, rampdown_reward_threshold=10.0,
+                  rampdown_penalty_threshold="50%", rampdown_penalty_topk=2,
+                  rampdown_patience_eps=2, rampdown_episodes=0)
+    for ep, (pen, rew) in enumerate(((10.0, 0.0), (10.0, 0.0),
+                                     (1.0, 100.0), (1.0, 100.0))):
+        c._ep_penalty_vals = [pen]
+        c.notify_episode_end(ep, rew)
+    assert c._rd_k is None                       # bar 5.0, recent residuals 1.0
+    # malformed strings are rejected at construction
+    for bad in ("high", "40", "40 percent"):
+        try:
+            _make_fhr(0.1, rampdown_penalty_threshold=bad)
+            assert False, f"expected ValueError for {bad!r}"
+        except ValueError:
+            pass
+
+
+def test_rampdown_e2e_training_loop():
+    """The dqn_training_loop hook drives the trigger; lambda_eff falls to 0 in
+    the diagnostics once an easy trigger fires."""
+    torch.manual_seed(5), np.random.seed(5), random.seed(5)
+    env = gym.make("CartPole-v1")
+    agent = _make_fhr(1e-2, warmup=0, seed=5, batch_size=16, gd_steps_ceil=2,
+                      env=env, rampdown_reward_threshold=5.0,
+                      rampdown_penalty_threshold=0.0, rampdown_patience_eps=2,
+                      rampdown_episodes=3)
+    with tempfile.TemporaryDirectory() as tmp:
+        logger = RunLogger(tmp)
+        dqn_training_loop(
+            agent, env, no_episodes=20, target_network_update_steps=50,
+            train_frequency_steps=1, use_episode_training=True,
+            solved_reward=10 ** 9, warmup_steps=0,
+            early_stopping_patience_eps=10 ** 9,
+            analysis_config={"ep_freq": 10 ** 9, "methods": []},
+            run_logger=logger)
+        assert agent._rd_k is not None, "easy trigger never fired in 20 episodes"
+        assert agent._lambda_eff() == 0.0
+        diag_csv = (logger.dir / "train_diagnostics.csv").read_text().splitlines()
+        header = diag_csv[0].split(",")
+        assert "rampdown_scale" in header and "lambda_eff" in header
+        li = header.index("lambda_eff")
+        assert float(diag_csv[-1].split(",")[li]) == 0.0
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in fns:

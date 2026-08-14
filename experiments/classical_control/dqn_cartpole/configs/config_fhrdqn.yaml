@@ -19,7 +19,8 @@ experiment:
   seeds: [0, 1, 2]
   # Numbered FHR experiments for run_fhrdqn_seeds.py --experiment N [M ...]:
   # each entry is ONE full FHR parameter set — any subset of fhr_weight,
-  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate; unspecified
+  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate, and the
+  # rampdown_* params (see the agent block); unspecified
   # params inherit the agent block below. A launch trains the shared baseline
   # (fhr_weight 0, plain _baseline run names, reused if already recorded in
   # cached/fhrdqn_runs_manifest.json) plus one _exp<N>-tagged arm per number,
@@ -93,6 +94,22 @@ agent:
   c_learning_rate: 0.0149 # lr of the c/d param group: weight_decay 0 (AdamW's
                           # default decay would drag the coefficients toward 0),
                           # excluded from grad clipping and the target network.
+  # --- automatic lambda ramp-down (armed only when the reward threshold is set) ---
+  # After warm-up, once the mean episode reward over the last
+  # rampdown_patience_eps episodes reaches rampdown_reward_threshold while every
+  # one of them kept a mean recurrence residual (penalty_raw) >=
+  # rampdown_penalty_threshold, the penalty is judged to be fighting an
+  # already-good policy: lambda anneals linearly to 0 over rampdown_episodes
+  # episodes (0 = switch off immediately). One-way; needs dqn_training_loop's
+  # notify_episode_end hook. rampdown_scale lands in train_diagnostics.csv.
+  rampdown_reward_threshold: null   # e.g. 400; null disables the feature
+  rampdown_penalty_threshold: null  # absolute number, or a string like "40%" =
+                                    # that fraction of the mean of the topk
+                                    # largest per-episode residuals seen so far
+                                    # (post-warm-up); null = reward alone gates
+  rampdown_penalty_topk: 20         # history size for the "NN%" relative bar
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
 
 training:
   no_episodes: 1500

@@ -13,7 +13,7 @@
 # notebook's baseline arm overrides (one config, one code path, one difference).
 
 experiment:
-  name: dqn_mountaincar_fhrdqn_2
+  name: dqn_mountaincar_fhrdqn
   seed: 52               # fallback when `seeds` is absent or empty
   # The comparison notebook trains both arms once per seed and reports
   # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
@@ -30,11 +30,9 @@ experiment:
   fhr_experiments:
     1: {fhr_weight: 0.0191, fhr_order: 4, reward_lags: True,
         warmup_grad_steps: 750, c_learning_rate: 0.0367} # (Optuna trial 19 — tuned on the 64x64 net)
-    # 2: {fhr_weight: 0.2}     # higher lambda, everything else inherited
-    2: {fhr_weight: 0.1, fhr_order: 4, reward_lags: False, rampdown_reward_threshold: null}
+    2: {fhr_weight: 0.2}     # higher lambda, everything else inherited
     3: {fhr_weight: 0.5, fhr_order: 3, reward_lags: False}
-    4: {fhr_weight: 0.5, fhr_order: 3, reward_lags: False, rampdown_reward_threshold: null }
-    # 4: {fhr_weight: 0.7, fhr_order:3, reward_lags: False}
+    # 4: {fhr_weight: 0.7, fhr_order: 3, reward_lags: False}
                              # theory-minimal pure-AR order-2 recurrence
   device: auto
   # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under

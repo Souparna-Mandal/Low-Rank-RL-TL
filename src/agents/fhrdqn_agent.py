@@ -8,6 +8,7 @@ residual an SVD-free surrogate for the same low-rank prior, and one shared
 coefficient vector across all episodes corresponds to low rank of the stacked
 (mosaic) Hankel of all trajectories.
 """
+import re
 import warnings
 
 import numpy as np
@@ -51,14 +52,48 @@ class FHRDQNAgent(QAgent):
         warmup_grad_steps: hard warm-up K0 — lambda is exactly 0 for the first
             K0 gradient steps, then fhr_weight at full strength (no ramp).
         c_learning_rate: learning rate of the c/d param group.
+        rampdown_reward_threshold: arming this (non-None) enables the automatic
+            lambda ramp-DOWN. After warm-up, once the mean episode reward over
+            the last rampdown_patience_eps episodes reaches this value while
+            the recurrence residual stayed high (below), the penalty is judged
+            to be fighting an already-good policy and lambda anneals to 0.
+            Requires the training loop to call notify_episode_end() (the
+            dqn_training_loop does). One-way: lambda never comes back up.
+        rampdown_penalty_threshold: the "residual stayed high" bar — every
+            episode in the trigger window must have a mean penalty_raw >= this.
+            A number is an absolute bar; a percentage string like "40%" makes
+            the bar relative: that fraction of the mean of the
+            rampdown_penalty_topk largest per-episode residuals seen so far
+            (post-warm-up), so "high" tracks the run's own residual scale. The
+            relative bar is undefined (condition fails) until topk episodes
+            have been observed. None (with the reward threshold armed) drops
+            the residual condition and triggers on reward alone.
+        rampdown_penalty_topk: how many of the largest per-episode residuals
+            the "NN%" relative bar averages over.
+        rampdown_patience_eps: both conditions are evaluated over a window of
+            this many consecutive episodes.
+        rampdown_episodes: once triggered, lambda scales linearly from
+            fhr_weight to 0 over this many episodes; 0 switches it off
+            immediately.
     """
 
     def __init__(self, *, fhr_weight: float = 0.0, fhr_order: int = 2,
                  reward_lags: bool = False, warmup_grad_steps: int = 2000,
-                 c_learning_rate: float = 5e-3, **q_agent_kwargs):
+                 c_learning_rate: float = 5e-3,
+                 rampdown_reward_threshold: float | None = None,
+                 rampdown_penalty_threshold: float | str | None = None,
+                 rampdown_penalty_topk: int = 20,
+                 rampdown_patience_eps: int = 10,
+                 rampdown_episodes: int = 0, **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         if fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {fhr_order}")
+        if rampdown_episodes < 0:
+            raise ValueError(f"rampdown_episodes must be >= 0, got {rampdown_episodes}")
+        if rampdown_patience_eps < 1:
+            raise ValueError(f"rampdown_patience_eps must be >= 1, got {rampdown_patience_eps}")
+        if rampdown_penalty_topk < 1:
+            raise ValueError(f"rampdown_penalty_topk must be >= 1, got {rampdown_penalty_topk}")
         if fhr_order == 1 and not reward_lags:
             warnings.warn(
                 "Pure AR with fhr_order=1 cannot be satisfied by a "
@@ -98,6 +133,31 @@ class FHRDQNAgent(QAgent):
         self._grad_steps = 0
         self.nan_skips = 0
 
+        # -- automatic lambda ramp-down state --
+        self.rampdown_reward_threshold = rampdown_reward_threshold
+        self.rampdown_penalty_threshold = rampdown_penalty_threshold
+        self.rampdown_penalty_topk = rampdown_penalty_topk
+        self.rampdown_patience_eps = rampdown_patience_eps
+        self.rampdown_episodes = rampdown_episodes
+        # absolute bar, or "NN%" of the mean of the topk largest per-episode
+        # residuals seen so far — parsed once here
+        self._rd_pen_abs = None
+        self._rd_pen_frac = None
+        if isinstance(rampdown_penalty_threshold, str):
+            m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*%\s*",
+                             rampdown_penalty_threshold)
+            if not m:
+                raise ValueError(
+                    "rampdown_penalty_threshold must be a number or a "
+                    f"percentage string like '40%', got {rampdown_penalty_threshold!r}")
+            self._rd_pen_frac = float(m.group(1)) / 100.0
+        elif rampdown_penalty_threshold is not None:
+            self._rd_pen_abs = float(rampdown_penalty_threshold)
+        self._ep_penalty_vals: list[float] = []   # penalty_raw within the episode
+        self._rd_window: list[tuple[float, float]] = []  # (reward, ep mean penalty)
+        self._pen_top: list[float] = []  # largest post-warm-up per-episode residuals
+        self._rd_k = None            # None = not triggered; else episodes since
+
     # -- buffer plumbing (episodic; mirrors HankelDQNAgent) -----------------
     def update_buffer(self, state, action, reward, next_state, terminated, truncated=False):
         state = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -113,9 +173,86 @@ class FHRDQNAgent(QAgent):
         raise NotImplementedError(
             "FHRDQNAgent's episodic buffer has no atari (uint8/CPU) path yet")
 
-    # -- penalty schedule: hard warm-up, no ramp ----------------------------
+    # -- penalty schedule: hard warm-up, optional triggered ramp-down -------
+    def _rampdown_scale(self) -> float:
+        """Multiplier on fhr_weight: 1 until the ramp-down triggers, then
+        linear to 0 over rampdown_episodes episodes (0 => immediately 0)."""
+        if self._rd_k is None:
+            return 1.0
+        if self.rampdown_episodes <= 0:
+            return 0.0
+        return max(0.0, 1.0 - self._rd_k / self.rampdown_episodes)
+
     def _lambda_eff(self) -> float:
-        return 0.0 if self._grad_steps < self.warmup_grad_steps else self.fhr_weight
+        if self._grad_steps < self.warmup_grad_steps:
+            return 0.0
+        return self.fhr_weight * self._rampdown_scale()
+
+    def _penalty_bar(self) -> float | None:
+        """The residual bar an episode must reach to count as "high": the
+        absolute threshold, or the "NN%" fraction of the mean of the topk
+        largest per-episode residuals seen so far. None while unset — or, in
+        relative mode, while fewer than topk episodes have been observed (not
+        enough history to call anything relatively high)."""
+        if self._rd_pen_abs is not None:
+            return self._rd_pen_abs
+        if (self._rd_pen_frac is not None
+                and len(self._pen_top) >= self.rampdown_penalty_topk):
+            return self._rd_pen_frac * float(np.mean(self._pen_top))
+        return None
+
+    def notify_episode_end(self, episode: int, episode_reward: float) -> None:
+        """Per-episode hook (called by dqn_training_loop): watch the reward
+        window and the recurrence residual to decide the lambda ramp-down.
+
+        Trigger = the last rampdown_patience_eps episodes have mean reward >=
+        rampdown_reward_threshold AND (when a penalty threshold is set) every
+        one of them kept a mean penalty_raw >= rampdown_penalty_threshold —
+        i.e. the policy is already good, yet the recurrence keeps mispredicting
+        it, so the penalty now only distorts the TD objective. One-way."""
+        ep_pen = (float(np.mean(self._ep_penalty_vals))
+                  if self._ep_penalty_vals else float("nan"))
+        self._ep_penalty_vals = []
+        if self._rd_k is not None:          # already ramping — just advance it
+            self._rd_k += 1
+            return
+        if self.rampdown_reward_threshold is None or self.fhr_weight <= 0:
+            return              # disabled, or the baseline arm: no lambda to ramp
+        if self._grad_steps < self.warmup_grad_steps:
+            # warm-up episodes never count toward the trigger window — the
+            # penalty is not training yet, so its residual is trivially high
+            # and a good-enough policy would fire the trigger on the very
+            # first post-warm-up hook, skipping the penalty phase entirely
+            return
+        if np.isfinite(ep_pen):
+            # historical high-residual reference for the "NN%" relative bar
+            self._pen_top.append(ep_pen)
+            self._pen_top.sort(reverse=True)
+            del self._pen_top[self.rampdown_penalty_topk:]
+        self._rd_window.append((float(episode_reward), ep_pen))
+        del self._rd_window[:-self.rampdown_patience_eps]
+        if len(self._rd_window) < self.rampdown_patience_eps:
+            return
+        rewards = [r for r, _ in self._rd_window]
+        pens = [p for _, p in self._rd_window]
+        if float(np.mean(rewards)) < self.rampdown_reward_threshold:
+            return
+        bar = self._penalty_bar()
+        if self.rampdown_penalty_threshold is not None and (
+                bar is None or not all(np.isfinite(p) and p >= bar
+                                       for p in pens)):
+            return
+        self._rd_k = 1
+        gate = ("not gated" if self.rampdown_penalty_threshold is None
+                else f"always >= {bar:g}"
+                + (f" ({self.rampdown_penalty_threshold} of the top-"
+                   f"{self.rampdown_penalty_topk} residual mean)"
+                   if self._rd_pen_frac is not None else ""))
+        print(f"FHR lambda ramp-down triggered at episode {episode}: "
+              f"mean reward {np.mean(rewards):.1f} >= "
+              f"{self.rampdown_reward_threshold} over "
+              f"{self.rampdown_patience_eps} eps, penalty_raw {gate}"
+              f" — lambda -> 0 over {self.rampdown_episodes} episode(s)")
 
     def _companion_radius(self) -> float:
         """Spectral radius of the companion matrix of z^r - c_1 z^{r-1} - ... - c_r.
@@ -148,6 +285,9 @@ class FHRDQNAgent(QAgent):
                 "residual_rms": np.nan, "b_h": np.nan, "unique_eps": np.nan,
                 "sum_c": float(self.c.detach().sum()),
                 "companion_radius": self._companion_radius(),
+                "rampdown_scale": self._rampdown_scale(),
+                "rampdown_penalty_bar": (float("nan") if (bar := self._penalty_bar()) is None
+                                         else bar),
                 "nan_skips": self.nan_skips}
         for j in range(self.fhr_order):
             diag[f"c_{j + 1}"] = float(self.c[j].detach())
@@ -178,6 +318,11 @@ class FHRDQNAgent(QAgent):
                     penalty = F.huber_loss(anchor, prediction)
                 diag["penalty_raw"] = float(penalty.detach())
                 diag["penalty_weighted"] = lam * diag["penalty_raw"]
+                # feed the ramp-down trigger's per-episode residual average —
+                # only while the penalty actually trains (lam > 0): warm-up
+                # residuals reflect the frozen init and must not count
+                if lam > 0:
+                    self._ep_penalty_vals.append(diag["penalty_raw"])
                 diag["residual_rms"] = float(
                     (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
                 if lam > 0:

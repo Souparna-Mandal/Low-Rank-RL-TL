@@ -37,8 +37,8 @@ relative to the experiment dir), so a relaunch only runs missing/failed pairs. T
 comparison notebooks import launch_all()/load_runs() from this file and read
 rewards from each run dir's rewards.csv — the training loop rewrites that file
 at every analysis tick, so partially finished runs are readable too. Child
-stdout/stderr goes to cached/logs/fhrdqn[_exp<N>]_<arm>_seed<N>.log. Children are pinned to one
-BLAS/OMP thread each (the fable launcher precedent) so the fan-out doesn't
+stdout/stderr goes to cached/logs/fhrdqn_<key>_seed<N>.log, where <key> is
+baseline, fhr, or exp<N>. Children are pinned to one BLAS/OMP thread each  so the fan-out doesn't
 oversubscribe the CPU.
 """
 import argparse
@@ -137,7 +137,10 @@ def _run_recorded(exp_dir, manifest, arm, seed):
 # (net size, replay, epsilon schedule, ...) stays identical to the baseline so
 # an exp<N>-vs-baseline gap is attributable to the FHR block alone.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
-              "warmup_grad_steps", "c_learning_rate")
+              "warmup_grad_steps", "c_learning_rate",
+              "rampdown_reward_threshold", "rampdown_penalty_threshold",
+              "rampdown_penalty_topk", "rampdown_patience_eps",
+              "rampdown_episodes")
 
 
 def _experiment_overrides(exp_dir, experiment):
@@ -169,19 +172,23 @@ def _experiment_overrides(exp_dir, experiment):
 
 
 def _arm_specs(exp_dir, experiments):
-    """[(manifest/log key, extra child argv)] for one launch: the legacy two
-    arms, or the shared baseline + one arm per requested experiment number.
-    Overrides travel to the child as JSON (exact float round-trip)."""
+    """[(manifest/log key, extra child argv, agent overrides)] for one launch:
+    the legacy two arms, or the shared baseline + one arm per requested
+    experiment number. Overrides travel to the child as JSON (exact float
+    round-trip) and are also recorded in the manifest, because the run dir's
+    config.yaml copy does not reflect them — rebuilding a trained agent
+    (record_final_videos) must re-apply them or coefficient shapes mismatch."""
+    baseline = ("baseline", ["--arm", "baseline"], {"fhr_weight": 0.0})
     if not experiments:
-        return [("baseline", ["--arm", "baseline"]), ("fhr", ["--arm", "fhr"])]
+        return [baseline, ("fhr", ["--arm", "fhr"], None)]
     if len(set(experiments)) != len(experiments):
         raise ValueError(f"duplicate experiment numbers: {experiments}")
-    specs = [("baseline", ["--arm", "baseline"])]   # shared with legacy runs
+    specs = [baseline]                              # shared with legacy runs
     for n in experiments:
         overrides = _experiment_overrides(exp_dir, n)
         specs.append((f"exp{n}", ["--arm", "fhr",
                                   "--agent-overrides", json.dumps(overrides),
-                                  "--name-tag", f"exp{n}"]))
+                                  "--name-tag", f"exp{n}"], overrides))
     return specs
 
 
@@ -201,9 +208,18 @@ def launch_all(max_workers=6, force=False, exp_dir=None, episodes=None,
     manifest = _load_manifest(exp_dir)
     manifest["seeds"] = seeds
     specs = _arm_specs(exp_dir, experiments)
+    # each arm's effective agent overrides, keyed like runs — the rebuild path
+    # (load_runs -> record_final_videos) re-applies them on the config copy
+    manifest["overrides"] = {**manifest.get("overrides", {}),
+                             **{k: ov for k, _, ov in specs if ov is not None}}
     mpath = MANIFEST
-    jobs = [(key, extra, s) for key, extra in specs for s in seeds
-            if force or not _run_recorded(exp_dir, manifest, key, s)]
+    # force never touches the shared baseline in an --experiment launch: the
+    # point of forcing exp<N> is a changed FHR set, and silently repointing
+    # the baseline would swap the reference under every OTHER experiment.
+    # Retrain the baseline deliberately with --force and no --experiment.
+    jobs = [(key, extra, s) for key, extra, _ in specs for s in seeds
+            if (force and (key != "baseline" or not experiments))
+            or not _run_recorded(exp_dir, manifest, key, s)]
     skipped = len(specs) * len(seeds) - len(jobs)
     if skipped:
         print(f"skipping {skipped} already-completed run(s) recorded in {mpath}")
@@ -286,14 +302,20 @@ def load_runs(arm, exp_dir=None):
             cfg = yaml.safe_load(f)
         runs.append({"seed": seed, "cfg": cfg, "rewards": table[:, 1],
                      "steps": table[:, 2] if table.shape[1] > 2 else None,
+                     # the FHR params this arm actually trained with, on top of
+                     # cfg["agent"] (None for the legacy fhr arm / old manifests)
+                     "agent_overrides": manifest.get("overrides", {}).get(arm),
                      "run_dir": run_dir})
     return runs
 
 
-def _load_run_agent(run_dir, device="cpu"):
+def _load_run_agent(run_dir, device="cpu", agent_overrides=None):
     """Rebuild the trained agent from a run dir (config copy + final
     checkpoint) with an rgb_array eval env wrapped exactly like training —
-    the normalise/clip wrappers are load-bearing (e.g. MountainCar)."""
+    the normalise/clip wrappers are load-bearing (e.g. MountainCar).
+    agent_overrides is the arm's manifest-recorded FHR set: the config copy
+    does not carry it, and without it a checkpoint from an arm that changed
+    fhr_order / reward_lags cannot load (coefficient shapes mismatch)."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from experiment import build_env, build_agent
@@ -301,6 +323,8 @@ def _load_run_agent(run_dir, device="cpu"):
     run_dir = pathlib.Path(run_dir)
     with open(run_dir / "config.yaml") as f:
         cfg = yaml.safe_load(f)
+    if agent_overrides:
+        cfg["agent"].update(agent_overrides)
     cfg["experiment"]["_device"] = device
     env = build_env(cfg, render_mode="rgb_array")
     nn_extra_kwargs = {"in_dim": env.observation_space.shape[0],
@@ -320,7 +344,8 @@ def record_final_videos(arm, exp_dir=None):
     from analysis.visualisations.rollout_video import record_greedy_episode
     out = []
     for r in load_runs(arm, exp_dir):
-        agent, env = _load_run_agent(r["run_dir"])
+        agent, env = _load_run_agent(r["run_dir"],
+                                     agent_overrides=r["agent_overrides"])
         prefix = record_greedy_episode(agent, env, str(r["run_dir"] / "videos"),
                                        episode="final", seed=r["seed"])
         env.close()
@@ -339,7 +364,9 @@ def main():
     parser.add_argument("--max-workers", type=int, default=6,
                         help="parallel trainings in launcher mode (default 6)")
     parser.add_argument("--force", action="store_true",
-                        help="rerun (arm, seed) pairs already in the manifest")
+                        help="rerun (arm, seed) pairs already in the manifest; "
+                             "with --experiment the shared baseline is kept — "
+                             "use --force without --experiment to retrain it")
     parser.add_argument("--experiment", type=int, nargs="+", default=None,
                         help="launcher mode: numbered experiment(s) from the "
                              "config's experiment.fhr_experiments — trains the "

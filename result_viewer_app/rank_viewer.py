@@ -8,6 +8,13 @@ single-page app to step through the spectrum figures episode by episode, plot
 rank metrics over training, and explore how low-rankness evolves over training
 and persists across sub-trajectory lengths.
 
+The viewer is deliberately decoupled from the training/experiment code: it
+imports nothing from src/ or experiments/ and consumes only on-disk data
+contracts (the run-dir artifact files above plus the optional
+<exp>/cached/*manifest*.json a multi-experiment launcher writes — see
+scan_manifests). Refactors elsewhere in the repo cannot break it unless those
+file formats change.
+
 Stdlib only, so it can be scp'd to the HPC and run against the runs there:
 
     python result_viewer_app/rank_viewer.py       # serves http://localhost:8501
@@ -46,10 +53,114 @@ SWEEP_COLS = ["episode", "matrix", "rollout", "seed", "sub_len",
               "row_lev_max", "col_lev_max"]
 
 
-def scan_runs(root: pathlib.Path) -> list[dict]:
+def _json_safe(v):
+    """Recursively replace non-finite floats with None: json.loads accepts the
+    non-standard NaN/Infinity tokens and json.dumps re-emits them, but the
+    browser's JSON.parse rejects them outright."""
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    if isinstance(v, dict):
+        return {k: _json_safe(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_json_safe(x) for x in v]
+    return v
+
+
+def _safe_text(path: pathlib.Path) -> str | None:
+    """read_text that returns None instead of raising: unreadable/racing files
+    (permissions, NFS blips on the HPC mounts this runs against) must cost the
+    field, not the whole HTTP response."""
+    try:
+        return path.read_text(errors="replace")
+    except OSError:
+        return None
+
+
+# ---- experiment manifests ---------------------------------------------------
+# Multi-experiment launchers (e.g. experiments/src/run_fhrdqn_seeds.py) record
+# their runs in <exp>/cached/*manifest*.json. The viewer treats that file as a
+# DATA CONTRACT and never imports launcher code, so launcher/src refactors
+# cannot break the viewer as long as the JSON keeps this shape (every field
+# optional, unknown fields ignored, malformed files skipped):
+#
+#     {"seeds": [44, 66],
+#      "runs": {"<arm>": {"<seed>": "<run dir, relative to the exp dir>"}},
+#      "overrides": {"<arm>": {"<config param>": value}}}
+#
+# "arm" is a variant key ("baseline", "fhr", "exp3", ...); "overrides" is the
+# config diff that arm actually trained with (applied on top of the config
+# copy, which does NOT reflect it). A run dir listed here is the arm's CURRENT
+# run for that seed — same-named dirs on disk that the manifest does not list
+# are stale/foreign and must not be averaged into the arm.
+def scan_manifests(root: pathlib.Path) -> dict[str, dict]:
+    """exp (relative dir, str) ->
+        {"families": {family: {"arms": {arm: {seed: run_dir_name}},
+                               "overrides": {arm: {param: value}}}},
+         "by_run": {run_dir_name: {"arm": ..., "seed": ..., "family": ...}}}
+
+    Each manifest FILE is its own family (id = filename stem minus the
+    "manifest" token: fhrdqn_runs_manifest.json -> "fhrdqn_runs",
+    fhrdqn_runs_manifest.old-lambda0.5.json -> "fhrdqn_runs.old-lambda0.5").
+    Families never merge: an archived family's "baseline" arm is NOT the
+    current baseline, and folding them together would silently average runs
+    from different experiment recipes."""
+    out: dict[str, dict] = {}
+    pats = ("*/cached/*manifest*.json", "*/*/cached/*manifest*.json")
+
+    def mtime_ns(p):
+        try:
+            return p.stat().st_mtime_ns
+        except OSError:
+            return 0
+    # oldest file first, so when a run dir is listed in several manifest files
+    # the most recently UPDATED file (the live one) wins the by_run attribution
+    for path in sorted({p for pat in pats for p in root.glob(pat)},
+                       key=lambda p: (mtime_ns(p), str(p))):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue  # torn mid-write or not JSON — skip, never crash the API
+        if not isinstance(data, dict) or not isinstance(data.get("runs"), dict):
+            continue
+        exp = str(path.parent.parent.relative_to(root))
+        family = path.stem.replace("_manifest", "").replace("manifest", "")
+        family = family.strip("._-") or "runs"
+        m = out.setdefault(exp, {"families": {}, "by_run": {}, "_files": {}})
+        # distinct FILES must stay distinct families even when the derived id
+        # collides (e.g. runs_manifest.json vs manifest.json both -> "runs")
+        if family in m["_files"] and m["_files"][family] != path.name:
+            family = path.stem
+        m["_files"][family] = path.name
+        fam = m["families"].setdefault(family, {"arms": {}, "overrides": {}})
+        for arm, seeds in data["runs"].items():
+            if not isinstance(seeds, dict):
+                continue
+            slots = fam["arms"].setdefault(str(arm), {})
+            for seed, rel in seeds.items():
+                if not isinstance(rel, str) or not rel.strip("/"):
+                    continue
+                name = rel.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                slots[str(seed)] = name
+                m["by_run"][name] = {"arm": str(arm), "seed": str(seed),
+                                     "family": family}
+        ov = data.get("overrides")
+        if isinstance(ov, dict):
+            for arm, d in ov.items():
+                if isinstance(d, dict):
+                    # NaN/Infinity survive json.loads but are invalid JSON on
+                    # re-serialisation — one such value would break every
+                    # /api/runs poll in the browser's JSON.parse
+                    fam["overrides"][str(arm)] = _json_safe(d)
+    return out
+
+
+def scan_runs(root: pathlib.Path, manifests: dict | None = None) -> list[dict]:
     """Every runs/<run_id> or cached/runs/<run_id> directory up to two levels
     below root that holds any artifact; exp is the experiment directory
-    relative to root, e.g. "classical_control/dqn_cartpole"."""
+    relative to root, e.g. "classical_control/dqn_cartpole". When the exp dir
+    has a manifest (see scan_manifests), each run is annotated with its arm and
+    seed ("tracked": true) or flagged "tracked": false so the frontend can keep
+    stale dirs out of seed averages."""
     out = []
     patterns = ("*/runs/*/", "*/cached/runs/*/",
                 "*/*/runs/*/", "*/*/cached/runs/*/")
@@ -64,12 +175,25 @@ def scan_runs(root: pathlib.Path) -> list[dict]:
         exp_dir = stats.parent.parent
         if exp_dir.name == "cached":
             exp_dir = exp_dir.parent
-        out.append({
+        row = {
             "exp": str(exp_dir.relative_to(root)),
             "run": stats.name,
             "mtime": max(p.stat().st_mtime for p in artifacts) if artifacts
                      else stats.stat().st_mtime,
-        })
+        }
+        man = (manifests or {}).get(row["exp"])
+        if man:
+            info = man["by_run"].get(row["run"])
+            if info:
+                row["arm"], row["seed"] = info["arm"], info["seed"]
+                row["family"] = info["family"]
+                row["tracked"] = True
+            else:
+                # not (yet) in any manifest: still training, superseded by a
+                # retrain, or written by something else — the frontend keeps it
+                # out of tracked arm averages either way
+                row["tracked"] = False
+        out.append(row)
     out.sort(key=lambda r: r["mtime"], reverse=True)
     return out
 
@@ -203,6 +327,8 @@ def load_summary(run_dir: pathlib.Path) -> dict:
     rewards, steps_source = _read_rewards(run_dir)
     out = {"sig": run_sig(run_dir),
            "rewards": rewards, "steps_source": steps_source,
+           # config copy text — the compare view diffs it across variants
+           "config": _safe_text(run_dir / "config.yaml"),
            "stats": _csv_table(run_dir / "rank_stats.csv"),
            "sweep_evo": None, "diag": None}
 
@@ -268,9 +394,7 @@ def load_run(run_dir: pathlib.Path) -> dict:
                      "autoregressive_rollouts": [],
                      "sig": run_sig(run_dir)}
 
-    cfg = run_dir / "config.yaml"
-    if cfg.exists():
-        payload["config"] = cfg.read_text(errors="replace")
+    payload["config"] = _safe_text(run_dir / "config.yaml")
 
     payload["stats"] = _csv_table(run_dir / "rank_stats.csv")
 
@@ -408,7 +532,14 @@ def make_handler(root: pathlib.Path):
                 if path == "/":
                     self._send(200, HTML_PATH.read_bytes(), "text/html; charset=utf-8")
                 elif path == "/api/runs":
-                    self._json(scan_runs(root))
+                    # {"runs": [...], "manifests": {exp: {families: ...}}} —
+                    # the frontend also accepts a bare list (older backends)
+                    manifests = scan_manifests(root)
+                    self._json({
+                        "runs": scan_runs(root, manifests),
+                        "manifests": {exp: {"families": m["families"]}
+                                      for exp, m in manifests.items()},
+                    })
                 # exp may contain slashes (e.g. classical_control/dqn_cartpole),
                 # so routes parse from the end: run ids / filenames never do.
                 elif len(parts) >= 4 and parts[:2] == ["api", "run"]:

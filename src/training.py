@@ -156,7 +156,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         state, _ = env.reset()
         episode_rewards_training.append(epsiode_total_reward)
         episode_steps_training.append(episode_steps)
-        
+
         # We will do the training only when the episode had ended... and ensure that at least train_frequency_steps have passed since the last training
         # This is mainly relevant only when use_episode_training is True
         if s_train >= train_frequency_steps:
@@ -165,6 +165,15 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             diag = agent.train() # train every train_frequency_steps steps
             if diag is not None and run_logger is not None:
                 run_logger.log_train_diagnostics(episode, **diag)
+
+        # Optional per-episode agent hook — e.g. FHR-DQN's automatic lambda
+        # ramp-down watches episode rewards against its own residual trend.
+        # After the post-episode train() block, so that under
+        # use_episode_training the episode's own gradient steps (and their
+        # penalty residuals) are attributed to this episode, not the next.
+        episode_hook = getattr(agent, "notify_episode_end", None)
+        if episode_hook is not None:
+            episode_hook(episode, epsiode_total_reward)
         
         # print training status
         if episode % no_eps_to_avg == 0:

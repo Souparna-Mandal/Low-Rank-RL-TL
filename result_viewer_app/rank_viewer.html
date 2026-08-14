@@ -166,13 +166,39 @@ details.tbl td:first-child,details.tbl th:first-child{text-align:left}
 .pill-row label{color:var(--muted);font-size:12px}
 /* compare mode */
 #cmpbtn.on{border-color:var(--accent);color:var(--accent)}
-.cmp-list{display:grid;gap:4px 18px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));margin:10px 0 6px}
+.cmp-list{display:grid;gap:4px 18px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));margin:4px 0 6px}
 .cmp-item{display:flex;align-items:flex-start;gap:9px;font-size:13px;cursor:pointer;
   padding:6px 8px;border-radius:8px}
 .cmp-item:hover{background:var(--surface-2)}
 .cmp-item input{accent-color:var(--accent);margin-top:3px}
 .cmp-item .nm{font-weight:560;color:var(--ink)}
 .cmp-item .meta{color:var(--muted);font-size:12px}
+.cmp-item .diff{color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums}
+.cmp-sec{display:flex;align-items:center;gap:10px;margin:14px 0 2px;border-top:1px dashed var(--border);padding-top:12px}
+.cmp-sec:first-of-type{border-top:none;margin-top:4px;padding-top:0}
+.cmp-sec h3{font-size:12.5px;font-weight:620;margin:0;color:var(--ink-2);letter-spacing:.02em}
+.cmp-sec button{font-size:11px;padding:2px 9px;border-radius:6px;color:var(--ink-2)}
+.badge{display:inline-block;font-size:10.5px;line-height:1.5;padding:0 6px;border-radius:6px;
+  border:1px solid var(--border);color:var(--muted);margin-left:6px;vertical-align:1px;font-weight:400}
+.badge.warn{color:#b58900;border-color:rgba(181,137,0,.45)}
+/* per-chart export buttons (appear on hover) */
+.chart .expbtns{position:absolute;top:-3px;right:0;display:flex;gap:4px;opacity:0;
+  transition:opacity .15s;z-index:6}
+.chart:hover .expbtns,.chart .expbtns:focus-within{opacity:1}
+.expbtns button{font-size:10.5px;padding:3px 8px;border-radius:6px;color:var(--ink-2);
+  background:var(--surface);line-height:1.3}
+/* double-click-to-rename labels */
+[data-editable]{border-radius:4px}
+[data-editable].editing{outline:1.5px dashed var(--accent);outline-offset:1px;
+  background:var(--surface-2);cursor:text;min-width:24px}
+/* config-diff table */
+.difftbl{overflow-x:auto;margin-top:8px}
+.difftbl table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;min-width:420px}
+.difftbl th,.difftbl td{border:1px solid var(--grid);padding:4px 10px;text-align:left;vertical-align:top}
+.difftbl th{background:var(--surface-2);color:var(--ink-2);font-weight:600;white-space:nowrap}
+.difftbl th .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.difftbl td:first-child{color:var(--ink-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;white-space:nowrap}
+.difftbl td.chg{font-weight:640}
 </style>
 </head>
 <body>
@@ -207,9 +233,109 @@ const el=(t,a={},...kids)=>{const n=document.createElement(t);
 const SLOTS=["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
 const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
+// ---- persisted user labels + preferences ----
+// Any chart title, legend entry or variant name is renameable by double-click;
+// overrides live in localStorage so they survive reloads and apply to exports.
+// Keys: "t:<title>" chart titles (global), "n:<name>" series/legend names
+// (global), "g:<groupKey>" compare variants (per experiment+arm).
+const LBL_KEY="rv-labels-v1";
+let RV_LABELS={};
+try{RV_LABELS=JSON.parse(localStorage.getItem(LBL_KEY)||"{}")||{};}catch(e){RV_LABELS={};}
+function saveLabels(){try{localStorage.setItem(LBL_KEY,JSON.stringify(RV_LABELS));}catch(e){}}
+const lbl=(key,def)=>{const v=RV_LABELS[key];return typeof v==="string"&&v?v:def;};
+const dn=name=>lbl("n:"+name,name);      // display name for a series/legend entry
+// Turn a span into a rename target: double-click edits in place, Enter/blur
+// commits, Escape cancels, clearing the text restores the default.
+function makeEditable(span,storeKey,defText,opts){
+  const {onDone,onClick}=opts||{};
+  span.setAttribute("data-editable","");
+  span.title=(span.title?span.title+" · ":"")+"double-click to rename";
+  // Intercept single clicks: a click on a rename target must never trigger the
+  // row/legend action directly (the re-render would destroy the span before a
+  // double-click could land). Instead, the caller's onClick (toggle/select)
+  // fires after a short delay UNLESS a double-click arrives first — so names
+  // remain fully clickable AND renameable.
+  span.addEventListener("click",e=>{
+    e.preventDefault();e.stopPropagation();
+    if(span.isContentEditable)return;
+    if(onClick){clearTimeout(span._clickT);span._clickT=setTimeout(onClick,280);}
+  });
+  span.addEventListener("dblclick",ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    clearTimeout(span._clickT);
+    if(span.isContentEditable)return;
+    try{span.contentEditable="plaintext-only";}catch(e){span.contentEditable="true";}
+    if(span.contentEditable==="inherit")span.contentEditable="true";
+    span.classList.add("editing");
+    const orig=span.textContent;
+    span.focus();
+    const sel=getSelection(),r=document.createRange();
+    r.selectNodeContents(span);sel.removeAllRanges();sel.addRange(r);
+    let cancel=false;
+    const onKey=e=>{
+      if(e.key==="Enter"){e.preventDefault();span.blur();}
+      else if(e.key==="Escape"){e.preventDefault();cancel=true;span.blur();}
+      e.stopPropagation();
+    };
+    const onBlur=()=>{
+      span.removeEventListener("keydown",onKey);
+      span.removeEventListener("blur",onBlur);
+      span.contentEditable="false";span.classList.remove("editing");
+      if(cancel){span.textContent=orig;return;}
+      const v=span.textContent.trim();
+      if(!v||v===defText){delete RV_LABELS[storeKey];span.textContent=defText;}
+      else RV_LABELS[storeKey]=v;
+      saveLabels();
+      (onDone||rerender)();
+    };
+    span.addEventListener("keydown",onKey);
+    span.addEventListener("blur",onBlur);
+  });
+}
+// view preferences persisted across sessions (metric, axes, smoothing, ...)
+const PREF_KEY="rv-prefs-v1";
+function loadPrefs(){
+  try{return JSON.parse(localStorage.getItem(PREF_KEY)||"{}")||{};}catch(e){return {};}
+}
+function savePrefs(){
+  try{localStorage.setItem(PREF_KEY,JSON.stringify({
+    metric:STATE.metric,rwY:STATE.rwY,rwRollW:STATE.rwRollW,
+    cmpView:STATE.cmpView,cmpY:STATE.cmpY,cmpRollW:STATE.cmpRollW,
+  }));}catch(e){}
+}
+const SEL_KEY="rv-cmp-sel-v1";
+function saveCmpSel(){try{localStorage.setItem(SEL_KEY,JSON.stringify([...STATE.cmpSel]));}catch(e){}}
+function loadCmpSel(){try{return new Set(JSON.parse(localStorage.getItem(SEL_KEY)||"[]"));}catch(e){return new Set();}}
+
+// /api/runs returns {runs, manifests}; older backends returned a bare list
+function normRunsPayload(resp){
+  if(Array.isArray(resp))return {runs:resp,manifests:{}};
+  return {runs:resp&&resp.runs||[],manifests:resp&&resp.manifests||{}};
+}
+const expShort=exp=>exp.split("/").pop();
+// "20260813-175543" -> "2026-08-13 17:55"
+function fmtStamp(stamp){
+  if(!stamp)return "";
+  const m=stamp.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}$/);
+  return m?`${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`:stamp;
+}
+// compact "k=v" summary of a manifest overrides dict (an arm's config diff)
+function fmtOverride(v){
+  if(v===true)return "on";
+  if(v===false)return "off";
+  if(typeof v==="number")return String(+(+v).toPrecision(6));
+  return String(v);
+}
+function fmtOverrides(ov,max=Infinity){
+  const es=Object.entries(ov||{});
+  const shown=es.slice(0,max).map(([k,v])=>`${k}=${fmtOverride(v)}`);
+  if(es.length>max)shown.push(`+${es.length-max} more`);
+  return shown.join(" · ");
+}
+
 // curated numeric metrics shared by rank_stats.csv and hankel_sweep.csv
 const METRICS=[
-  ["eff_rank","Effective rank","singular values needed to capture 90% of the Frobenius energy — lower = more low-rank"],
+  ["eff_rank","Effective rank","singular values needed to capture 99.9% of the Frobenius energy — lower = more low-rank"],
   ["stable_rank","Stable rank","‖M‖_F² / ‖M‖_2² — how many singular values carry the energy"],
   ["spikiness","Spikiness","max entry vs RMS entry — a few dominant entries vs spread energy"],
   ["row_coherence","Row coherence","alignment of the top-r row space with the standard basis — ~1 spread, ≫1 concentrated"],
@@ -320,7 +446,7 @@ function seqColor(t){
   };
 })();
 
-const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
+const STATE={runs:[],runsKey:"",manifests:{},cur:null,data:null,colors:{},hidden:new Set(),
   ep:null,tauIdx:null,playing:null,live:true,followLast:false,dragging:false,
   sig:null,pending:null,metric:"eff_rank",sweepRows:null,trajEp:undefined,trajCache:{},
   persistEp:null,
@@ -330,12 +456,23 @@ const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
   arHorizonEp:null,arHorizonSplit:null,
   // learning-curve axis/mode selections (single-run reward card)
   rwX:null,rwY:"ret",rwRollW:50,
-  // compare mode: overlay experiments averaged across seeds
-  compare:false,cmpSel:new Set(),cmpCache:{},cmpHidden:new Set(),
+  // compare mode: overlay experiments averaged across seeds. cmpHidden holds
+  // group KEYS (stable under renames), selection persists across reloads.
+  compare:false,cmpSel:loadCmpSel(),cmpCache:{},cmpHidden:new Set(),
   cmpStatus:null,cmpStatsMatrix:null,cmpSweepMatrix:null,
   // compare axis/view selections: x = episodes|env steps, view = how seeds
   // are drawn (mean ± range, all seeds overlaid, side-by-side panels)
   cmpX:null,cmpY:"ret",cmpRollW:50,cmpView:"mean"};
+// restore persisted view preferences (unknown/invalid values are ignored)
+(function(){
+  const p=loadPrefs();
+  if(METRICS.some(m=>m[0]===p.metric))STATE.metric=p.metric;
+  if(["ret","cum"].includes(p.rwY))STATE.rwY=p.rwY;
+  if([1,10,25,50,100].includes(p.rwRollW))STATE.rwRollW=p.rwRollW;
+  if(["mean","overlay","side"].includes(p.cmpView))STATE.cmpView=p.cmpView;
+  if(["ret","cum"].includes(p.cmpY))STATE.cmpY=p.cmpY;
+  if([1,10,25,50,100].includes(p.cmpRollW))STATE.cmpRollW=p.cmpRollW;
+})();
 
 // Fetch JSON with a stall watchdog: over an SSH/VSCode tunnel a dropped link
 // leaves fetch() pending forever with no error, so the page sat on "Loading..."
@@ -409,30 +546,96 @@ function parseSweep(d){
   }
   return rows.length?rows:null;
 }
+// ordering shared by the run selector and compare list: baseline first (the
+// reference), then exp<N> DESCENDING (latest experiment number on top), then
+// the legacy "fhr"/other named arms, then unmanaged runs
+function armOrder(arm){
+  if(arm==="baseline")return [0,0,""];
+  const m=/^exp(\d+)$/.exec(arm||"");
+  if(m)return [1,-(+m[1]),""];
+  if(arm)return [2,0,arm];
+  return [3,0,""];
+}
+function cmpArr(a,b){
+  for(let i=0;i<Math.max(a.length,b.length);i++){
+    const x=a[i]??0,y=b[i]??0;
+    if(x<y)return -1; if(x>y)return 1;
+  }
+  return 0;
+}
+const runStamp=run=>(run.match(/_(\d{8}-\d{6})$/)||[])[1]||null;
+function runOptionText(r,currentFamily){
+  if(r.arm!=null){
+    const st=runStamp(r.run);
+    // family tag only for runs OUTSIDE the exp's current (latest) family
+    const tagFam=r.family&&currentFamily&&r.family!==currentFamily;
+    return `${r.arm} · seed ${r.seed}`
+      +(tagFam?` [${famShort(r.family)}]`:"")
+      +(st?` · ${fmtStamp(st)}`:"");
+  }
+  return r.run+(r.tracked===false?"  (not in manifest)":"");
+}
+// change key over the run list INCLUDING the manifest annotations: a launcher
+// records a finished run without creating any new dir, so tracking arm/seed
+// flips while the name set stays identical — the key must still change
+const runsKeyOf=runs=>runs.map(r=>r.exp+"/"+r.run
+  +"@"+(r.arm||"")+"."+(r.family||"")+"."+(r.tracked===false?0:1)).join(",");
 function updateRunOptions(runs){
-  STATE.runs=runs; STATE.runsKey=runs.map(r=>r.exp+"/"+r.run).join(",");
+  STATE.runs=runs; STATE.runsKey=runsKeyOf(runs);
   const sel=$("#runsel"), cur=sel.value;
   sel.disabled=!runs.length; sel.innerHTML="";
   if(!runs.length){sel.append(el("option",{text:"(no runs)"}));return;}
+  // most recently updated family per exp — its options need no family tag
+  const curFam={};
+  for(const r of runs)if(r.family){
+    const b=curFam[r.exp];
+    if(!b||(r.mtime||0)>b.m)curFam[r.exp]={f:r.family,m:r.mtime||0};
+  }
+  const byExp=new Map();          // insertion order = most recent exp first
   for(const r of runs){
-    const o=el("option",{value:r.exp+" "+r.run});
-    o.textContent=r.exp+"  ·  "+r.run;
-    sel.append(o);
+    if(!byExp.has(r.exp))byExp.set(r.exp,[]);
+    byExp.get(r.exp).push(r);
+  }
+  for(const [exp,rs] of byExp){
+    rs.sort((a,b)=>cmpArr(armOrder(a.arm),armOrder(b.arm))
+      ||((+a.seed||0)-(+b.seed||0))||((b.mtime||0)-(a.mtime||0)));
+    const og=el("optgroup",{label:exp});
+    for(const r of rs){
+      const o=el("option",{value:r.exp+" "+r.run});
+      o.textContent=runOptionText(r,(curFam[exp]||{}).f);
+      og.append(o);
+    }
+    sel.append(og);
   }
   if([...sel.options].some(o=>o.value===cur))sel.value=cur;
 }
 let TICKING=false;
 async function tick(force){
   if(!STATE.live&&!force)return;
-  if(STATE.compare)return;  // compare view refreshes via ⟳, not the poller
+  // don't yank the DOM out from under an in-progress double-click rename —
+  // removing a focused contenteditable never fires blur, so the edit would
+  // be silently lost
+  if(!force&&document.activeElement&&document.activeElement.isContentEditable)return;
   // Single-flight: a slow tunnel makes the full-payload fetch outlive the 4s
   // poll interval, and overlapping multi-MB downloads starve each other until
   // none ever finishes. Never start a poll while a load or poll is in flight.
   if(TICKING||STATE.loading)return;
   TICKING=true;
   try{
-    const runs=await fetchJSON("/api/runs");
-    if(runs.map(r=>r.exp+"/"+r.run).join(",")!==STATE.runsKey)updateRunOptions(runs);
+    const {runs,manifests}=normRunsPayload(await fetchJSON("/api/runs"));
+    STATE.manifests=manifests;
+    const changed=runsKeyOf(runs)!==STATE.runsKey;
+    if(changed)updateRunOptions(runs);
+    if(STATE.compare){
+      // compare live-refresh: a brand-new run in a selected group pulls its
+      // summary in; an already-loaded summary refetches when its sig changes.
+      // Re-check STATE.compare after every await — the user may have exited
+      // compare mid-flight, and painting the compare view then would leave a
+      // zombie UI over the single-run page.
+      if(changed)await cmpLoad();
+      else if((await cmpRefreshChanged())&&STATE.compare)renderCompare();
+      setLiveUI(true);setUpdated();return;
+    }
     if(!STATE.cur){if(runs.length)await loadRun(runs[0].exp,runs[0].run);setLiveUI(true);return;}
     const {exp,run}=STATE.cur;
     // Cheap change probe first — the full payload is tens of MB on long runs,
@@ -484,7 +687,7 @@ async function boot(){
       if(STATE.cur&&!STATE.cmpSel.size){
         const g=runGroups().find(g=>g.runs.some(
           r=>r.exp===STATE.cur.exp&&r.run===STATE.cur.run));
-        if(g)STATE.cmpSel.add(g.key);
+        if(g){STATE.cmpSel.add(g.key);saveCmpSel();}
       }
       cmpLoad();
     }else if(STATE.data)render();
@@ -495,7 +698,9 @@ async function boot(){
   setLiveUI();
   let runs;
   try{
-    runs=await fetchJSON("/api/runs");
+    const payload=normRunsPayload(await fetchJSON("/api/runs"));
+    runs=payload.runs;
+    STATE.manifests=payload.manifests;
   }catch(e){
     const app=$("#app"); app.innerHTML="";
     const retry=el("button",{text:"Retry"});
@@ -661,14 +866,20 @@ function openLightbox(src,label){
     const close=el("button",{class:"lb-close",title:"Close (Esc)","aria-label":"Close"},"×");
     const img=el("img",{class:"lb-img",id:"lb-img",alt:""});
     const cap=el("div",{class:"lb-cap",id:"lb-cap"});
-    lb.append(close,el("div",{class:"lb-inner"},img,cap));
+    const dl=el("a",{class:"btn",id:"lb-dl",text:"⬇ Download PNG",
+      style:"color:#f2f2f0;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);text-decoration:none"});
+    dl.onclick=e=>e.stopPropagation();
+    lb.append(close,el("div",{class:"lb-inner"},img,cap,dl));
     document.body.append(lb);
     const hide=()=>lb.classList.remove("show");
-    lb.onclick=e=>{if(e.target!==$("#lb-img"))hide();};
+    lb.onclick=e=>{if(e.target!==$("#lb-img")&&e.target!==$("#lb-dl"))hide();};
     document.addEventListener("keydown",e=>{if(e.key==="Escape")hide();});
   }
   $("#lb-img").src=src; $("#lb-img").alt=label||"";
   $("#lb-cap").textContent=label||"";
+  const dl=$("#lb-dl");
+  dl.href=src;
+  dl.setAttribute("download",slugify(label||"figure")+".png");
   lb.classList.add("show");
 }
 // attach a click-to-enlarge handler + zoom badge to a figure panel
@@ -736,6 +947,18 @@ function render(){
 
 function tiles(){
   const d=STATE.data, box=el("div",{class:"tiles"});
+  // manifest identity of the run being viewed: arm, seed and its config diff
+  const cur=STATE.cur&&STATE.runs.find(r=>r.exp===STATE.cur.exp&&r.run===STATE.cur.run);
+  if(cur&&cur.arm!=null){
+    const fam=(((STATE.manifests[cur.exp]||{}).families||{})[cur.family])||{};
+    const ov=(fam.overrides||{})[cur.arm];
+    box.append(tile("Variant",cur.arm,"seed "+cur.seed
+      +(ov&&Object.keys(ov).length&&cur.arm!=="baseline"
+        ?" · "+fmtOverrides(ov,2):"")));
+  }else if(cur&&cur.tracked===false){
+    box.append(tile("Variant","not in manifest",
+      "still training, superseded, or from another launcher"));
+  }
   const rw=d.rewards||[];
   if(rw.length){
     const best=arrMax(rw,r=>r[1]), last=rw[rw.length-1][1];
@@ -774,9 +997,13 @@ function legendBar(names){
   for(const n of names){
     const item=el("span",{class:"item"+(STATE.hidden.has(n)?" off":"")});
     item.style.color=cssv(STATE.colors[n]);
-    item.append(el("span",{class:"key"}),el("span",{class:"nm",text:n}));
-    item.querySelector(".nm").style.color="var(--ink-2)";
-    item.onclick=()=>{STATE.hidden.has(n)?STATE.hidden.delete(n):STATE.hidden.add(n);rerender();};
+    const toggle=()=>{STATE.hidden.has(n)?STATE.hidden.delete(n):STATE.hidden.add(n);rerender();};
+    const nm=el("span",{class:"nm",text:dn(n)});
+    nm.style.color="var(--ink-2)";
+    // single click (incl. on the name) toggles; double-click renames globally
+    makeEditable(nm,"n:"+n,n,{onClick:toggle});
+    item.append(el("span",{class:"key"}),nm);
+    item.onclick=toggle;
     bar.append(item);
   }
   return bar;
@@ -786,7 +1013,7 @@ function metricSelect(){
   for(const [k,label] of METRICS)
     sel.append(el("option",{value:k,text:label}));
   sel.value=STATE.metric;
-  sel.onchange=()=>{STATE.metric=sel.value;rerender();};
+  sel.onchange=()=>{STATE.metric=sel.value;savePrefs();rerender();};
   return el("div",{class:"pill-row"},el("label",{text:"Metric"}),sel);
 }
 
@@ -1167,6 +1394,7 @@ function rewardCard(){
   card.append(lineChart({series,wide:true,noEndLabel:true,
     episodeAxis:!onSteps,
     epToX:onSteps?(ep=>cs.get(ep)):undefined,
+    yLabel:STATE.rwY==="cum"?"cumulative reward":"episode return",
     xLabel:onSteps?"env steps (samples)":"episode",
     xPrefix:onSteps?"step ":undefined}));
   return card;
@@ -1185,14 +1413,14 @@ function rewardControls(cs){
   for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
     ySel.append(el("option",{value:v,text:t}));
   ySel.value=STATE.rwY;
-  ySel.onchange=()=>{STATE.rwY=ySel.value;rerender();};
+  ySel.onchange=()=>{STATE.rwY=ySel.value;savePrefs();rerender();};
 
   const sSel=el("select",{"aria-label":"Smoothing"});
   for(const w of [1,10,25,50,100])
     sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
   sSel.value=String(STATE.rwRollW);
   sSel.disabled=STATE.rwY==="cum";
-  sSel.onchange=()=>{STATE.rwRollW=+sSel.value;rerender();};
+  sSel.onchange=()=>{STATE.rwRollW=+sSel.value;savePrefs();rerender();};
 
   return el("div",{class:"pill-row"},xSel,ySel,sSel);
 }
@@ -1216,6 +1444,8 @@ const DIAG_HINTS={
   converged_frac:"fraction of penalty windows already below the convergence tail",
   ext_gate_frac:"fraction of windows dropped by the external keep-mask",
   batch_eff_rank:"mean effective rank of the penalty windows' Hankel batch",
+  rampdown_scale:"automatic lambda ramp-down multiplier — 1 until triggered, then linear to 0 over rampdown_episodes",
+  rampdown_penalty_bar:"residual bar an episode must reach to count as high for the ramp-down trigger (absolute, or NN% of the top-k residual mean)",
   rel_tail:"mean relative singular-value tail energy of the penalty windows",
   nan_skips:"cumulative optimiser steps skipped on non-finite loss/grad",
 };
@@ -1584,42 +1814,133 @@ function autoregressiveRolloutCard(){
 // and re-paint the episode-synced cards
 // ================= COMPARE MODE =================
 // Overlay several experiments in the same charts, averaged across seeds.
-// Runs group into a "variant" by stripping the launch timestamp and seed
-// token from the run id: ..._fhrdqn_seed21_20260811-222356, seed56 and
-// seed102 all collapse to the ..._fhrdqn variant. Each selected variant is
-// drawn as one line (mean across its seeds) with a min–max band, fed by the
-// compact /api/summary payload rather than the multi-MB full run payload.
+//
+// Grouping is manifest-first: a run annotated by the server with an arm
+// (recorded in the experiment's cached/*manifest*.json) groups under that arm
+// — "baseline", "exp3", the legacy "fhr" — with its true seed and the config
+// diff (overrides) the arm trained with. Stale run dirs the manifest does not
+// list are kept OUT of the arm's seed average and shown as separate
+// "untracked" groups. Runs of experiments without a manifest fall back to the
+// old name parsing: strip the launch timestamp and seed token from the run id
+// (..._seed21_20260811-222356, seed56, seed102 all collapse to one variant).
+// Each selected group is drawn as one line (mean across its seeds) with a
+// min–max band, fed by the compact /api/summary payload rather than the
+// multi-MB full run payload.
+const SEED_RE=/_(?:seed|s)(\d+)(?=_|$)/;
+function groupOrder(g){
+  if(g.arm)return armOrder(g.arm);
+  return [g.seeded?3:4,-(g.mtime||0),g.variant];
+}
+// short display name for a manifest family: "fhrdqn_runs.old-lambda0.5" shows
+// as "old-lambda0.5"; the current family is never suffixed at all
+const famShort=f=>f&&f.includes(".")?f.split(".").slice(1).join("."):f;
+// default group name: the arm plus a compact form of its config diff
+function groupBaseName(g,famSuffix){
+  if(g.arm){
+    let nm=g.arm;
+    if(g.arm!=="baseline"){
+      const n=g.overrides?Object.keys(g.overrides).length:0;
+      if(n)nm+=n<=2?` · ${fmtOverrides(g.overrides)}`:` · ${n} params`;
+    }
+    if(famSuffix)nm+=` [${famShort(g.family)}]`;
+    return nm;
+  }
+  return g.variant;
+}
 function runGroups(){
   const by={};
   for(const r of STATE.runs){
-    const stamp=(r.run.match(/_(\d{8}-\d{6})$/)||[])[1];
-    const base=r.run.replace(/_\d{8}-\d{6}$/,"");
-    // two seed conventions: _seed21 (run_fhrdqn_seeds.py) and _s0 (optuna jobs)
-    const seeded=SEED_RE.test(base);
-    const variant=base.replace(SEED_RE,"")||r.run;
-    // seed-tagged runs of a variant average together; a seedless one-off with
-    // the same name stays its own group (it may predate a config change, e.g.
-    // an earlier lambda — silently folding it in would skew the seed average)
-    const key=r.exp+"::"+variant+(seeded?"":"::"+(stamp||r.run));
-    const g=(by[key]=by[key]||{key,exp:r.exp,variant,seeded,stamp,runs:[]});
+    const stamp=runStamp(r.run);
+    let key,variant,arm=null,seeded;
+    if(r.arm!=null){                       // manifest-tracked current run
+      arm=r.arm; seeded=true; variant=r.arm;
+      // family in the key: an archived manifest's "baseline" must NEVER pool
+      // with the current family's baseline (different experiment recipes)
+      key=r.exp+"::arm::"+(r.family||"")+"::"+arm;
+    }else{
+      const base=r.run.replace(/_\d{8}-\d{6}$/,"");
+      // two seed conventions: _seed21 (run_fhrdqn_seeds.py) and _s0 (optuna)
+      seeded=SEED_RE.test(base);
+      variant=base.replace(SEED_RE,"")||r.run;
+      // seed-tagged runs of a variant average together; a seedless one-off
+      // with the same name stays its own group (it may predate a config
+      // change — silently folding it in would skew the seed average)
+      key=r.exp+"::"+variant+(seeded?"":"::"+(stamp||r.run));
+    }
+    const g=(by[key]=by[key]||{key,exp:r.exp,arm,family:r.family||null,
+      variant,seeded,stamp,
+      untracked:r.arm==null&&r.tracked===false,runs:[],mtime:0});
     g.runs.push(r);
+    g.mtime=Math.max(g.mtime,r.mtime||0);
   }
   const gs=Object.values(by);
-  gs.sort((a,b)=>a.exp.localeCompare(b.exp)||(b.seeded-a.seeded)
-    ||a.variant.localeCompare(b.variant)||a.key.localeCompare(b.key));
-  // same variant name under two experiment dirs → prefix the dir to disambiguate
-  const dup={};for(const g of gs)dup[g.variant]=(dup[g.variant]||0)+1;
+  for(const g of gs){                      // attach the arm's config diff
+    const fams=(STATE.manifests[g.exp]||{}).families||{};
+    const fam=g.family!=null?fams[g.family]:null;
+    g.overrides=(g.arm&&fam&&(fam.overrides||{})[g.arm])||null;
+  }
+  // family recency: within an exp, the family trained most recently is the
+  // "current" one — it sorts first and keeps an unsuffixed label
+  const famLatest={},famsPerExp={};
+  for(const g of gs)if(g.arm){
+    const k=g.exp+"::"+g.family;
+    famLatest[k]=Math.max(famLatest[k]||0,g.mtime);
+    (famsPerExp[g.exp]=famsPerExp[g.exp]||new Set()).add(g.family);
+  }
+  const famRank=g=>g.arm?-(famLatest[g.exp+"::"+g.family]||0):Infinity;
+  // order: experiment dirs by latest activity, then family (current first),
+  // then baseline → exp<N> descending → legacy arms → name-groups → one-offs
+  const expLatest={};
+  for(const g of gs)expLatest[g.exp]=Math.max(expLatest[g.exp]||0,g.mtime);
+  gs.sort((a,b)=>(expLatest[b.exp]-expLatest[a.exp])
+    ||a.exp.localeCompare(b.exp)
+    ||(famRank(a)===famRank(b)?0:famRank(a)<famRank(b)?-1:1)
+    ||cmpArr(groupOrder(a),groupOrder(b)));
+  // labels: short names; family suffix only for non-current families;
+  // experiment-dir prefix only when a name is ambiguous across experiment
+  // dirs; any double-click rename applied on top
+  const isCurrentFam=g=>{
+    if(!g.arm)return true;
+    const fams=famsPerExp[g.exp];
+    if(!fams||fams.size<2)return true;
+    const latest=[...fams].sort((x,y)=>
+      (famLatest[g.exp+"::"+y]||0)-(famLatest[g.exp+"::"+x]||0))[0];
+    return g.family===latest;
+  };
+  const seen={};
+  for(const g of gs){const nm=groupBaseName(g,!isCurrentFam(g));
+    (seen[nm]=seen[nm]||new Set()).add(g.exp);g._nm=nm;}
   for(const g of gs){
-    g.label=(dup[g.variant]>1&&gs.some(o=>o.variant===g.variant&&o.exp!==g.exp)
-             ?`${g.exp}/${g.variant}`:g.variant)
-      +(g.seeded?"":` @${g.stamp||"single"}`);
+    let label=seen[g._nm].size>1?`${expShort(g.exp)} · ${g._nm}`:g._nm;
+    if(!g.arm&&!g.seeded)label+=` @${fmtStamp(g.stamp)||"single"}`;
+    g.autoLabel=label;
+    g.label=lbl("g:"+g.key,label);
   }
   return gs;
 }
-const SEED_RE=/_(?:seed|s)(\d+)(?=_|$)/;
+function runSeedOf(r){
+  if(r.seed!=null)return String(r.seed);     // manifest-recorded, authoritative
+  const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
+  return m?m[1]:null;
+}
 function groupSeeds(g){
-  return g.runs.map(r=>{const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
-    return m?m[1]:null;}).filter(Boolean);
+  return [...new Set(g.runs.map(runSeedOf).filter(Boolean))]
+    .sort((a,b)=>(+a)-(+b));
+}
+// the runs that actually enter a group's seed average. Manifest arms map each
+// seed to exactly one dir already; for name-parsed groups, several launches
+// can leave same-seed dirs on disk (e.g. a relaunch two minutes later) — only
+// the LATEST run per seed is averaged, never a stale duplicate.
+function groupActiveRuns(g){
+  if(g.arm)return g.runs;
+  const bySeed=new Map(),unseeded=[];
+  for(const r of g.runs){
+    const seed=runSeedOf(r);
+    if(seed==null){unseeded.push(r);continue;}
+    const prev=bySeed.get(seed);
+    if(!prev||(r.mtime||0)>(prev.mtime||0))bySeed.set(seed,r);
+  }
+  return [...bySeed.values(),...unseeded];
 }
 function exitCompare(){
   if(!STATE.compare)return;
@@ -1627,18 +1948,70 @@ function exitCompare(){
   const b=$("#cmpbtn");if(b)b.classList.remove("on");
 }
 
+// A run mid-training groups by its parsed name; once the launcher records it,
+// the same runs re-key to exp::arm::family::arm. Carry the user's selection
+// and any rename across that transition instead of silently dropping them.
+function migrateCmpSel(groups){
+  if(!STATE.cmpSel.size)return;
+  const present=new Set(groups.map(g=>g.key));
+  const nameKeyToArmKey=new Map();
+  for(const g of groups)if(g.arm)for(const r of g.runs){
+    const base=r.run.replace(/_\d{8}-\d{6}$/,"");
+    if(SEED_RE.test(base))
+      nameKeyToArmKey.set(g.exp+"::"+base.replace(SEED_RE,""),g.key);
+  }
+  let changed=false;
+  for(const key of [...STATE.cmpSel]){
+    if(present.has(key))continue;
+    const armKey=nameKeyToArmKey.get(key);
+    if(!armKey)continue;
+    STATE.cmpSel.delete(key);STATE.cmpSel.add(armKey);changed=true;
+    if(RV_LABELS["g:"+key]&&!RV_LABELS["g:"+armKey]){
+      RV_LABELS["g:"+armKey]=RV_LABELS["g:"+key];
+      delete RV_LABELS["g:"+key];
+      saveLabels();
+    }
+  }
+  if(changed)saveCmpSel();
+}
+
+// live refresh for compare mode: refetch the summary of any loaded run whose
+// change signature moved (a run still training). Returns true when something
+// was refreshed. Transient errors are ignored — the next poll retries.
+async function cmpRefreshChanged(){
+  const sel=runGroups().filter(g=>STATE.cmpSel.has(g.key));
+  let any=false;
+  await Promise.all(sel.flatMap(g=>groupActiveRuns(g)).map(async r=>{
+    const k=r.exp+"::"+r.run, s=STATE.cmpCache[k];
+    if(!s||!s.sig)return;
+    try{
+      const {sig}=await fetchJSON(
+        `/api/sig/${encodeURIComponent(r.exp)}/${encodeURIComponent(r.run)}`);
+      if(sig&&sig!==s.sig){
+        STATE.cmpCache[k]=await fetchJSON(
+          `/api/summary/${encodeURIComponent(r.exp)}/${encodeURIComponent(r.run)}`);
+        any=true;
+      }
+    }catch(e){}
+  }));
+  return any;
+}
+
 let CMPSEQ=0;
 async function cmpLoad(){
   const seq=++CMPSEQ;
   // keep the group list fresh (new seed runs appear without leaving the view)
   try{
-    const runs=await fetchJSON("/api/runs");
-    if(runs.map(r=>r.exp+"/"+r.run).join(",")!==STATE.runsKey)updateRunOptions(runs);
+    const {runs,manifests}=normRunsPayload(await fetchJSON("/api/runs"));
+    STATE.manifests=manifests;
+    if(runsKeyOf(runs)!==STATE.runsKey)updateRunOptions(runs);
   }catch(e){/* keep the stale list; summaries below will surface real trouble */}
   if(seq!==CMPSEQ||!STATE.compare)return;
+  const groups=runGroups();
+  migrateCmpSel(groups);
   const need=[];
-  for(const g of runGroups())if(STATE.cmpSel.has(g.key))
-    for(const r of g.runs)if(!STATE.cmpCache[r.exp+"::"+r.run])need.push(r);
+  for(const g of groups)if(STATE.cmpSel.has(g.key))
+    for(const r of groupActiveRuns(g))if(!STATE.cmpCache[r.exp+"::"+r.run])need.push(r);
   if(!need.length){STATE.cmpStatus=null;renderCompare();return;}
   let done=0;
   STATE.cmpStatus=`Loading seed runs… 0/${need.length}`;
@@ -1697,7 +2070,7 @@ const cmpXPrefix=()=>STATE.cmpX==="steps"?"step ":undefined;
 function cmpSeries(groups,extract,transform){
   const out=[];
   for(const g of groups){
-    if(STATE.cmpHidden.has(g.label))continue;
+    if(STATE.cmpHidden.has(g.key))continue;
     let per=g.sums.map(s=>cmpOnX(s,extract(s))).filter(p=>p&&p.length);
     if(transform)per=per.map(transform).filter(p=>p&&p.length);
     if(!per.length)continue;
@@ -1709,14 +2082,19 @@ function cmpSeries(groups,extract,transform){
 // per-seed curves of one group: [{seed, run, pts}] after re-base + transform
 function cmpSeedEntries(g,extract,transform){
   const out=[];
-  for(const r of g.runs){
+  for(const r of groupActiveRuns(g)){
     const s=STATE.cmpCache[r.exp+"::"+r.run];
     if(!s)continue;
     let pts=cmpOnX(s,extract(s));
     if(pts&&transform)pts=transform(pts);
     if(!pts||!pts.length)continue;
-    const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
-    out.push({seed:m?m[1]:null,run:r.run,pts});
+    // manifest-recorded seed first; name parsing only as a fallback
+    let seed=r.seed!=null?String(r.seed):null;
+    if(seed==null){
+      const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
+      seed=m?m[1]:null;
+    }
+    out.push({seed,run:r.run,pts});
   }
   out.sort((a,b)=>(+a.seed||0)-(+b.seed||0));
   return out;
@@ -1785,20 +2163,20 @@ function cmpControls(anySteps){
                       ["side","seeds: side-by-side"]])
     vSel.append(el("option",{value:v,text:t}));
   vSel.value=STATE.cmpView;
-  vSel.onchange=()=>{STATE.cmpView=vSel.value;rerender();};
+  vSel.onchange=()=>{STATE.cmpView=vSel.value;savePrefs();rerender();};
 
   const ySel=el("select",{"aria-label":"Reward y"});
   for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
     ySel.append(el("option",{value:v,text:t}));
   ySel.value=STATE.cmpY;
-  ySel.onchange=()=>{STATE.cmpY=ySel.value;rerender();};
+  ySel.onchange=()=>{STATE.cmpY=ySel.value;savePrefs();rerender();};
 
   const sSel=el("select",{"aria-label":"Smoothing"});
   for(const w of [1,10,25,50,100])
     sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
   sSel.value=String(STATE.cmpRollW);
   sSel.disabled=STATE.cmpY==="cum";
-  sSel.onchange=()=>{STATE.cmpRollW=+sSel.value;rerender();};
+  sSel.onchange=()=>{STATE.cmpRollW=+sSel.value;savePrefs();rerender();};
 
   return el("div",{class:"pill-row",style:"margin-top:8px"},xSel,vSel,ySel,sSel);
 }
@@ -1831,14 +2209,14 @@ function cmpRewardCard(loaded){
         ?" · against environment steps (samples), so variants whose episodes "
          +"differ in length stay comparable":" · against training episodes")+"."}));
 
-  const vis=loaded.filter(g=>!STATE.cmpHidden.has(g.label));
+  const vis=loaded.filter(g=>!STATE.cmpHidden.has(g.key));
   if(STATE.cmpView==="mean"){
     const series=cmpSeries(loaded,extract,transform);
     if(!series.length){card.append(el("p",{class:"muted-note",
       text:dropped?`All seed runs are shorter than the rolling-${W} window — `
         +"lower the smoothing.":"No reward data on this axis."}));return card;}
     appendDroppedNote(card);
-    card.append(lineChart({series,wide:true,noEndLabel:true,
+    card.append(lineChart({series,wide:true,noEndLabel:true,yLabel:yTitle,
       xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
     return card;
   }
@@ -1866,7 +2244,7 @@ function cmpRewardCard(loaded){
       });
     card.append(el("p",{class:"muted-note",
       text:"One line per seed — colour = variant, dash pattern = seed."}));
-    card.append(lineChart({series,wide:true,noEndLabel:true,
+    card.append(lineChart({series,wide:true,noEndLabel:true,yLabel:yTitle,
       xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
     return card;
   }
@@ -1898,7 +2276,7 @@ function cmpRewardCard(loaded){
       color:e.seed!=null?seedColor[e.seed]:SLOTS[i%SLOTS.length],
       endLabel:false,pts:e.pts}));
     grid.append(lineChart({title:g.label,titleColor:g.color,series,
-      xDomain,yDomain,syncKey:"cmp-reward",noEndLabel:true,
+      xDomain,yDomain,syncKey:"cmp-reward",noEndLabel:true,yLabel:yTitle,
       xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
   }
   card.append(grid);
@@ -1907,33 +2285,179 @@ function cmpRewardCard(loaded){
   return card;
 }
 
+// ---- config diffs across selected groups ----
+// The run dir's config.yaml copy is parsed as text into flat "a.b.c" -> value
+// paths (indentation-based, comments stripped, "- item" lines folded into the
+// parent key). No YAML library: this only needs to be faithful enough to DIFF
+// configs, not to interpret them, and it degrades gracefully on exotic files.
+function parseCfgPaths(text){
+  const out=new Map();
+  if(!text)return out;
+  // pre-pass: a flow map/list ({...} or [...]) may span several physical
+  // lines — merge them into one logical line, or the continuation would be
+  // misparsed as a standalone "key: value" and mint phantom config paths
+  const logical=[];
+  let pend=null,depth=0;
+  for(const raw of text.split(/\r?\n/)){
+    if(pend==null&&(!raw.trim()||raw.trim().startsWith("#")))continue;
+    const line=raw.replace(/\s+#.*$/,"");    // strip inline comments
+    if(pend==null&&!line.trim())continue;
+    const net=(line.match(/[{[]/g)||[]).length-(line.match(/[}\]]/g)||[]).length;
+    if(pend==null){pend=line;depth=net;}
+    else{pend+=" "+line.trim();depth+=net;}
+    if(depth<=0){if(pend.trim())logical.push(pend);pend=null;depth=0;}
+  }
+  if(pend!=null&&pend.trim())logical.push(pend);
+  const stack=[];                            // open mapping keys: {indent,key}
+  for(const line of logical){
+    const indent=line.match(/^ */)[0].length;
+    const t=line.trim();
+    while(stack.length&&stack[stack.length-1].indent>=indent)stack.pop();
+    if(t.startsWith("- ")||t==="-"){         // list item -> append to parent
+      const path=stack.map(s=>s.key).join(".");
+      const item=t.replace(/^-\s*/,"");
+      out.set(path,out.has(path)?out.get(path)+", "+item:item);
+      continue;
+    }
+    const m=t.match(/^([^:]+):\s*(.*)$/);
+    if(!m)continue;
+    const key=m[1].trim();
+    const path=[...stack.map(s=>s.key),key].join(".");
+    if(m[2]==="")stack.push({indent,key});   // opens a nested mapping (or list)
+    else out.set(path,m[2].trim());
+  }
+  return out;
+}
+// value comparison that survives YAML/JSON spelling differences (0.0 vs 0,
+// True vs true vs on, quoted vs bare strings)
+const CFG_BOOL={on:"true",yes:"true",off:"false",no:"false"};
+function cfgNorm(v){
+  const s=String(v).trim().replace(/^['"]|['"]$/g,"");
+  const n=Number(s);
+  if(s!==""&&Number.isFinite(n))return String(n);
+  const low=s.toLowerCase();
+  return CFG_BOOL[low]||low;
+}
+// paths that differ between runs of the SAME variant (name, seed, device) and
+// would flood the table with non-differences
+const CFG_SKIP=/^experiment\.(name|seed|seeds|device|save_artifacts)$/;
+function cmpConfigCard(loaded){
+  if(loaded.length<2)return null;
+  const maps=loaded.map(g=>{
+    const s=g.sums.find(x=>x&&x.config);
+    const m=parseCfgPaths(s&&s.config);
+    // the config copy does NOT reflect the arm's overrides — overlay them.
+    // Raw String(v), not fmtOverride: booleans must stay "true"/"false" so an
+    // override that merely restates the config value compares equal to the
+    // YAML's True/False instead of minting a spurious diff row
+    if(g.overrides)for(const [k,v] of Object.entries(g.overrides))
+      m.set("agent."+k,String(v));
+    return m;
+  });
+  const keys=[...new Set(maps.flatMap(m=>[...m.keys()]))].sort();
+  const rows=[];
+  for(const k of keys){
+    if(CFG_SKIP.test(k))continue;
+    const vals=maps.map(m=>m.has(k)?String(m.get(k)):null);
+    if(new Set(vals.map(v=>v==null?"∅":cfgNorm(v))).size>1)
+      rows.push([k,vals]);
+  }
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Configuration differences"}),
+    el("p",{class:"desc",text:"Every config parameter that differs between the "
+      +"selected variants — the run dirs' config.yaml copies plus each arm's "
+      +"manifest-recorded overrides (which the copies do not reflect). "
+      +"Identical parameters are hidden."}));
+  if(!rows.length){
+    card.append(el("p",{class:"muted-note",
+      text:"No configuration differences found between the selected variants "
+        +"(beyond name/seed bookkeeping)."}));
+    return card;
+  }
+  const tbl=el("table",{});
+  const hr=el("tr",{},el("th",{text:"parameter"}));
+  for(const g of loaded){
+    const th=el("th",{});
+    const dot=el("span",{class:"dot"});dot.style.background=cssv(g.color);
+    th.append(dot,document.createTextNode(g.label));
+    hr.append(th);
+  }
+  tbl.append(hr);
+  for(const [k,vals] of rows){
+    const present=vals.filter(v=>v!=null);
+    const common=present.length?present.map(cfgNorm)
+      .sort((a,b)=>present.map(cfgNorm).filter(x=>x===a).length
+                  -present.map(cfgNorm).filter(x=>x===b).length).pop():null;
+    const tr=el("tr",{},el("td",{text:k}));
+    for(const v of vals){
+      const td=el("td",{text:v==null?"—":v});
+      if(v!=null&&cfgNorm(v)!==common)td.classList.add("chg");
+      tr.append(td);
+    }
+    tbl.append(tr);
+  }
+  card.append(el("div",{class:"difftbl"},tbl));
+  return card;
+}
+
 function renderCompare(){
   resetChartRegistries();
   stopPlay();
   const app=$("#app");app.innerHTML="";
   const groups=runGroups();
+  migrateCmpSel(groups);
 
   const selCard=el("div",{class:"card"});
   selCard.append(el("h2",{text:"Compare experiments"}),
-    el("p",{class:"desc",text:"Pick the experiment variants to overlay. Runs are "
-      +"grouped by run id with the seed and launch timestamp stripped; each variant "
-      +"is drawn as the mean across its seeds with a min–max band."}));
-  const list=el("div",{class:"cmp-list"});
+    el("p",{class:"desc",text:"Pick the variants to overlay. Manifest-tracked "
+      +"arms group by their true arm and seeds and show the config diff they "
+      +"trained with; other runs group by run id with the seed and timestamp "
+      +"stripped. Baseline first, then experiments in descending order. "
+      +"Double-click a name to rename it everywhere (charts, exports)."}));
+  let curExp=null,list=null;
   for(const g of groups){
+    if(g.exp!==curExp){                       // one section per experiment dir
+      curExp=g.exp;
+      const inExp=groups.filter(x=>x.exp===curExp);
+      const btn=el("button",{text:inExp.every(x=>STATE.cmpSel.has(x.key))?"none":"all",
+        title:"Select or clear every variant in this experiment"});
+      btn.onclick=()=>{
+        const on=!inExp.every(x=>STATE.cmpSel.has(x.key));
+        for(const x of inExp)on?STATE.cmpSel.add(x.key):STATE.cmpSel.delete(x.key);
+        saveCmpSel();cmpLoad();
+      };
+      selCard.append(el("div",{class:"cmp-sec"},el("h3",{text:curExp}),btn));
+      list=el("div",{class:"cmp-list"});
+      selCard.append(list);
+    }
     const cb=el("input",{type:"checkbox"});
     cb.checked=STATE.cmpSel.has(g.key);
     cb.onchange=()=>{
       cb.checked?STATE.cmpSel.add(g.key):STATE.cmpSel.delete(g.key);
-      cmpLoad();
+      saveCmpSel();cmpLoad();
     };
     const seeds=groupSeeds(g);
-    const meta=`${g.exp} · ${g.runs.length} run${g.runs.length>1?"s":""}`
-      +(seeds.length?` · seeds ${seeds.join(", ")}`:"");
-    list.append(el("label",{class:"cmp-item"},cb,
-      el("span",{},el("div",{class:"nm",text:g.label}),
-        el("div",{class:"meta",text:meta}))));
+    const nm=el("span",{class:"nm",text:g.label});
+    // clicking the name (de)selects like the rest of the row; dblclick renames
+    makeEditable(nm,"g:"+g.key,g.autoLabel,{onClick:()=>cb.click()});
+    const head=el("div",{},nm);
+    if(g.untracked)head.append(el("span",{class:"badge warn",text:"not in manifest",
+      title:"Not (yet) listed in the experiment's manifest: either still "
+        +"training (the launcher records a run when it finishes), superseded "
+        +"by a retrain, or written by another tool. Kept out of the tracked "
+        +"arms' seed averages either way."}));
+    const body=el("span",{},head);
+    if(g.arm&&g.overrides&&Object.keys(g.overrides).length&&g.arm!=="baseline")
+      body.append(el("div",{class:"diff",text:fmtOverrides(g.overrides)}));
+    const nActive=groupActiveRuns(g).length;
+    body.append(el("div",{class:"meta",text:
+      `${g.runs.length} run${g.runs.length>1?"s":""}`
+      +(nActive<g.runs.length
+        ?` (${g.runs.length-nActive} stale same-seed duplicate${g.runs.length-nActive>1?"s":""} ignored)`:"")
+      +(seeds.length?` · seeds ${seeds.join(", ")}`:"")
+      +(g.mtime?` · updated ${new Date(g.mtime*1000).toLocaleDateString()}`:"")}));
+    list.append(el("label",{class:"cmp-item"},cb,body));
   }
-  selCard.append(list);
   if(STATE.cmpStatus)
     selCard.append(el("p",{class:"muted-note",id:"cmpstatus",text:STATE.cmpStatus}));
   app.append(selCard);
@@ -1941,7 +2465,7 @@ function renderCompare(){
   const sel=groups.filter(g=>STATE.cmpSel.has(g.key));
   sel.forEach((g,i)=>{
     g.color=SLOTS[i%SLOTS.length];
-    g.sums=g.runs.map(r=>STATE.cmpCache[r.exp+"::"+r.run]).filter(Boolean);
+    g.sums=groupActiveRuns(g).map(r=>STATE.cmpCache[r.exp+"::"+r.run]).filter(Boolean);
   });
   const loaded=sel.filter(g=>g.sums.length);
   if(!loaded.length){
@@ -1956,19 +2480,25 @@ function renderCompare(){
   if(STATE.cmpX==null)STATE.cmpX=nSteps===allSums.length&&nSteps>0?"steps":"ep";
   if(STATE.cmpX==="steps"&&!nSteps)STATE.cmpX="ep";
 
-  // shared legend — click to hide/show a variant in every chart
+  // shared legend — click to hide/show a variant in every chart, double-click
+  // the name to rename it (renames persist and flow into exports)
   const bar=el("div",{class:"legend"});
   for(const g of loaded){
-    const item=el("span",{class:"item"+(STATE.cmpHidden.has(g.label)?" off":"")});
+    const item=el("span",{class:"item"+(STATE.cmpHidden.has(g.key)?" off":"")});
     item.style.color=cssv(g.color);
-    item.append(el("span",{class:"key"}),el("span",{class:"nm",
-      text:`${g.label} (${g.sums.length} seed${g.sums.length>1?"s":""})`}));
-    item.querySelector(".nm").style.color="var(--ink-2)";
-    item.onclick=()=>{
-      STATE.cmpHidden.has(g.label)?STATE.cmpHidden.delete(g.label)
-                                  :STATE.cmpHidden.add(g.label);
+    const toggle=()=>{
+      STATE.cmpHidden.has(g.key)?STATE.cmpHidden.delete(g.key)
+                                :STATE.cmpHidden.add(g.key);
       rerender();
     };
+    const nm=el("span",{class:"nm",text:g.label});
+    nm.style.color="var(--ink-2)";
+    makeEditable(nm,"g:"+g.key,g.autoLabel,{onClick:toggle});
+    const count=el("span",{class:"nm",
+      text:` (${g.sums.length} seed${g.sums.length>1?"s":""})`});
+    count.style.color="var(--ink-2)";
+    item.append(el("span",{class:"key"}),nm,count);
+    item.onclick=toggle;
     bar.append(item);
   }
   const legCard=el("div",{class:"card"});
@@ -1991,6 +2521,9 @@ function renderCompare(){
     if(notes.length)legCard.append(el("p",{class:"muted-note",text:notes.join(" · ")}));
   }
   app.append(legCard);
+
+  const diffCard=cmpConfigCard(loaded);
+  if(diffCard)app.append(diffCard);
 
   app.append(cmpRewardCard(loaded));
 
@@ -2039,20 +2572,178 @@ function resetChartRegistries(){
 }
 function syncMarkers(ep){for(const c of CHARTS)c.marker(ep);for(const h of EP_HOOKS)h(ep);}
 
+// ================= CHART EXPORT (SVG / PNG for publications) =================
+// Every chart gets hover buttons that download it as a standalone figure:
+// vector SVG or 3× PNG, always in the light palette (independent of the
+// on-screen theme), with a title + legend header, axis labels on both axes,
+// and every CSS variable and class style inlined so the file renders anywhere.
+const EXPORT_FONT="Helvetica, Arial, sans-serif";
+function slugify(s){
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-")
+    .replace(/^-+|-+$/g,"").slice(0,60)||"chart";
+}
+function dlBlob(blob,name){
+  const a=el("a",{href:URL.createObjectURL(blob),download:name});
+  document.body.append(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000);
+}
+// literal-ize var(--x) colours and class-styled text (standalone SVGs carry no
+// page CSS). Must run while the light theme is active so cssv() gives print
+// colours.
+function inlineSvgStyles(node){
+  for(const e of [node,...node.querySelectorAll("*")]){
+    for(const attr of ["stroke","fill"]){
+      const v=e.getAttribute&&e.getAttribute(attr);
+      if(v&&v.startsWith("var("))e.setAttribute(attr,cssv(v.slice(4,-1).trim())||"#888888");
+    }
+    if(e.tagName==="text"){
+      const cls=e.getAttribute("class")||"";
+      if(cls.includes("end-lab")){
+        e.setAttribute("fill","#333333");e.setAttribute("font-size","11");
+        e.setAttribute("font-weight","600");
+      }else if(cls.includes("axis-txt")||cls.includes("axis-lab")){
+        e.setAttribute("fill","#555555");e.setAttribute("font-size","11");
+      }
+      e.removeAttribute("class");
+    }
+  }
+}
+function buildExportSvg(box){
+  const opts=box._opts, meta=box._meta;
+  if(!opts||!meta)return null;
+  const root=document.documentElement;
+  const hadTheme="theme" in root.dataset, prevTheme=root.dataset.theme;
+  root.dataset.theme="light";
+  let svg,legendItems;
+  try{
+    const rebuilt=lineChart({...opts,_export:true});
+    svg=rebuilt.querySelector("svg");
+    if(!svg)return null;
+    for(const n of svg.querySelectorAll("[data-noexport]"))n.remove();
+    inlineSvgStyles(svg);
+    legendItems=meta.series.map(s=>({name:s.name,dash:s.dash,
+      color:s.color&&s.color.startsWith("--")?cssv(s.color):(s.color||"#888888")}));
+  }finally{
+    if(hadTheme)root.dataset.theme=prevTheme; else delete root.dataset.theme;
+  }
+  const vb=svg.getAttribute("viewBox").split(/\s+/).map(Number);
+  const W=vb[2],H=vb[3];
+  const padX=16,gx=18,extraW=gx+30;         // breathing room: y-label + end labels
+  const ctx=document.createElement("canvas").getContext("2d");
+  ctx.font="12px "+EXPORT_FONT;
+  // header: title, wrapped legend rows, optional band note
+  let headerH=10;
+  if(meta.title)headerH+=24;
+  const showLegend=legendItems.length>1;
+  const rows=[];
+  if(showLegend){
+    let row=[],x=padX;
+    for(const it of legendItems){
+      const w=26+ctx.measureText(it.name).width+18;
+      if(x+w>W+extraW-padX&&row.length){rows.push(row);row=[];x=padX;}
+      it.x=x;row.push(it);x+=w;
+    }
+    if(row.length)rows.push(row);
+    headerH+=rows.length*20;
+  }
+  if(meta.band)headerH+=18;
+  headerH+=4;
+
+  const NS="http://www.w3.org/2000/svg";
+  const mkx=(t,a)=>{const n=document.createElementNS(NS,t);
+    for(const k in a)n.setAttribute(k,a[k]);return n;};
+  const out=mkx("svg",{xmlns:NS,width:W+extraW,height:H+headerH,
+    viewBox:`0 0 ${W+extraW} ${H+headerH}`,"font-family":EXPORT_FONT});
+  out.append(mkx("rect",{x:0,y:0,width:W+extraW,height:H+headerH,fill:"#ffffff"}));
+  let y=10;
+  if(meta.title){
+    const t=mkx("text",{x:padX,y:y+15,"font-size":"15","font-weight":"700",fill:"#111111"});
+    t.textContent=meta.title;out.append(t);y+=24;
+  }
+  if(showLegend){
+    for(const row of rows){
+      for(const it of row){
+        const ln=mkx("line",{x1:it.x,x2:it.x+18,y1:y+9,y2:y+9,
+          stroke:it.color,"stroke-width":2.5});
+        if(it.dash)ln.setAttribute("stroke-dasharray",it.dash);
+        out.append(ln);
+        const t=mkx("text",{x:it.x+24,y:y+13,"font-size":"12",fill:"#333333"});
+        t.textContent=it.name;out.append(t);
+      }
+      y+=20;
+    }
+  }
+  if(meta.band){
+    const t=mkx("text",{x:padX,y:y+12,"font-size":"11",fill:"#666666",
+      "font-style":"italic"});
+    t.textContent="shaded band = min–max range";out.append(t);y+=18;
+  }
+  const g=mkx("g",{transform:`translate(${gx},${headerH})`});
+  while(svg.firstChild)g.append(svg.firstChild);
+  out.append(g);
+  if(meta.yLabel){
+    const cy=headerH+12+(H-34-12)/2;        // centred on the plot band (m.t..H-m.b)
+    const t=mkx("text",{"font-size":"11.5",fill:"#555555","text-anchor":"middle",
+      transform:`translate(12 ${cy}) rotate(-90)`});
+    t.textContent=meta.yLabel;out.append(t);
+  }
+  return {node:out,w:W+extraW,h:H+headerH};
+}
+function serializeSvg(node){
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+    +new XMLSerializer().serializeToString(node);
+}
+async function svgToPngBlob(text,w,h,scale){
+  const url=URL.createObjectURL(new Blob([text],{type:"image/svg+xml;charset=utf-8"}));
+  try{
+    const img=new Image();
+    await new Promise((res,rej)=>{img.onload=res;
+      img.onerror=()=>rej(new Error("SVG rasterisation failed"));img.src=url;});
+    const c=document.createElement("canvas");
+    c.width=Math.round(w*scale);c.height=Math.round(h*scale);
+    const cx=c.getContext("2d");
+    cx.fillStyle="#ffffff";cx.fillRect(0,0,c.width,c.height);
+    cx.drawImage(img,0,0,c.width,c.height);
+    return await new Promise(res=>c.toBlob(res,"image/png"));
+  }finally{URL.revokeObjectURL(url);}
+}
+async function exportChart(box,fmt){
+  try{
+    const built=buildExportSvg(box);
+    if(!built)return;
+    const base=slugify(box._meta.title||box._meta.yLabel||"chart")
+      +"__"+slugify(STATE.compare?"compare":(STATE.cur?STATE.cur.run:"run"));
+    const text=serializeSvg(built.node);
+    if(fmt==="svg"){
+      dlBlob(new Blob([text],{type:"image/svg+xml"}),base+".svg");
+      return;
+    }
+    const blob=await svgToPngBlob(text,built.w,built.h,3);
+    if(blob)dlBlob(blob,base+".png");
+    else throw new Error("PNG encoding failed");
+  }catch(err){
+    console.error("chart export failed",err);
+    alert("Chart export failed: "+(err&&err.message||err));
+  }
+}
+
 function lineChart(opts){
   const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix,
-         xDomain,yDomain,syncKey}=opts;
+         xDomain,yDomain,syncKey,yLabel,_export}=opts;
   const W=wide?960:440, H=wide?300:230;
   const anyEnd=!noEndLabel&&series.some(s=>s.endLabel!==false);
   const m={l:56,r:anyEnd?70:16,t:12,b:34};
   const box=el("div",{class:"chart"});
-  if(title){
+  const tDisp=title?lbl("t:"+title,title):"";
+  if(title&&!_export){
     const ct=el("p",{class:"ct"});
     if(titleColor){const dot=el("span",{class:"dot"});dot.style.background=cssv(titleColor);ct.append(dot);}
-    ct.append(document.createTextNode(title));
+    const tspan=el("span",{text:tDisp});
+    makeEditable(tspan,"t:"+title,title);
+    ct.append(tspan);
     box.append(ct);
   }
-  if(hint)box.append(el("p",{class:"ch",text:hint}));
+  if(hint&&!_export)box.append(el("p",{class:"ch",text:hint}));
   const tip=el("div",{class:"tip"});
 
   const all=series.flatMap(s=>s.pts);
@@ -2096,7 +2787,7 @@ function lineChart(opts){
 
   // marker line (synced to scrubber; only meaningful on episode-axis charts)
   const marker=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)",
-    "stroke-width":1.5,"stroke-dasharray":"4 4",opacity:.9});
+    "stroke-width":1.5,"stroke-dasharray":"4 4",opacity:.9,"data-noexport":"1"});
   svg.append(marker);
 
   // min–max bands first (under the lines)
@@ -2134,15 +2825,15 @@ function lineChart(opts){
   for(const e of ends){
     svg.append(mk("circle",{cx:e.x,cy:e.y,r:4,fill:e.col,stroke:"var(--surface)","stroke-width":2}));
     let ly=e.y+3; if(ly-prevY<12)ly=prevY+12; prevY=ly;
-    const t=mk("text",{x:e.x+8,y:ly,class:"end-lab"});t.textContent=e.s.name;svg.append(t);
+    const t=mk("text",{x:e.x+8,y:ly,class:"end-lab"});t.textContent=dn(e.s.name);svg.append(t);
   }
 
   // hover crosshair + tooltip (hover-enabled series only)
   const hoverSeries=series.filter(s=>s.hover!==false);
-  const cross=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)","stroke-width":1,opacity:0});
+  const cross=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)","stroke-width":1,opacity:0,"data-noexport":"1"});
   svg.append(cross);
-  const hoverDots=mk("g",{});svg.append(hoverDots);
-  const overlay=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"});
+  const hoverDots=mk("g",{"data-noexport":"1"});svg.append(hoverDots);
+  const overlay=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent","data-noexport":"1"});
   svg.append(overlay);
 
   const xs=[...new Set(hoverSeries.flatMap(s=>s.pts.map(p=>p[0])))].sort((a,b)=>a-b);
@@ -2172,7 +2863,7 @@ function lineChart(opts){
       let extra="";
       if(s.band){const b=s.band.find(q=>q[0]===p[0]);
         if(b)extra=`  (${fmtN(b[1])}–${fmtN(b[2])})`;}
-      rows.push({name:s.name,color:c,v:fmtN(p[1])+extra});
+      rows.push({name:dn(s.name),color:c,v:fmtN(p[1])+extra});
     }
     tip.innerHTML="";
     tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))
@@ -2201,17 +2892,30 @@ function lineChart(opts){
     if(syncKey)for(const h of HOVER_SYNC[syncKey]||[])h.hide();
     else hideHover();
   });
-  if(syncKey)(HOVER_SYNC[syncKey]=HOVER_SYNC[syncKey]||[]).push({showAt,hide:hideHover});
+  if(syncKey&&!_export)(HOVER_SYNC[syncKey]=HOVER_SYNC[syncKey]||[]).push({showAt,hide:hideHover});
 
   box.append(svg,tip);
   // scrubber-synced marker: on episode axes directly, on re-based axes via the
   // caller's episode -> x mapping (opts.epToX), so e.g. the learning curve on
   // env steps still tracks the episode selected in the spectra scrubber
-  if(episodeAxis||opts.epToX)
+  if((episodeAxis||opts.epToX)&&!_export)
     CHARTS.push({marker:ep=>{
       const x=opts.epToX?opts.epToX(ep):ep;
       if(x!=null&&x>=xmin&&x<=xmax){marker.setAttribute("x1",X(x));marker.setAttribute("x2",X(x));}
       else{marker.setAttribute("x1",-99);marker.setAttribute("x2",-99);}}});
+  if(!_export){
+    // publication export: keep everything the rebuild needs, plus the labels
+    // as currently displayed (double-click renames included)
+    box._opts=opts;
+    box._meta={title:tDisp,xLabel:xLabel||"",yLabel:yLabel||tDisp||"",
+      band:series.some(s=>s.band&&s.band.length>1),
+      series:series.map(s=>({name:dn(s.name),color:s.color,dash:s.dash||""}))};
+    const bSvg=el("button",{text:"⬇ SVG",title:"Download as vector SVG (publication-ready)"});
+    const bPng=el("button",{text:"⬇ PNG",title:"Download as high-resolution PNG (3×)"});
+    bSvg.onclick=e=>{e.stopPropagation();exportChart(box,"svg");};
+    bPng.onclick=e=>{e.stopPropagation();exportChart(box,"png");};
+    box.append(el("div",{class:"expbtns"},bSvg,bPng));
+  }
   return box;
 }
 
