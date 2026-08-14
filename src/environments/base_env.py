@@ -9,7 +9,7 @@ import numpy as np
 from .wrappers.discrete_wrappers import DiscreteStateWrapper
 from .wrappers.generative_wrappers import GenerativeStateWrapper
 from .wrappers.observation_wrappers import UnderlyingStateWrapper
-from .wrappers.reward_wrappers import ScaleReward
+from .wrappers.reward_wrappers import ScaleReward, SignClipReward
 
 environments = {}
 
@@ -39,7 +39,26 @@ def make_environment(env_name: str, render_mode = None,
     # Atari envs processing
     atari_cfg = env_kwargs.get('atari', None)
     if atari_cfg:
-        env = gym.make(env_name, render_mode=render_mode, frameskip=1)
+        # ALE/... ids only exist after ale_py registers them — notebooks do
+        # this import themselves, but subprocess runners come through here.
+        # register_envs is idempotent; without ale_py, gym.make raises its own
+        # clear NamespaceNotFound.
+        try:
+            import ale_py
+            gym.register_envs(ale_py)
+        except ImportError:
+            pass
+        # Optional ALE-level protocol settings. The Atari-100k benchmark
+        # (SimPLe/CURL/SPR/EfficientZero lineage) uses a deterministic ALE —
+        # repeat_action_probability 0 (no sticky actions) and the per-game
+        # minimal action set — while the v5 defaults are sticky 0.25. Omitted
+        # keys keep the v5 defaults, so existing configs are unaffected.
+        ale_kwargs = {}
+        if atari_cfg.get('repeat_action_probability') is not None:
+            ale_kwargs['repeat_action_probability'] = atari_cfg['repeat_action_probability']
+        if atari_cfg.get('full_action_space') is not None:
+            ale_kwargs['full_action_space'] = atari_cfg['full_action_space']
+        env = gym.make(env_name, render_mode=render_mode, frameskip=1, **ale_kwargs)
         env = AtariPreprocessing(
             env,
             noop_max=atari_cfg['noop_max'],
@@ -52,7 +71,11 @@ def make_environment(env_name: str, render_mode = None,
         )
         if atari_cfg['frame_stack'] > 1:
             env = FrameStackObservation(env, stack_size=atari_cfg['frame_stack'])
-        if reward_cfg.get('scale') is not None:
+        # One reward wrapper at a time (both stash raw_reward in info; stacking
+        # would clobber it): sign clipping (DQN-family Atari convention) wins.
+        if reward_cfg.get('clip_sign'):
+            env = SignClipReward(env)
+        elif reward_cfg.get('scale') is not None:
             env = ScaleReward(env, reward_cfg['scale'])
         return env
 

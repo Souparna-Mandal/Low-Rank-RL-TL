@@ -1,0 +1,25 @@
+{
+  "seeds": [
+    0,
+    1
+  ],
+  "runs": {
+    "baseline": {
+      "0": "cached/runs/dqn_enduro_fhrdqn100k_baseline_seed0_20260814-221046",
+      "1": "cached/runs/dqn_enduro_fhrdqn100k_baseline_seed1_20260814-223204"
+    },
+    "exp1": {
+      "0": "cached/runs/dqn_enduro_fhrdqn100k_exp1_seed0_20260814-223333",
+      "1": "cached/runs/dqn_enduro_fhrdqn100k_exp1_seed1_20260814-224157"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 10
+    }
+  }
+}

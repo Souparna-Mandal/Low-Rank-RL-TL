@@ -1,0 +1,107 @@
+# Atari-100k protocol config for the FHR-DQN comparison on Freeway.
+# Launched by experiments/src/run_fhrdqn_atari100k.py (baseline arm = this
+# config with fhr_weight forced to 0; exp<N> arms apply fhr_experiments[N]).
+# Protocol references and caveats: src/analysis/atari100k.py.
+experiment:
+  name: dqn_freeway_fhrdqn100k
+  seed: 0
+  seeds: [0, 1]          # >= 3 paired seeds per arm; add more if budget allows
+  device: auto
+  save_artifacts: true
+  # Include this game's runs in the aggregate-HNS comparison against the
+  # published methods (only 26-game-suite games are ever aggregated).
+  include_in_aggregate: true
+  # One FHR parameter set per numbered experiment; unspecified params inherit
+  # the agent block. All entries train by default (--experiment N for subsets).
+  fhr_experiments:
+    1: {fhr_weight: 0.5, fhr_order: 10}
+    # 2: {fhr_weight: 0.05, fhr_order: 2, reward_lags: True}   # ARX variant
+    # 3: {fhr_weight: 0.2,  fhr_order: 2}
+
+environment:
+  name: ALE/Freeway-v5
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: false, state: {}}
+  # TRAINING reward: sign-clipped to {-1,0,+1} (Mnih et al.; what every
+  # DQN-family Atari-100k baseline trains under). Curves + evaluation report
+  # the raw game score via info["raw_reward"].
+  reward:
+    clip_sign: true
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    # Freeway has no lives counter in ALE (single continuous life) —
+    # life-loss termination is meaningless here, matching the Enduro config.
+    terminal_on_life_loss: false
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+    # Atari-100k benchmark ALE: deterministic (no sticky actions — the v5
+    # default 0.25 would make results incomparable to the published numbers)
+    # and the per-game minimal action set.
+    repeat_action_probability: 0.0
+    full_action_space: false
+
+network:
+  # Nature DQN CNN (src/agents/atari_networks.py NatureCNN)
+  fc_hidden: 512
+
+agent:
+  # DER-style data-efficient settings, uniform across all games so the
+  # only per-game difference is the game itself:
+  replay_buffer_capacity: 100000    # holds the entire 100k-step run
+  batch_size: 32
+  nn_learning_rate: 0.0001
+  eps_start: 1.0
+  eps_min: 0.01
+  # eps 1 -> 0.01 over ~20k post-warm-up steps: 0.01 ** (1/20000)
+  decay_rate: 0.99977
+  discount_factor: 0.99
+  TD_LR: 1.0                        # hard target copy at every update tick
+  buffer_util: 4
+  gd_steps_ceil: 1                  # with train_frequency_steps 1 -> replay ratio 1
+  grad_clip_norm: 10.0
+  double: true
+  # FHR block (baseline arm overrides fhr_weight to 0):
+  fhr_weight: 0.05
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 5000           # of ~98k total grad steps at replay ratio 1
+  c_learning_rate: 0.01
+
+training:
+  no_episodes: 100000               # upper bound; max_env_steps ends training
+  max_env_steps: 100000             # THE Atari-100k interaction budget
+  target_network_update_steps: 1000
+  train_frequency_steps: 1          # one gradient step per env step (post warm-up)
+  use_episode_training: False
+  solved_reward: 1000000000         # no early stopping under a fixed budget
+  warmup_steps: 1600                # DER's min-replay-history
+  early_stopping_patience_eps: 1000000
+  no_eps_to_avg: 20
+
+# Final-policy evaluation (raw scores; see evaluate_policy_atari):
+# EfficientZero reports 32 episodes; DER/SPR evaluate at eps 0.001.
+evaluation:
+  episodes: 32
+  epsilon: 0.001
+  base_seed: 1000
+
+analysis:
+  ep_freq: 200                      # a few Hankel ticks across the run
+  methods: []                       # pixel inputs -> no state-grid Q matrix
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5
