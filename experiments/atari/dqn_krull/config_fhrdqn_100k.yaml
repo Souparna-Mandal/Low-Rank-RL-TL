@@ -14,8 +14,8 @@ experiment:
   # One FHR parameter set per numbered experiment; unspecified params inherit
   # the agent block. All entries train by default (--experiment N for subsets).
   fhr_experiments:
-    1: {fhr_weight: 0.5, fhr_order: 10}
-    # 2: {fhr_weight: 0.05, fhr_order: 2, reward_lags: True}   # ARX variant
+    1: {fhr_weight: 0.5, fhr_order: 4}
+    2: {fhr_weight: 0.05, fhr_order: 4, reward_lags: True}   # ARX variant
     # 3: {fhr_weight: 0.2,  fhr_order: 2}
 
 environment:
@@ -92,7 +92,7 @@ evaluation:
   base_seed: 1000
 
 analysis:
-  ep_freq: 200                      # a few Hankel ticks across the run
+  ep_freq: 40                      # a few Hankel ticks across the run
   methods: []                       # pixel inputs -> no state-grid Q matrix
   hankel_sweep:
     enabled: true

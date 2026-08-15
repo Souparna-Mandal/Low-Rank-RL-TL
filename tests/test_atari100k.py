@@ -208,8 +208,8 @@ def test_aggregate_games_follows_the_config_flags():
     for game in selected:
         assert atari100k.BASELINES[launcher.config_game_key(game)]
     assert set(selected) <= set(launcher.GAME_DIRS)
-    # explicit game-list argument restricts the scan
-    assert launcher.aggregate_games(["pacman", "enduro"]) == ["pacman"]
+    # enduro can never be selected, opted-in or not (outside the suite)
+    assert launcher.aggregate_games(["enduro"]) == []
 
 
 def test_sign_clip_handles_numpy_scalar_rewards():

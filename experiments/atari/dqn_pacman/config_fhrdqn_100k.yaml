@@ -10,7 +10,7 @@ experiment:
   save_artifacts: true
   # Include this game's runs in the aggregate-HNS comparison against the
   # published methods (only 26-game-suite games are ever aggregated).
-  include_in_aggregate: true
+  include_in_aggregate: false
   # One FHR parameter set per numbered experiment; unspecified params inherit
   # the agent block. All entries train by default (--experiment N for subsets).
   fhr_experiments:
