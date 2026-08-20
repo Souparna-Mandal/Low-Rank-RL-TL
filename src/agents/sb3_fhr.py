@@ -39,6 +39,8 @@ from a repo-native run for the analysis stack and the result viewer app:
     act_greedy, save) those analyses expect, wrapping q_net (DQN) or the
     quantile-mean of quantile_net (QR-DQN).
 """
+import csv
+import pathlib
 import re
 import warnings
 
@@ -639,6 +641,66 @@ class BoundedObservations(gym.Wrapper):
             low=np.asarray(low, dtype=np.float32),
             high=np.asarray(high, dtype=np.float32),
             dtype=np.float32)
+
+
+class GreedyEvalCallback(BaseCallback):
+    """Periodic deterministic-policy evaluation on a dedicated env, appended to
+    <run_dir>/eval.csv (env_steps, mean/std/min/max_reward, n_episodes).
+
+    Training-episode rewards are eps-greedy (exploration_final_eps stays >= 0.05
+    on the classic-control configs), which understates and blurs the policy's
+    actual progress — exactly where "when does learning start" is measured.
+    Episode k of every tick resets with seed `seed + k`: the same start states
+    every tick and across arms, so curves are paired. Actions come from
+    model.predict(deterministic=True) — no global np.random draw anywhere, so
+    the training stream is identical with and without this callback.
+    """
+
+    def __init__(self, eval_env: gym.Env, out_dir, freq_steps: int = 5000,
+                 n_episodes: int = 10, seed: int = 9000,
+                 max_episode_steps: int = 10000, verbose: int = 0):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.out_path = pathlib.Path(out_dir) / "eval.csv"
+        self.freq_steps = freq_steps
+        self.n_episodes = n_episodes
+        self.seed = seed
+        self.max_episode_steps = max_episode_steps   # backstop for envs without TimeLimit
+        self.rows: list[dict] = []
+        self._next_eval = 0          # first tick fires on step 1: untrained net
+
+    def _evaluate(self):
+        rewards = []
+        for k in range(self.n_episodes):
+            obs, _ = self.eval_env.reset(seed=self.seed + k)
+            total, steps, done = 0.0, 0, False
+            while not done and steps < self.max_episode_steps:
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, r, term, trunc, _ = self.eval_env.step(int(action))
+                total += float(r)
+                steps += 1
+                done = term or trunc
+            rewards.append(total)
+        r = np.asarray(rewards)
+        self.rows.append({"env_steps": self.num_timesteps,
+                          "mean_reward": float(r.mean()),
+                          "std_reward": float(r.std()),
+                          "min_reward": float(r.min()),
+                          "max_reward": float(r.max()),
+                          "n_episodes": len(r)})
+        with open(self.out_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(self.rows[0]))
+            writer.writeheader()
+            writer.writerows(self.rows)
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next_eval:
+            self._evaluate()
+            self._next_eval = self.num_timesteps + self.freq_steps
+        return True
+
+    def _on_training_end(self) -> None:
+        self._evaluate()
 
 
 class FHRSB3Callback(BaseCallback):

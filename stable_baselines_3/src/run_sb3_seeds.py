@@ -115,7 +115,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
     import gymnasium as gym
     from stable_baselines3.common.monitor import Monitor
     from experiment import load_config, make_run_logger
-    from agents.sb3_fhr import FHRSB3Callback
+    from agents.sb3_fhr import FHRSB3Callback, GreedyEvalCallback
 
     cfg = load_config(CONFIG, seed=seed)          # seeds torch / numpy / random
     if arm == "baseline":
@@ -138,8 +138,23 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
                               analysis_config=cfg.get("analysis"),
                               analysis_env=analysis_env,
                               training_config=cfg.get("training"))
+    callbacks = [callback]
+    eval_cfg = (cfg.get("training") or {}).get("eval")
+    eval_env = None
+    if eval_cfg:
+        # greedy-policy eval curve -> <run_dir>/eval.csv; fixed per-episode
+        # reset seeds keep the curve paired across arms/variants, and the
+        # deterministic policy draws no global RNG (training stream untouched)
+        eval_env = gym.make(cfg["environment"]["name"])
+        callbacks.append(GreedyEvalCallback(
+            eval_env, logger.dir,
+            freq_steps=eval_cfg.get("freq_steps", 5000),
+            n_episodes=eval_cfg.get("n_episodes", 10),
+            seed=eval_cfg.get("seed", 9000)))
     model.learn(total_timesteps=int(cfg["algo"]["n_timesteps"]),
-                callback=callback)
+                callback=callbacks)
+    if eval_env is not None:
+        eval_env.close()
     analysis_env.close()
     env.close()
     return logger.dir
