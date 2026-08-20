@@ -1,0 +1,89 @@
+# SB3 (Stable-Baselines3) FHR comparison — Acrobot-v1.
+#
+# RL-Zoo tuned QR-DQN (hyperparams/qrdqn.yml) as the stock sample-efficient
+# baseline; every arm runs FHRQRDQN (src/agents/sb3_fhr.py), the baseline arm
+# forcing fhr_weight 0.0 = bit-for-bit stock SB3. Launch with
+# stable_baselines_3/src/run_sb3_seeds.py (cwd = this dir). See the cartpole config
+# for the full commentary — only env-specific values differ here.
+experiment:
+  name: sb3_acrobot
+  seed: 44
+  seeds: [44, 66]
+  # Arms mirror the classic dqn_acrobot_2_revised sweep: the Optuna study
+  # preferred order 3 over the theory-minimal order 2 on Acrobot.
+  fhr_experiments:
+    1: {fhr_weight: 1, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
+    2: {fhr_weight: 0.0271, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
+    3: {fhr_weight: 1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.0136}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: Acrobot-v1        # raw env (bounded obs space)
+
+algo:                     # RL-Zoo tuned QR-DQN, Acrobot-v1
+  type: qrdqn
+  n_timesteps: 100000
+  learning_rate: 6.3e-4
+  batch_size: 128
+  buffer_size: 50000
+  learning_starts: 0
+  gamma: 0.99
+  target_update_interval: 250
+  train_freq: 4
+  gradient_steps: -1      # SB3 semantics: as many gradient steps as env steps
+                          # collected in the rollout (= train_freq)
+  exploration_fraction: 0.12
+  exploration_final_eps: 0.1
+  net_arch: [256, 256]
+  n_quantiles: 25
+
+agent:
+  fhr_weight: 1
+  fhr_order: 3
+  reward_lags: False
+  warmup_grad_steps: 2000 # the classic acrobot warm-up (in gradient steps;
+                          # here ~2k env steps at 1 grad step / env step)
+  c_learning_rate: 0.0136
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -80      # Acrobot-v1 solved at avg reward >= -100; the
+                          # classic config's tighter bar kept for parity
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  ep_freq: 50
+  # Acrobot's raw observation space is bounded — no state_bounds needed
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 3, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

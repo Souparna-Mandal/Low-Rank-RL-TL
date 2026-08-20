@@ -17,6 +17,8 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "nbconvert>=7.16",
     "optuna>=4.9.0",
+    "stable-baselines3>=2.9.0",
+    "sb3-contrib>=2.9.0",
 ]
 
 [tool.uv]

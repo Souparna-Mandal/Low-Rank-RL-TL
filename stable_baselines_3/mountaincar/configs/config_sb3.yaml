@@ -1,0 +1,92 @@
+# SB3 (Stable-Baselines3) FHR comparison — MountainCar-v0.
+#
+# RL-Zoo tuned DQN (hyperparams/dqn.yml — algo.type below selects the family;
+# the zoo tuning is shared with qrdqn.yml apart from n_quantiles) as the stock
+# sample-efficient baseline; every arm runs FHRDQN (src/agents/sb3_fhr.py),
+# the baseline arm forcing fhr_weight 0.0 = bit-for-bit stock SB3. Launch with
+# stable_baselines_3/src/run_sb3_seeds.py (cwd = this dir). See the cartpole config
+# for the full commentary — only env-specific values differ here.
+experiment:
+  name: sb3_mountaincar
+  seed: 44
+  seeds: [44, 66]
+  # Arms mirror the classic dqn_mountaincar sweep values (order-4 ARX tuned
+  # arm and a mid/strong pure-AR pair; the classic Hankel rank here is 2-4).
+  fhr_experiments:
+    7: {fhr_weight: 0.01, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    8: {fhr_weight: 0.1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    9: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: MountainCar-v0    # raw env — note the classic experiments found obs
+                          # normalisation load-bearing for THEIR interleaved
+                          # loop; the zoo setting trains raw, and both arms
+                          # here share whatever the zoo baseline does
+
+algo:                     # RL-Zoo tuned DQN, MountainCar-v0
+  type: dqn
+  n_timesteps: 150000
+  learning_rate: 4.0e-3
+  batch_size: 128
+  buffer_size: 10000
+  learning_starts: 1000
+  gamma: 0.98
+  target_update_interval: 600
+  train_freq: 16
+  gradient_steps: 8
+  exploration_fraction: 0.2
+  exploration_final_eps: 0.07
+  net_arch: [256, 256]
+  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it);
+                          # kept so switching type back to qrdqn needs one edit
+
+agent:
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 500  # ~1k env steps of gradient bursts past learning_starts
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -110     # MountainCar-v0 standard bar (classic config used a
+                          # tighter -30 for its longer interleaved runs)
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 25
+
+analysis:
+  ep_freq: 50
+  # MountainCar's raw observation space is already bounded — no state_bounds
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [32, 32]   # one bin-count per obs dim
+        batch_size: 128
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2
