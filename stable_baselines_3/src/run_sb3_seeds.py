@@ -90,15 +90,33 @@ def _build_model(cfg, env, seed):
                device=cfg["experiment"]["_device"], verbose=0, **algo, **fhr)
 
 
+def _make_env(cfg, render_mode=None):
+    """gym.make + the config's static observation rescale, when present.
+
+    environment.normalise.state {min, max} applies gymnasium's
+    RescaleObservation (the same wrapper the classic base_env stack uses) — a
+    fixed affine map, so unlike VecNormalize it is identical for the TD batch
+    and the FHR lag observations. Must wrap every env a run touches (training,
+    eval, analysis, videos) so the policy always sees one observation space.
+    """
+    import gymnasium as gym
+    env = gym.make(cfg["environment"]["name"], render_mode=render_mode)
+    state = ((cfg["environment"].get("normalise") or {}).get("state") or {})
+    if state:
+        env = gym.wrappers.RescaleObservation(
+            env, np.array(state["min"], dtype=np.float32),
+            np.array(state["max"], dtype=np.float32))
+    return env
+
+
 def _make_analysis_env(cfg, render_mode=None):
     """A dedicated env for the analysis rollouts (the training env must not be
     disturbed mid-episode), with finite observation bounds for q_matrix_dqn's
     state grid when the config provides analysis.state_bounds."""
-    import gymnasium as gym
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from agents.sb3_fhr import BoundedObservations
-    env = gym.make(cfg["environment"]["name"], render_mode=render_mode)
+    env = _make_env(cfg, render_mode=render_mode)
     bounds = (cfg.get("analysis") or {}).get("state_bounds")
     if bounds:
         env = BoundedObservations(env, bounds["low"], bounds["high"])
@@ -130,7 +148,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
     if timesteps is not None:                     # smoke-test override
         cfg["algo"]["n_timesteps"] = timesteps
 
-    env = Monitor(gym.make(cfg["environment"]["name"]))
+    env = Monitor(_make_env(cfg))
     model = _build_model(cfg, env, seed)
     logger = make_run_logger(cfg, config_path=CONFIG, base_dir="cached")
     analysis_env = _make_analysis_env(cfg)
@@ -145,7 +163,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
         # greedy-policy eval curve -> <run_dir>/eval.csv; fixed per-episode
         # reset seeds keep the curve paired across arms/variants, and the
         # deterministic policy draws no global RNG (training stream untouched)
-        eval_env = gym.make(cfg["environment"]["name"])
+        eval_env = _make_env(cfg)
         callbacks.append(GreedyEvalCallback(
             eval_env, logger.dir,
             freq_steps=eval_cfg.get("freq_steps", 5000),
@@ -339,12 +357,11 @@ def record_final_videos(arm, exp_dir=None):
     <run_dir>/videos/epfinal-episode-0.mp4 -> [(seed, mp4 path)]."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
-    import gymnasium as gym
     from analysis.visualisations.rollout_video import record_greedy_episode
     out = []
     for r in load_runs(arm, exp_dir):
         model, adapter = load_run_model(r["run_dir"])
-        env = gym.make(r["cfg"]["environment"]["name"], render_mode="rgb_array")
+        env = _make_env(r["cfg"], render_mode="rgb_array")
         prefix = record_greedy_episode(adapter, env, str(r["run_dir"] / "videos"),
                                        episode="final", seed=r["seed"])
         env.close()

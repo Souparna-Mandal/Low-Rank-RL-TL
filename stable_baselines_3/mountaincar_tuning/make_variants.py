@@ -54,12 +54,34 @@ COMMON = {
 
 # Phase A — the update-cadence hypothesis: same 0.5 gradient-steps-per-env-step
 # ratio as the zoo recipe (16, 8), finer or coarser burst granularity.
-VARIANTS = {
+PHASE_A = {
     "cad16_8": {},                                             # zoo reference
     "cad64_32": {"algo": {"train_freq": 64, "gradient_steps": 32}},
     "cad4_2": {"algo": {"train_freq": 4, "gradient_steps": 2}},
     "cad2_1": {"algo": {"train_freq": 2, "gradient_steps": 1}},
 }
+
+# Phase B — single-factor ports of the classic dqn_mountaincar recipe (the
+# regime where FHR won 3/3 seeds) onto the zoo reference. One factor per
+# variant; cadence stays the zoo (16, 8) so A and B remain orthogonal.
+PHASE_B = {
+    "gamma99": {"algo": {"gamma": 0.99}},
+    "buf100k": {"algo": {"buffer_size": 100000}},
+    # classic soft target updates: Polyak tau 0.005 (SB3 syncs on the
+    # target_update_interval cadence; 1 env step = every _on_step)
+    "polyak": {"algo": {"tau": 0.005, "target_update_interval": 1}},
+    "lr1e3": {"algo": {"learning_rate": 1.0e-3}},
+    "net128": {"algo": {"net_arch": [128, 128]}},
+    # classic exploration reached eps_min ~2/3 into the run and floored at .05
+    "slow_eps": {"algo": {"exploration_fraction": 0.5,
+                          "exploration_final_eps": 0.05}},
+    "ls10k": {"algo": {"learning_starts": 10000}},
+    # classic found obs normalisation load-bearing: pos/vel spans differ 14x
+    "normobs": {"environment": {"normalise": {"state": {"min": [-1, -1],
+                                                        "max": [1, 1]}}}},
+}
+
+VARIANTS = {**PHASE_A, **PHASE_B}
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:
