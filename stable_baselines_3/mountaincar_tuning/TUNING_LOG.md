@@ -66,4 +66,66 @@ Variants (everything else = zoo recipe, analysis ticks off, greedy eval on):
 Arms per variant: baseline (lambda 0), exp1 (lambda 0.5, r=2, c_lr 0.03 — the
 classic 3/3 winner block), exp2 (lambda 0.1, r=2). Seeds 44/66/52.
 
+### Phase A results (36 runs, greedy-eval metrics; figures/, summary.csv)
+
+| variant  | arm      | seeds learned | eval -160 at | final eval |
+|----------|----------|:-------------:|-------------:|-----------:|
+| cad64_32 | baseline | 2/3           | 135-145k     | -163.4     |
+| cad64_32 | exp1     | **3/3**       | 90-120k      | -115.2     |
+| cad64_32 | exp2     | **3/3**       | 80-105k      | -119.3     |
+| cad16_8  | baseline | 2/3           | 80-130k      | -136.9     |
+| cad16_8  | exp1     | **3/3**       | 85-115k      | -109.9     |
+| cad16_8  | exp2     | 2/3           | 70-110k      | -136.6     |
+| cad4_2   | all arms | **0/9**       | never        | -200.0     |
+| cad2_1   | all arms | **0/9**       | never        | -200.0     |
+
+Verdicts:
+
+1. **Finer bursts at fixed ratio kill MountainCar entirely — hypothesis
+   refuted in that direction.** 18/18 runs at (4,2) and (2,1) never reach the
+   goal once in 750 episodes (best episode -200; TD training itself is
+   healthy — loss converges on a goal-free replay). Plausible mechanism:
+   policy churn — updating the greedy net every 2-4 steps re-decides actions
+   mid-climb, destroying the long consistent action sequences momentum
+   building needs; a policy frozen for 16-64 steps commits. The classic loop
+   survived every-2-step updates only with lr 5e-4 (8x smaller) + Polyak
+   targets, i.e. far less policy movement per update — Phase B's lr1e3 and
+   polyak variants probe exactly that interaction.
+2. **FHR lambda=0.5 (r=2)'s real effect is onset reliability, not faster
+   asymptote: 6/6 learned seeds across the two working cadences vs the
+   baseline's 4/6** — the same 3/3-vs-flaky pattern the classic experiments
+   saw. Baseline seeds that do learn land on the published zoo number
+   (-99.5/-111.1 vs zoo -100.85 +/- 9.9), confirming the baseline arm
+   faithfully reproduces the zoo result and its failure mode is stochastic
+   onset.
+3. **Coarser cadence (64,32) amplifies the FHR edge**: baseline degrades
+   (late onset, -137/-153 finals, one dead seed), FHR arms keep 3/3 onset at
+   80-120k. FHR is stabilising exactly what coarse bursts destabilise.
+4. eval-vs-train measurement matters: on the zoo reference the greedy-eval
+   gap (exp1 -109.9 vs baseline -136.9) was invisible in eps-greedy train
+   finals (-129.8 vs -153.9 reads as noise on 2 seeds).
+
+Phase A winner kept as reference: cadence (16,8) — (64,32) helps FHR's
+relative edge but hurts absolute sample efficiency; the thesis claim needs
+FHR to beat a baseline at the baseline's own best setting.
+
+## Phase B — single-factor classic-recipe ports (queued behind Phase A)
+
+Which ingredient of the classic regime (where FHR won 3/3) restores FHR's
+edge when transplanted alone onto the zoo recipe — without destroying the
+baseline's own sample efficiency? One factor per variant, cadence kept at the
+zoo (16, 8) so Phases A and B stay orthogonal; `cad16_8` is the shared
+reference for both. Same arms/seeds/eval protocol as Phase A.
+
+| variant  | factor (zoo -> classic)                                  |
+|----------|----------------------------------------------------------|
+| gamma99  | gamma 0.98 -> 0.99                                       |
+| buf100k  | buffer_size 10k -> 100k                                  |
+| polyak   | hard target sync/600 -> Polyak tau 0.005 every step      |
+| lr1e3    | learning_rate 4e-3 -> 1e-3 (midpoint toward classic 5e-4)|
+| net128   | net_arch [256,256] -> [128,128]                          |
+| slow_eps | exploration_fraction 0.2 -> 0.5, final eps 0.07 -> 0.05  |
+| ls10k    | learning_starts 1k -> 10k (classic 10k random prefill)   |
+| normobs  | raw obs -> static rescale to [-1,1]^2 (RescaleObservation)|
+
 Results: pending.
