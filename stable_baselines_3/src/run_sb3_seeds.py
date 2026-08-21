@@ -8,6 +8,8 @@ against cwd):
     python ../src/run_sb3_seeds.py                    # baseline + fhr arms
     python ../src/run_sb3_seeds.py --experiment 1 2   # baseline + exp1 + exp2
     python ../src/run_sb3_seeds.py --max-workers 3 --force
+    python ../src/run_sb3_seeds.py --config configs/config_sb3_zoo.yaml \
+        --arms baseline                               # alt recipe, own manifest
 
 The trained method is RL-Zoo-tuned stock SB3 (algo.type: qrdqn via sb3_contrib
 — SB3's best sample-efficient DQN-family method — or dqn), and every arm runs
@@ -49,6 +51,19 @@ CONFIG = "configs/config_sb3.yaml"
 MANIFEST = "cached/sb3_runs_manifest.json"
 LOGS = "cached/logs"
 ARMS = ("baseline", "fhr")
+
+
+def _config_suffix(config):
+    """'' for the default config; 'zoo' for configs/config_sb3_zoo.yaml, etc.
+    Keys the per-config manifest and log names so two configs sharing one
+    experiment dir (e.g. tuned recipe vs stock-zoo reference) never collide."""
+    stem = pathlib.Path(config).stem
+    return stem.removeprefix("config_sb3").lstrip("_")
+
+
+def _manifest_name(config):
+    sfx = _config_suffix(config)
+    return f"cached/sb3_runs_manifest{'_' + sfx if sfx else ''}.json"
 
 # The FHR parameter set a numbered experiment may override — everything else
 # (algo hyperparameters, net size, exploration schedule, ...) stays identical
@@ -123,7 +138,8 @@ def _make_analysis_env(cfg, render_mode=None):
     return env
 
 
-def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
+def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None,
+            config=CONFIG):
     """Child mode: one full training run in this process (cwd = experiment
     dir). Baseline strips the FHR term (fhr_weight = 0.0); a numbered arm
     applies its FHR parameter set on top of the config's agent block. Returns
@@ -135,7 +151,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
     from experiment import load_config, make_run_logger
     from agents.sb3_fhr import FHRSB3Callback, GreedyEvalCallback
 
-    cfg = load_config(CONFIG, seed=seed)          # seeds torch / numpy / random
+    cfg = load_config(config, seed=seed)          # seeds torch / numpy / random
     if arm == "baseline":
         cfg["agent"]["fhr_weight"] = 0.0
     elif agent_overrides:
@@ -150,7 +166,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
 
     env = Monitor(_make_env(cfg))
     model = _build_model(cfg, env, seed)
-    logger = make_run_logger(cfg, config_path=CONFIG, base_dir="cached")
+    logger = make_run_logger(cfg, config_path=config, base_dir="cached")
     analysis_env = _make_analysis_env(cfg)
     callback = FHRSB3Callback(run_logger=logger,
                               analysis_config=cfg.get("analysis"),
@@ -178,14 +194,14 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None):
     return logger.dir
 
 
-def _config_seeds(exp_dir):
-    with open(exp_dir / CONFIG) as f:
+def _config_seeds(exp_dir, config=CONFIG):
+    with open(exp_dir / config) as f:
         cfg = yaml.safe_load(f)
     return list(cfg["experiment"].get("seeds") or [cfg["experiment"]["seed"]])
 
 
-def _load_manifest(exp_dir):
-    path = exp_dir / MANIFEST
+def _load_manifest(exp_dir, config=CONFIG):
+    path = exp_dir / _manifest_name(config)
     if path.exists():
         with open(path) as f:
             return json.load(f)
@@ -197,8 +213,8 @@ def _run_recorded(exp_dir, manifest, arm, seed):
     return rel is not None and (exp_dir / rel / "rewards.csv").exists()
 
 
-def _experiment_overrides(exp_dir, experiment):
-    with open(exp_dir / CONFIG) as f:
+def _experiment_overrides(exp_dir, experiment, config=CONFIG):
+    with open(exp_dir / config) as f:
         cfg = yaml.safe_load(f)
     sweeps = cfg["experiment"].get("fhr_experiments") or {}
     overrides = sweeps.get(experiment, sweeps.get(str(experiment)))
@@ -221,7 +237,7 @@ def _experiment_overrides(exp_dir, experiment):
     return overrides
 
 
-def _arm_specs(exp_dir, experiments):
+def _arm_specs(exp_dir, experiments, config=CONFIG):
     baseline = ("baseline", ["--arm", "baseline"], {"fhr_weight": 0.0})
     if not experiments:
         return [baseline, ("fhr", ["--arm", "fhr"], None)]
@@ -229,7 +245,7 @@ def _arm_specs(exp_dir, experiments):
         raise ValueError(f"duplicate experiment numbers: {experiments}")
     specs = [baseline]
     for n in experiments:
-        overrides = _experiment_overrides(exp_dir, n)
+        overrides = _experiment_overrides(exp_dir, n, config)
         specs.append((f"exp{n}", ["--arm", "fhr",
                                   "--agent-overrides", json.dumps(overrides),
                                   "--name-tag", f"exp{n}"], overrides))
@@ -237,19 +253,33 @@ def _arm_specs(exp_dir, experiments):
 
 
 def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
-               experiments=None):
+               experiments=None, config=CONFIG, arms=None):
     """Fan out one subprocess per (arm, seed) from the config's seed list;
     pairs already recorded in the manifest are skipped unless force=True
     (force never touches the shared baseline in an --experiment launch).
     Returns the manifest dict; raises if any run fails (successes are kept,
-    so a relaunch resumes from the failures)."""
+    so a relaunch resumes from the failures).
+
+    config selects an alternative config file in the experiment dir (e.g.
+    "configs/config_sb3_zoo.yaml"); its runs are recorded in a per-config
+    manifest (cached/sb3_runs_manifest_<suffix>.json) so recipes sharing the
+    dir never collide. arms optionally restricts the launch to a subset of
+    arm keys, e.g. arms=["baseline"] for a reference-baseline-only launch
+    (keys: "baseline", "fhr", "exp<N>")."""
     exp_dir = pathlib.Path(exp_dir or pathlib.Path.cwd()).resolve()
     if isinstance(experiments, int):
         experiments = [experiments]
-    seeds = _config_seeds(exp_dir)
-    manifest = _load_manifest(exp_dir)
+    manifest_name = _manifest_name(config)
+    seeds = _config_seeds(exp_dir, config)
+    manifest = _load_manifest(exp_dir, config)
     manifest["seeds"] = seeds
-    specs = _arm_specs(exp_dir, experiments)
+    specs = _arm_specs(exp_dir, experiments, config)
+    if arms is not None:
+        unknown = sorted(set(arms) - {k for k, _, _ in specs})
+        if unknown:
+            raise ValueError(f"arms {unknown} not in this launch's arm set "
+                             f"{[k for k, _, _ in specs]}")
+        specs = [s for s in specs if s[0] in arms]
     manifest["overrides"] = {**manifest.get("overrides", {}),
                              **{k: ov for k, _, ov in specs if ov is not None}}
     jobs = [(key, extra, s) for key, extra, _ in specs for s in seeds
@@ -257,7 +287,7 @@ def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
             or not _run_recorded(exp_dir, manifest, key, s)]
     skipped = len(specs) * len(seeds) - len(jobs)
     if skipped:
-        print(f"skipping {skipped} already-completed run(s) recorded in {MANIFEST}")
+        print(f"skipping {skipped} already-completed run(s) recorded in {manifest_name}")
     if not jobs:
         return manifest
 
@@ -268,11 +298,13 @@ def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
     lock = threading.Lock()
     failures = []
 
+    sfx = _config_suffix(config)
+
     def work(job):
         key, extra, seed = job
-        log_path = exp_dir / LOGS / f"sb3_{key}_seed{seed}.log"
+        log_path = exp_dir / LOGS / f"sb3_{sfx + '_' if sfx else ''}{key}_seed{seed}.log"
         cmd = [sys.executable, str(pathlib.Path(__file__).resolve()),
-               *extra, "--seed", str(seed)]
+               *extra, "--seed", str(seed), "--config", config]
         if timesteps is not None:
             cmd += ["--timesteps", str(timesteps)]
         t0 = time.time()
@@ -293,7 +325,7 @@ def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
         rel = os.path.relpath(os.path.join(exp_dir, run_dir), exp_dir)
         with lock:
             manifest["runs"].setdefault(key, {})[str(seed)] = rel
-            with open(exp_dir / MANIFEST, "w") as f:
+            with open(exp_dir / manifest_name, "w") as f:
                 json.dump(manifest, f, indent=2)
         print(f"[{key} seed {seed}] done in {mins:.1f} min -> {rel}")
 
@@ -303,25 +335,27 @@ def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
         list(pool.map(work, jobs))
     if failures:
         raise RuntimeError(f"{len(failures)} run(s) failed (completed runs are "
-                           f"kept in {MANIFEST}; relaunch to retry): {failures}")
+                           f"kept in {manifest_name}; relaunch to retry): {failures}")
     return manifest
 
 
-def load_runs(arm, exp_dir=None):
+def load_runs(arm, exp_dir=None, config=CONFIG):
     """Manifest -> [{seed, cfg, rewards, steps, agent_overrides, run_dir}] in
     config-seed order — the structure the comparison notebooks expect, same as
-    run_fhrdqn_seeds.load_runs."""
+    run_fhrdqn_seeds.load_runs. config selects the per-config manifest, as in
+    launch_all."""
     exp_dir = pathlib.Path(exp_dir or pathlib.Path.cwd()).resolve()
-    manifest = _load_manifest(exp_dir)
+    manifest_name = _manifest_name(config)
+    manifest = _load_manifest(exp_dir, config)
     if not manifest["seeds"]:
-        raise RuntimeError(f"no runs recorded in {MANIFEST} under {exp_dir} — "
+        raise RuntimeError(f"no runs recorded in {manifest_name} under {exp_dir} — "
                            f"launch_all() first")
     runs = []
     for seed in manifest["seeds"]:
         rel = manifest["runs"].get(arm, {}).get(str(seed))
         if rel is None or not (exp_dir / rel / "rewards.csv").exists():
             raise RuntimeError(f"no completed {arm} run for seed {seed} in "
-                               f"{MANIFEST} — launch_all() it first "
+                               f"{manifest_name} — launch_all() it first "
                                f"({LOGS}/ has any failures)")
         run_dir = exp_dir / rel
         table = np.loadtxt(run_dir / "rewards.csv", delimiter=",", skiprows=1,
@@ -352,14 +386,14 @@ def load_run_model(run_dir, device="cpu", checkpoint="final"):
     return model, SB3QAgentAdapter(model, epsilon=0.0)
 
 
-def record_final_videos(arm, exp_dir=None):
+def record_final_videos(arm, exp_dir=None, config=CONFIG):
     """One greedy-policy episode per manifest run of `arm`, saved as
     <run_dir>/videos/epfinal-episode-0.mp4 -> [(seed, mp4 path)]."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from analysis.visualisations.rollout_video import record_greedy_episode
     out = []
-    for r in load_runs(arm, exp_dir):
+    for r in load_runs(arm, exp_dir, config=config):
         model, adapter = load_run_model(r["run_dir"])
         env = _make_env(r["cfg"], render_mode="rgb_array")
         prefix = record_greedy_episode(adapter, env, str(r["run_dir"] / "videos"),
@@ -393,17 +427,27 @@ def main():
     parser.add_argument("--name-tag", default=None,
                         help="child mode: run-name tag placed before the seed "
                              "token, e.g. exp1")
+    parser.add_argument("--config", default=CONFIG,
+                        help="config file relative to the experiment dir "
+                             f"(default {CONFIG}); alternative configs get "
+                             "their own manifest, e.g. config_sb3_zoo.yaml -> "
+                             "cached/sb3_runs_manifest_zoo.json")
+    parser.add_argument("--arms", nargs="+", default=None,
+                        help="launcher mode: restrict to these arm keys, e.g. "
+                             "--arms baseline")
     args = parser.parse_args()
     if args.arm is not None:
         if args.seed is None:
             parser.error("--arm requires --seed")
         overrides = json.loads(args.agent_overrides) if args.agent_overrides else None
         run_dir = run_one(args.arm, args.seed, timesteps=args.timesteps,
-                          agent_overrides=overrides, name_tag=args.name_tag)
+                          agent_overrides=overrides, name_tag=args.name_tag,
+                          config=args.config)
         print(f"RUN_DIR={run_dir}")
     else:
         launch_all(max_workers=args.max_workers, force=args.force,
-                   timesteps=args.timesteps, experiments=args.experiment)
+                   timesteps=args.timesteps, experiments=args.experiment,
+                   config=args.config, arms=args.arms)
 
 
 if __name__ == "__main__":
