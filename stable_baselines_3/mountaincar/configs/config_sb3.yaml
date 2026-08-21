@@ -37,7 +37,7 @@ environment:
 
 algo:                     # RL-Zoo DQN, MountainCar-v0, tuned deltas marked
   type: dqn
-  n_timesteps: 150000
+  n_timesteps: 120000
   learning_rate: 1.0e-3   # TUNED (zoo: 4e-3) — best/most reliable baseline
   batch_size: 128
   buffer_size: 10000

@@ -1,35 +1,50 @@
-# SB3 (Stable-Baselines3) FHR comparison — Acrobot-v1.
+# SB3 FHR comparison — Acrobot-v1, TUNED recipe (fresh-target port).
 #
-# RL-Zoo tuned QR-DQN (hyperparams/qrdqn.yml) as the stock sample-efficient
-# baseline; every arm runs FHRQRDQN (src/agents/sb3_fhr.py), the baseline arm
-# forcing fhr_weight 0.0 = bit-for-bit stock SB3. Launch with
-# stable_baselines_3/src/run_sb3_seeds.py (cwd = this dir). See the cartpole config
-# for the full commentary — only env-specific values differ here.
+# The MountainCar tuning study (stable_baselines_3/mountaincar_tuning/
+# TUNING_LOG.md) found the FHR edge needs continuously fresh bootstrap
+# targets: Polyak soft updates keep the recurrence penalty supplying a
+# persistent gradient, where hard frozen targets put it to sleep between
+# syncs. This config ports that recipe here: Polyak tau 0.005 synced every
+# step (zoo: hard sync every 250) + a MORE AGGRESSIVE learning rate than the
+# zoo entry (6.3e-4 -> 1e-3; the penalty is the stabiliser that licenses the
+# hotter setting). Mechanism-guided starting point, not yet tuned on Acrobot.
+# Note the classic multi-seed comparison found FHR HURT Acrobot under the
+# classic recipe — this port is the retest under the regime the study says
+# FHR actually needs.
+#
+# The stock RL-Zoo recipe lives in config_sb3_zoo.yaml (standard-SB3
+# reference; published zoo QR-DQN: -69.1 +/- 10.0). run_sb3_seeds.py reads
+# this file by default; pass config="configs/config_sb3_zoo.yaml" (own
+# manifest cached/sb3_runs_manifest_zoo.json) for the reference. Runs
+# recorded under the old zoo-recipe config are archived in
+# cached/sb3_runs_manifest.zoo-recipe.json (arm keys exp1-3 = that sweep).
 experiment:
   name: sb3_acrobot
   seed: 44
-  seeds: [44, 66]
-  # Arms mirror the classic dqn_acrobot_2_revised sweep: the Optuna study
-  # preferred order 3 over the theory-minimal order 2 on Acrobot.
+  seeds: [44, 66, 52, 21, 56]
+  # Numbering starts at 10 so keys never collide with the archived zoo-recipe
+  # manifest. exp10 = the cross-env headline block (MountainCar winner);
+  # 11/12 = this env's earlier order-3 Optuna preference under the new regime.
   fhr_experiments:
-    1: {fhr_weight: 1, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
-    2: {fhr_weight: 0.0271, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
-    3: {fhr_weight: 1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.0136}
+    10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    11: {fhr_weight: 1, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
+    12: {fhr_weight: 0.0271, fhr_order: 3, reward_lags: False, c_learning_rate: 0.0136}
   device: auto
   save_artifacts: true
 
 environment:
   name: Acrobot-v1        # raw env (bounded obs space)
 
-algo:                     # RL-Zoo tuned QR-DQN, Acrobot-v1
+algo:                     # RL-Zoo QR-DQN, Acrobot-v1, tuned deltas marked
   type: qrdqn
   n_timesteps: 100000
-  learning_rate: 6.3e-4
+  learning_rate: 1.0e-3   # TUNED (zoo: 6.3e-4) — aggressive, FHR-stabilised
   batch_size: 128
   buffer_size: 50000
   learning_starts: 0
   gamma: 0.99
-  target_update_interval: 250
+  tau: 0.005              # TUNED (zoo: hard sync every 250 steps) — Polyak,
+  target_update_interval: 1   # synced every env step
   train_freq: 4
   gradient_steps: -1      # SB3 semantics: as many gradient steps as env steps
                           # collected in the rollout (= train_freq)
@@ -38,13 +53,13 @@ algo:                     # RL-Zoo tuned QR-DQN, Acrobot-v1
   net_arch: [256, 256]
   n_quantiles: 25
 
-agent:
-  fhr_weight: 1
-  fhr_order: 3
+agent:                    # shared FHR block; exp<N> arms override on top
+  fhr_weight: 0.5
+  fhr_order: 2
   reward_lags: False
   warmup_grad_steps: 2000 # the classic acrobot warm-up (in gradient steps;
                           # here ~2k env steps at 1 grad step / env step)
-  c_learning_rate: 0.0136
+  c_learning_rate: 0.03
   rampdown_reward_threshold: null
   rampdown_penalty_threshold: null
   rampdown_penalty_topk: 20
@@ -56,6 +71,10 @@ training:
                           # classic config's tighter bar kept for parity
   early_stopping_patience_eps: 50
   no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 4000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
 
 analysis:
   ep_freq: 50

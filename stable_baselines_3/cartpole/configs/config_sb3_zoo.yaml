@@ -1,0 +1,93 @@
+# SB3 FHR comparison — CartPole-v1, STOCK RL-Zoo recipe (reference).
+#
+# The published rl-baselines3-zoo hyperparams/qrdqn.yml CartPole-v1 entry,
+# verbatim. Published zoo result: 500.0 +/- 0.0 (deterministic eval). This is
+# the standard-SB3 baseline reference; the tuned recipe the FHR experiments
+# use is configs/config_sb3.yaml (Polyak targets + lr 4e-3 — see
+# stable_baselines_3/mountaincar_tuning/TUNING_LOG.md for the mechanism).
+#
+# run_sb3_seeds.py reads configs/config_sb3.yaml by default; launch THIS
+# reference with config="configs/config_sb3_zoo.yaml" (its runs land in
+# cached/sb3_runs_manifest_zoo.json, so the two recipes share this dir),
+# e.g. launch_all(config="configs/config_sb3_zoo.yaml", arms=["baseline"]).
+experiment:
+  name: sb3_cartpole_zoo
+  seed: 44
+  seeds: [44, 66, 52, 21, 56]
+  fhr_experiments:
+    10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1
+
+algo:                     # RL-Zoo tuned QR-DQN, CartPole-v1 (hard sync / 10)
+  type: qrdqn
+  n_timesteps: 50000
+  learning_rate: 2.3e-3
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  gamma: 0.99
+  target_update_interval: 10
+  train_freq: 256
+  gradient_steps: 128
+  exploration_fraction: 0.16
+  exploration_final_eps: 0.04
+  net_arch: [256, 256]
+  n_quantiles: 10
+
+agent:
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 256
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: 475
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+  eval:
+    freq_steps: 2000
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  state_bounds:
+    low: [-4.8, -10.0, -0.41887903, -10.0]
+    high: [4.8, 10.0, 0.41887903, 10.0]
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

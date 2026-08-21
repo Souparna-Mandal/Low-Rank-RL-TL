@@ -27,7 +27,7 @@ environment:
 
 algo:                     # RL-Zoo tuned DQN, MountainCar-v0 (hard target sync)
   type: dqn
-  n_timesteps: 150000
+  n_timesteps: 120000
   learning_rate: 4.0e-3
   batch_size: 128
   buffer_size: 10000
