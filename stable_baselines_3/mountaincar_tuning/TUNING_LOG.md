@@ -174,4 +174,61 @@ against raw MountainCar scales. Load-bearing is regime-relative.
    3 seeds — the staleness prediction: FHR's edge should grow with sync
    staleness if the redundant-vs-complementary reading is right.
 
-Results: pending.
+### Phase C results (49 runs)
+
+**1. polyak confirmed on 5 seeds.** Onset (eval >= -160): lambda .5 45-55k on
+5/5 seeds vs baseline 55-105k; reaches -110 at 60-90k vs 100-135k.
+
+**2. lambda robustness under soft targets: the edge holds for lambda in
+[0.1, 1.0], with a clean onset-vs-stability trade-off.**
+
+| lambda | onset (5 seeds) | finals |
+|-------:|-----------------|--------|
+| 0.05   | 35-90k, 1 never solved | mixed (-97 to -200) |
+| 0.1    | **40-60k (fastest)** | **3/5 collapse late** (-152/-190/-200) |
+| 0.5    | 45-55k          | all hold (worst -121) |
+| 1.0    | 50-60k          | best finals (4/5 ~ -100) |
+
+Small lambda accelerates onset most but cannot hold the solved policy;
+lambda 0.5-1.0 is the robust band. Recommended: **0.5** (onset) or 1.0
+(final quality).
+
+**3. `polyak_lr1e3` is the headline config.** The baseline becomes the
+strongest and most reliable in the whole study (5/5 seeds, onsets 55-70k,
+finals -100 to -106, matching the published zoo score) — and FHR lambda .5
+*still* beats it with completely separated onset distributions: 45-50k on
+every seed vs 55-70k on every seed, -110 at 55-70k vs 70-85k (~20% fewer
+samples), equal finals. FHR wins against the baseline at the baseline's own
+best setting.
+
+**4. Staleness probe: prediction REFUTED, mechanism sharpened.** The FHR edge
+does not grow with target staleness — it grows with *freshness*:
+
+| target rule    | baseline               | FHR lambda .5           |
+|----------------|------------------------|-------------------------|
+| hard sync 150  | onset 50-80k, 2/3 collapse late (-181/-186) | onset 45-50k, all hold ~ -104 |
+| hard sync 600  | onset 80k-never        | onset 85-115k, -110     |
+| hard sync 2400 | barely/never learns    | never learns            |
+| Polyak tau .005| onset 55-105k, flaky   | onset 45-55k, holds     |
+
+Fresh targets (hard150, Polyak — both ~150-200-step effective timescales)
+propagate value fast but destabilise plain DQN, which shows late collapse
+after solving; FHR supplies the missing stability and cashes in the fast
+propagation. Stale targets stabilise by freezing, which makes FHR redundant
+(600) and starves propagation so badly nobody learns (2400) — a bottleneck a
+temporal-consistency penalty cannot bypass. **The thesis-ready statement: the
+FHR recurrence penalty is a stabiliser that licenses aggressively fresh
+bootstrap targets; the sample-efficiency gain is the fast propagation those
+targets buy.**
+
+## Final recommended MountainCar configuration
+
+Zoo DQN recipe + `tau: 0.005, target_update_interval: 1, learning_rate:
+1e-3`, FHR `lambda 0.5, r=2, c_lr 0.03`, cadence (16, 8) untouched. Measured
+on greedy eval (10 fixed-seed episodes / 5k steps): onset 45-50k vs baseline
+55-70k, solved (-110) at 55-70k vs 70-85k, 5/5 seeds, finals ~ -100.
+
+Changes that were tried and did NOT survive (full tables above): finer or
+coarser update cadence at fixed ratio (A), gamma .99, buffer 100k, net
+[128,128], slower eps decay, learning_starts 10k, obs normalisation (B),
+lambda outside [0.1, 1.0], hard-sync staleness in either direction (C).

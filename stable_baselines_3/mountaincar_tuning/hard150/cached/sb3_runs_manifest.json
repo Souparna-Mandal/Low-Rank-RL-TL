@@ -1,0 +1,41 @@
+{
+  "seeds": [
+    44,
+    66,
+    52
+  ],
+  "runs": {
+    "exp1": {
+      "66": "cached/runs/sb3_mc_hard150_exp1_seed66_20260821-093704",
+      "44": "cached/runs/sb3_mc_hard150_exp1_seed44_20260821-093705",
+      "52": "cached/runs/sb3_mc_hard150_exp1_seed52_20260821-093705"
+    },
+    "baseline": {
+      "44": "cached/runs/sb3_mc_hard150_baseline_seed44_20260821-093705",
+      "52": "cached/runs/sb3_mc_hard150_baseline_seed52_20260821-093705",
+      "66": "cached/runs/sb3_mc_hard150_baseline_seed66_20260821-093705"
+    },
+    "exp2": {
+      "66": "cached/runs/sb3_mc_hard150_exp2_seed66_20260821-093705",
+      "44": "cached/runs/sb3_mc_hard150_exp2_seed44_20260821-093705",
+      "52": "cached/runs/sb3_mc_hard150_exp2_seed52_20260821-093705"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    }
+  }
+}

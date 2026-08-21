@@ -1,0 +1,49 @@
+{
+  "seeds": [
+    44,
+    66,
+    52,
+    21,
+    56
+  ],
+  "runs": {
+    "baseline": {
+      "52": "cached/runs/sb3_mc_polyak_lr1e3_baseline_seed52_20260821-090956",
+      "56": "cached/runs/sb3_mc_polyak_lr1e3_baseline_seed56_20260821-090955",
+      "21": "cached/runs/sb3_mc_polyak_lr1e3_baseline_seed21_20260821-090956",
+      "44": "cached/runs/sb3_mc_polyak_lr1e3_baseline_seed44_20260821-090955",
+      "66": "cached/runs/sb3_mc_polyak_lr1e3_baseline_seed66_20260821-090956"
+    },
+    "exp1": {
+      "52": "cached/runs/sb3_mc_polyak_lr1e3_exp1_seed52_20260821-090956",
+      "21": "cached/runs/sb3_mc_polyak_lr1e3_exp1_seed21_20260821-090956",
+      "44": "cached/runs/sb3_mc_polyak_lr1e3_exp1_seed44_20260821-090955",
+      "56": "cached/runs/sb3_mc_polyak_lr1e3_exp1_seed56_20260821-092048",
+      "66": "cached/runs/sb3_mc_polyak_lr1e3_exp1_seed66_20260821-090955"
+    },
+    "exp2": {
+      "66": "cached/runs/sb3_mc_polyak_lr1e3_exp2_seed66_20260821-092114",
+      "52": "cached/runs/sb3_mc_polyak_lr1e3_exp2_seed52_20260821-092129",
+      "56": "cached/runs/sb3_mc_polyak_lr1e3_exp2_seed56_20260821-092336",
+      "44": "cached/runs/sb3_mc_polyak_lr1e3_exp2_seed44_20260821-092111",
+      "21": "cached/runs/sb3_mc_polyak_lr1e3_exp2_seed21_20260821-092249"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    }
+  }
+}
