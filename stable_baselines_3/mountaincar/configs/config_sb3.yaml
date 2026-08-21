@@ -1,46 +1,56 @@
-# SB3 (Stable-Baselines3) FHR comparison — MountainCar-v0.
+# SB3 FHR comparison — MountainCar-v0, TUNED recipe (tuning-mountaincar study).
 #
-# RL-Zoo tuned DQN (hyperparams/dqn.yml — algo.type below selects the family;
-# the zoo tuning is shared with qrdqn.yml apart from n_quantiles) as the stock
-# sample-efficient baseline; every arm runs FHRDQN (src/agents/sb3_fhr.py),
-# the baseline arm forcing fhr_weight 0.0 = bit-for-bit stock SB3. Launch with
-# stable_baselines_3/src/run_sb3_seeds.py (cwd = this dir). See the cartpole config
-# for the full commentary — only env-specific values differ here.
+# The headline configuration from stable_baselines_3/mountaincar_tuning/
+# TUNING_LOG.md: the RL-Zoo DQN recipe with two changes — Polyak soft targets
+# (tau 0.005, synced every step) and learning_rate 1e-3 — plus the FHR block
+# lambda 0.5, r=2. Measured there on greedy eval (5 seeds): FHR onset 45-50k
+# env steps vs 55-70k for the lambda-0 baseline, solved (-110) at 55-70k vs
+# 70-85k, finals ~ -100 (the published zoo score). Mechanism: the recurrence
+# penalty stabilises the aggressively fresh targets that buy fast value
+# propagation — under the zoo's hard sync/600 the penalty is asleep between
+# syncs and the edge disappears.
+#
+# The stock RL-Zoo recipe lives in config_sb3_zoo.yaml as the standard-SB3
+# reference; run_sb3_seeds.py reads configs/config_sb3.yaml, so to launch the
+# zoo reference swap the files (cp configs/config_sb3_zoo.yaml
+# configs/config_sb3.yaml) or run from a dir where it is named config_sb3.yaml.
+# cached/sb3_runs_manifest.zoo-hard600.json archives the runs recorded under
+# the old zoo-recipe config (arm keys exp1-9 refer to that config's sweep).
 experiment:
   name: sb3_mountaincar
   seed: 44
-  seeds: [44, 66]
-  # Arms mirror the classic dqn_mountaincar sweep values (order-4 ARX tuned
-  # arm and a mid/strong pure-AR pair; the classic Hankel rank here is 2-4).
+  seeds: [44, 66, 52, 21, 56]
+  # Numbering starts at 10 so keys never collide with the archived zoo-recipe
+  # manifest. exp10 = the headline FHR block; 11/12 = the robust-lambda
+  # neighbours from the tuning study (lambda .1 onsets fastest but 3/5 seeds
+  # collapsed late — kept out).
   fhr_experiments:
-    7: {fhr_weight: 0.01, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
-    8: {fhr_weight: 0.1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
-    9: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    11: {fhr_weight: 1.0, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    12: {fhr_weight: 0.25, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
   device: auto
   save_artifacts: true
 
 environment:
-  name: MountainCar-v0    # raw env — note the classic experiments found obs
-                          # normalisation load-bearing for THEIR interleaved
-                          # loop; the zoo setting trains raw, and both arms
-                          # here share whatever the zoo baseline does
+  name: MountainCar-v0    # raw obs — the classic normalise trick actively
+                          # hurts under this lr (tuning phase B, normobs)
 
-algo:                     # RL-Zoo tuned DQN, MountainCar-v0
+algo:                     # RL-Zoo DQN, MountainCar-v0, tuned deltas marked
   type: dqn
   n_timesteps: 150000
-  learning_rate: 4.0e-3
+  learning_rate: 1.0e-3   # TUNED (zoo: 4e-3) — best/most reliable baseline
   batch_size: 128
   buffer_size: 10000
   learning_starts: 1000
   gamma: 0.98
-  target_update_interval: 600
+  tau: 0.005              # TUNED (zoo: hard sync) — Polyak soft targets,
+  target_update_interval: 1   # synced every env step
   train_freq: 16
   gradient_steps: 8
   exploration_fraction: 0.2
   exploration_final_eps: 0.07
   net_arch: [256, 256]
-  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it);
-                          # kept so switching type back to qrdqn needs one edit
+  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it)
 
 agent:
   fhr_weight: 0.5
@@ -55,10 +65,13 @@ agent:
   rampdown_episodes: 0
 
 training:
-  solved_reward: -110     # MountainCar-v0 standard bar (classic config used a
-                          # tighter -30 for its longer interleaved runs)
+  solved_reward: -110     # MountainCar-v0 standard bar
   early_stopping_patience_eps: 50
   no_eps_to_avg: 25
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 5000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
 
 analysis:
   ep_freq: 50
