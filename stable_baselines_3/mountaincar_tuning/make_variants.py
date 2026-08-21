@@ -68,8 +68,15 @@ PHASE_B = {
     "gamma99": {"algo": {"gamma": 0.99}},
     "buf100k": {"algo": {"buffer_size": 100000}},
     # classic soft target updates: Polyak tau 0.005 (SB3 syncs on the
-    # target_update_interval cadence; 1 env step = every _on_step)
-    "polyak": {"algo": {"tau": 0.005, "target_update_interval": 1}},
+    # target_update_interval cadence; 1 env step = every _on_step).
+    # Phase C extends it: 5 seeds + lambda-robustness arms under soft targets.
+    "polyak": {"algo": {"tau": 0.005, "target_update_interval": 1},
+               "experiment": {"seeds": [44, 66, 52, 21, 56],
+                              "fhr_experiments": {
+                                  3: {"fhr_weight": 1.0, "fhr_order": 2,
+                                      "reward_lags": False, "c_learning_rate": 0.03},
+                                  4: {"fhr_weight": 0.05, "fhr_order": 2,
+                                      "reward_lags": False, "c_learning_rate": 0.03}}}},
     "lr1e3": {"algo": {"learning_rate": 1.0e-3}},
     "net128": {"algo": {"net_arch": [128, 128]}},
     # classic exploration reached eps_min ~2/3 into the run and floored at .05
@@ -81,7 +88,17 @@ PHASE_B = {
                                                         "max": [1, 1]}}}},
 }
 
-VARIANTS = {**PHASE_A, **PHASE_B}
+# Phase C — Phase B follow-ups: the winning-factor combination on 5 seeds and
+# the target-staleness mechanism probe (hard sync at 150/2400 vs the zoo 600).
+PHASE_C = {
+    "polyak_lr1e3": {"algo": {"tau": 0.005, "target_update_interval": 1,
+                              "learning_rate": 1.0e-3},
+                     "experiment": {"seeds": [44, 66, 52, 21, 56]}},
+    "hard150": {"algo": {"target_update_interval": 150}},
+    "hard2400": {"algo": {"target_update_interval": 2400}},
+}
+
+VARIANTS = {**PHASE_A, **PHASE_B, **PHASE_C}
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:

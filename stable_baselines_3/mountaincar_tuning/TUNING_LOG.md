@@ -128,4 +128,50 @@ reference for both. Same arms/seeds/eval protocol as Phase A.
 | ls10k    | learning_starts 1k -> 10k (classic 10k random prefill)   |
 | normobs  | raw obs -> static rescale to [-1,1]^2 (RescaleObservation)|
 
+### Phase B results (72 runs; tables in summary.csv, curves in figures/)
+
+**Winner: `polyak` — soft targets are the classic ingredient FHR's edge rides
+on.** FHR onset (first greedy-eval >= -160) at 45/50/55k (lambda .5) and
+45/50/60k (lambda .1) vs polyak baseline 70/90/105k: learning starts ~2x
+earlier on every seed, reaches -110 at 65-90k vs 100-135k. Strongest and most
+consistent effect in the study.
+
+Mechanism (from train_diagnostics, pre-onset window 5k-40k): under hard
+sync/600 the recurrence residual has median ~2e-5 with p99/median 600-1500x —
+the penalty is asleep between syncs (a settled online net is automatically
+recurrence-consistent) and only fires impulsively at sync transients. Under
+Polyak the residual holds a persistent moderate level (median ~100x higher,
+p99/median 9-20x): a continuous, low-noise regularisation signal. Reading:
+hard frozen targets and FHR are redundant stabilisers, while Polyak supplies
+fast value propagation and FHR the stability Polyak lacks (the polyak
+*baseline* is flaky — one seed collapses to -171) — complementary, not
+redundant.
+
+The rest, briefly:
+
+| variant  | baseline effect            | FHR edge on top?                 |
+|----------|----------------------------|----------------------------------|
+| polyak   | similar onset, flaky       | **huge: 2x earlier, 3/3 seeds**  |
+| lr1e3    | best baseline (3/3, ~-100 final) | ~neutral (2/3 seeds mild)  |
+| buf100k  | slightly worse             | lambda .5 helps (78k vs 102k); .1 no |
+| gamma99  | better (87k onset)         | hurts (lambda .5 -> 118k)        |
+| net128   | better (78k onset)         | hurts badly (never learns well)  |
+| ls10k    | better onset (62k)         | hurts onset (100k)               |
+| slow_eps | worse                      | none                             |
+| normobs  | **kills learning entirely**| exp1 salvages -140; still bad    |
+
+normobs deserves a note: the classic experiments' "load-bearing"
+normalisation is actively harmful under the zoo recipe — lr 4e-3 was tuned
+against raw MountainCar scales. Load-bearing is regime-relative.
+
+## Phase C — confirmation + combination + mechanism probe (running)
+
+1. `polyak` extended to 5 seeds (add 21, 56) and a lambda-robustness sweep
+   under soft targets: exp3 lambda 1.0, exp4 lambda 0.05 (r=2 throughout).
+2. `polyak_lr1e3`: the FHR-friendly factor + the baseline-friendly factor
+   combined (tau .005 + lr 1e-3), 5 seeds — the candidate headline config.
+3. `hard150` / `hard2400`: hard sync at 150 and 2400 env steps (zoo: 600),
+   3 seeds — the staleness prediction: FHR's edge should grow with sync
+   staleness if the redundant-vs-complementary reading is right.
+
 Results: pending.
