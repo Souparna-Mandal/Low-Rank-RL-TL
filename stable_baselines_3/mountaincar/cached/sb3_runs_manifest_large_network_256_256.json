@@ -1,0 +1,62 @@
+{
+  "seeds": [
+    44,
+    66,
+    52,
+    21,
+    56
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_mountaincar_baseline_seed66_20260821-110911",
+      "44": "cached/runs/sb3_mountaincar_baseline_seed44_20260821-110911",
+      "56": "cached/runs/sb3_mountaincar_baseline_seed56_20260821-110911",
+      "52": "cached/runs/sb3_mountaincar_baseline_seed52_20260821-110911",
+      "21": "cached/runs/sb3_mountaincar_baseline_seed21_20260821-110911"
+    },
+    "exp10": {
+      "44": "cached/runs/sb3_mountaincar_exp10_seed44_20260821-110911",
+      "56": "cached/runs/sb3_mountaincar_exp10_seed56_20260821-112206",
+      "21": "cached/runs/sb3_mountaincar_exp10_seed21_20260821-112205",
+      "66": "cached/runs/sb3_mountaincar_exp10_seed66_20260821-112156",
+      "52": "cached/runs/sb3_mountaincar_exp10_seed52_20260821-112201"
+    },
+    "exp11": {
+      "44": "cached/runs/sb3_mountaincar_exp11_seed44_20260821-112206",
+      "66": "cached/runs/sb3_mountaincar_exp11_seed66_20260821-112614",
+      "52": "cached/runs/sb3_mountaincar_exp11_seed52_20260821-113653",
+      "56": "cached/runs/sb3_mountaincar_exp11_seed56_20260821-113916",
+      "21": "cached/runs/sb3_mountaincar_exp11_seed21_20260821-113911"
+    },
+    "exp12": {
+      "66": "cached/runs/sb3_mountaincar_exp12_seed66_20260821-113921",
+      "44": "cached/runs/sb3_mountaincar_exp12_seed44_20260821-113920",
+      "52": "cached/runs/sb3_mountaincar_exp12_seed52_20260821-114333",
+      "56": "cached/runs/sb3_mountaincar_exp12_seed56_20260821-115424",
+      "21": "cached/runs/sb3_mountaincar_exp12_seed21_20260821-115408"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp10": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp11": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp12": {
+      "fhr_weight": 0.25,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    }
+  }
+}

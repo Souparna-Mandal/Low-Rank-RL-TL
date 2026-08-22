@@ -1,0 +1,23 @@
+{
+  "seeds": [
+    44,
+    66,
+    52,
+    21,
+    56
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_mountaincar_zoo_baseline_seed66_20260821-130111",
+      "52": "cached/runs/sb3_mountaincar_zoo_baseline_seed52_20260821-130111",
+      "44": "cached/runs/sb3_mountaincar_zoo_baseline_seed44_20260821-130111",
+      "21": "cached/runs/sb3_mountaincar_zoo_baseline_seed21_20260821-130111",
+      "56": "cached/runs/sb3_mountaincar_zoo_baseline_seed56_20260821-130111"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    }
+  }
+}

@@ -16,7 +16,7 @@
 experiment:
   name: sb3_mountaincar_zoo
   seed: 44
-  seeds: [44, 66, 52, 21, 56]
+  seeds: [44, 66]
   fhr_experiments:
     10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
   device: auto
