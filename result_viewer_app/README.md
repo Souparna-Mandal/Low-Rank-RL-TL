@@ -38,7 +38,7 @@ The viewer imports **nothing** from `src/` or `experiments/` — refactors there
 
 ## What it shows
 
-Pick a run from the dropdown — grouped by experiment, labelled `arm · seed N · date` for manifest-tracked runs. For each run, the viewer shows:
+Pick an environment (experiment directory) from the first dropdown, then a run from the second — the run list holds only that environment's runs, newest first by launch time (the run-dir timestamp, artifact mtime for unstamped dirs), labelled `arm · seed N · date` for manifest-tracked runs. Switching environment jumps to its newest run. For each run, the viewer shows:
 
 - **Variant tile** — the run's manifest arm, seed and the config overrides it actually trained with (the `config.yaml` copy does not reflect overrides).
 - **Spectra over training** — a slider with play and step controls lets you move through `figures/epNNNNNN_<matrix>.png` one episode at a time; click a spectrum to open it full-screen (with a download button).

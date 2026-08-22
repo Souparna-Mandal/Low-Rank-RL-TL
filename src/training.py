@@ -1,3 +1,5 @@
+import time
+
 from agents import q_agent
 from analysis.low_rank import (rank, tabular_q_matrix, hankel_policy,
                                autoregressive_value_probe)
@@ -121,6 +123,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
     analysis_config = analysis_config or {}
     state, info = env.reset(seed = np_seed)
     s_tn_upd, s_train, step_count = 0,0,0
+    last_rewards_write = time.monotonic()
     episode_rewards_training = []
     episode_steps_training = []  # env steps per episode -> rewards.csv steps column
     best_window_avg = float("-inf")
@@ -169,6 +172,15 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         state, _ = env.reset()
         episode_rewards_training.append(epsiode_total_reward)
         episode_steps_training.append(episode_steps)
+
+        # Live learning curve for the result viewer: rewrite rewards.csv at
+        # most every few seconds (analysis ticks alone update it far too
+        # rarely to follow a run in flight; the throttle keeps long classical
+        # runs with thousands of short episodes from rewriting per episode).
+        if run_logger is not None and time.monotonic() - last_rewards_write > 5.0:
+            run_logger.log_rewards(episode_rewards_training,
+                                   steps=episode_steps_training)
+            last_rewards_write = time.monotonic()
 
         # We will do the training only when the episode had ended... and ensure that at least train_frequency_steps have passed since the last training
         # This is mainly relevant only when use_episode_training is True
