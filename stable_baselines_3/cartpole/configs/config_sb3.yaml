@@ -23,7 +23,7 @@
 experiment:
   name: sb3_cartpole
   seed: 44
-  seeds: [44, 66, 52, 21, 56]
+  seeds: [44, 66]
   # Numbering starts at 10 so keys never collide with the archived zoo-recipe
   # manifest. exp10 = the cross-env headline block (MountainCar winner);
   # 11/12 = this env's earlier bracketing lambdas under the new regime.
@@ -38,10 +38,10 @@ environment:
   name: CartPole-v1       # raw env, as the zoo trains it
 
 algo:                     # RL-Zoo QR-DQN, CartPole-v1, tuned deltas marked
-  type: qrdqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
+  type: dqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
                           # tuning is identical apart from n_quantiles
   n_timesteps: 50000
-  learning_rate: 4.0e-3   # TUNED (zoo: 2.3e-3) — aggressive, FHR-stabilised
+  learning_rate: 2.3e-3   # TUNED (zoo: 2.3e-3) — aggressive, FHR-stabilised
   batch_size: 64
   buffer_size: 100000
   learning_starts: 1000

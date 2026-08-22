@@ -13,7 +13,7 @@
 experiment:
   name: sb3_cartpole_zoo
   seed: 44
-  seeds: [44, 66, 52, 21, 56]
+  seeds: [44, 66]
   fhr_experiments:
     10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
   device: auto
@@ -23,7 +23,7 @@ environment:
   name: CartPole-v1
 
 algo:                     # RL-Zoo tuned QR-DQN, CartPole-v1 (hard sync / 10)
-  type: qrdqn
+  type: dqn
   n_timesteps: 50000
   learning_rate: 2.3e-3
   batch_size: 64
