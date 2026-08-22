@@ -1,0 +1,22 @@
+{
+  "seeds": [
+    0
+  ],
+  "runs": {
+    "baseline": {
+      "0": "cached/runs/dqn_krull_fhrdqn100k_baseline_seed0_20260821-225253"
+    },
+    "exp1": {
+      "0": "cached/runs/dqn_krull_fhrdqn100k_exp1_seed0_20260822-032428"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 4
+    }
+  }
+}
