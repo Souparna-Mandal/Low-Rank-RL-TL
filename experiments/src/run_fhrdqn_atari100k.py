@@ -19,9 +19,15 @@ Protocol (see src/analysis/atari100k.py for references and caveats):
 One (arm, seed, game) training per subprocess. Arms mirror the classical
 launcher: the shared "baseline" (fhr_weight 0) plus one "exp<N>" arm per entry
 of each game config's experiment.fhr_experiments (all entries by default).
-Each game dir keeps its own manifest at cached/fhrdqn100k_runs_manifest.json —
-a separate manifest FAMILY from any other launcher in the dir, so the result
-viewer never pools these runs with non-100k arms.
+The agent recipe is selected by experiment.agent_class in each game config:
+"fhrdqn" (default: plain double-DQN FHRDQNAgent + NatureCNN),
+"efficient_rainbow" (EfficientRainbowAgent: IQN-dueling + n-step + DrQ
+augmentation over NatureCNNEncoder) or "bbf" (BBFAgent: the BBF recipe —
+Impala-CNN x4, EMA target, n-step/gamma annealing, shrink-and-perturb resets
+— over ImpalaCNNEncoder). Each recipe keeps its OWN manifest family per game
+dir (cached/fhrdqn100k_runs_manifest.json vs cached/effrainbow100k_... vs
+cached/bbf100k_...), so the result viewer and the comparison notebook never
+pool runs across recipes or with non-100k arms.
 
 Run from anywhere (game dirs are resolved against this file's location):
 
@@ -39,6 +45,7 @@ Run at most one launcher at a time per game dir (manifest + shared baseline
 race). The comparison notebook imports launch_all()/load_runs() from here.
 """
 import argparse
+import copy
 import csv
 import json
 import os
@@ -73,7 +80,9 @@ GAME_DIRS = {
     "up_n_down": "dqn_up_n_down",
 }
 CONFIG = "config_fhrdqn_100k.yaml"
-MANIFEST = "cached/fhrdqn100k_runs_manifest.json"
+# manifest/log family per agent recipe (experiment.agent_class config key)
+FAMILIES = {"fhrdqn": "fhrdqn100k", "efficient_rainbow": "effrainbow100k",
+            "bbf": "bbf100k"}
 LOGS = "cached/logs"
 
 # Same single-source-of-truth FHR override whitelist as the classical launcher.
@@ -98,9 +107,26 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
     directory."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
+    # TF32 tensor-core matmuls/convs for these runs: the reference BBF (JAX)
+    # trains with TF32-by-default on this hardware class; PyTorch's fp32
+    # matmul default would make the 15488x2048 head layers the bottleneck.
+    import torch
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    # torch.compile (agent.torch_compile) needs CPython headers to build its
+    # CUDA shim; this box has no root, so user-extracted ones stand in when
+    # the system -dev package is absent (see ~/.local/pyheaders).
+    _hdr = pathlib.Path.home() / ".local/pyheaders/extracted/usr/include"
+    if _hdr.is_dir() and not pathlib.Path("/usr/include/python3.12/Python.h").exists():
+        os.environ["CPATH"] = os.pathsep.join(
+            [str(_hdr), str(_hdr / "python3.12")]
+            + ([os.environ["CPATH"]] if os.environ.get("CPATH") else []))
     from experiment import load_config, build_env, build_agent, train, make_run_logger
     from agents.fhrdqn_agent import FHRDQNAgent
-    from agents.atari_networks import NatureCNN
+    from agents.efficient_rainbow_agent import EfficientRainbowAgent
+    from agents.bbf_agent import BBFAgent
+    from agents.atari_networks import (NatureCNN, NatureCNNEncoder,
+                                       ImpalaCNNEncoder)
     from training import evaluate_policy_atari
     from analysis.atari100k import game_key, hns, REFERENCE
 
@@ -119,20 +145,45 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
 
     env = build_env(cfg)
     obs_shape = env.observation_space.shape       # (frame_stack, 84, 84)
-    nn_extra_kwargs = {"in_channels": obs_shape[0],
-                       "n_actions": env.action_space.n,
-                       "fc_hidden": cfg["network"]["fc_hidden"]}
-    agent = build_agent(cfg, env, NatureCNN, nn_extra_kwargs,
-                        agent_cls=FHRDQNAgent)
+    agent_class = cfg["experiment"].get("agent_class", "fhrdqn")
+    if agent_class == "bbf":
+        # BBF recipe: Impala-CNN(width network.width_scale) encoder only —
+        # the agent wraps it with the IQN-dueling head (agent.head_hidden)
+        agent = build_agent(cfg, env, ImpalaCNNEncoder,
+                            {"in_channels": obs_shape[0],
+                             "width_scale": cfg["network"].get("width_scale", 4)},
+                            agent_cls=BBFAgent)
+    elif agent_class == "efficient_rainbow":
+        # encoder only — the agent wraps it with the IQN-dueling head itself
+        # (head width comes from agent.head_hidden, not network.fc_hidden)
+        agent = build_agent(cfg, env, NatureCNNEncoder,
+                            {"in_channels": obs_shape[0]},
+                            agent_cls=EfficientRainbowAgent)
+    elif agent_class == "fhrdqn":
+        nn_extra_kwargs = {"in_channels": obs_shape[0],
+                           "n_actions": env.action_space.n,
+                           "fc_hidden": cfg["network"]["fc_hidden"]}
+        agent = build_agent(cfg, env, NatureCNN, nn_extra_kwargs,
+                            agent_cls=FHRDQNAgent)
+    else:
+        raise ValueError(f"unknown experiment.agent_class {agent_class!r} — "
+                         f"one of {sorted(FAMILIES)}")
     logger = make_run_logger(cfg, config_path=CONFIG, base_dir="cached")
     train(cfg, agent, env, run_logger=logger)
 
     # Final-policy evaluation on a FRESH env (the training env may sit in a
     # hijacked post-analysis state); raw scores, protocol in the config.
+    # FULL-GAME episodes: the published Atari-100k numbers (random/human and
+    # every method in src/analysis/atari100k.py) score complete games across
+    # all lives, so the eval env must never terminate on life loss — no
+    # matter how the TRAINING env treats lives.
     eval_cfg = dict(cfg.get("evaluation") or {})
     if eval_episodes is not None:                 # smoke-test override
         eval_cfg["episodes"] = eval_episodes
-    eval_env = build_env(cfg)
+    eval_env_cfg = copy.deepcopy(cfg)
+    eval_env_cfg["environment"]["atari"]["terminal_on_life_loss"] = False
+    eval_env_cfg["environment"]["atari"]["episodic_life"] = False
+    eval_env = build_env(eval_env_cfg)
     scores = evaluate_policy_atari(agent, eval_env, **eval_cfg)
     eval_env.close()
 
@@ -163,6 +214,20 @@ def _config_seeds(game_dir):
     return list(cfg["experiment"].get("seeds") or [cfg["experiment"]["seed"]])
 
 
+def _family(game_dir):
+    """Manifest/log family of a game dir, from its config's agent_class."""
+    with open(game_dir / CONFIG) as f:
+        agent_class = yaml.safe_load(f)["experiment"].get("agent_class", "fhrdqn")
+    if agent_class not in FAMILIES:
+        raise ValueError(f"unknown experiment.agent_class {agent_class!r} in "
+                         f"{game_dir / CONFIG} — one of {sorted(FAMILIES)}")
+    return FAMILIES[agent_class]
+
+
+def _manifest_rel(game_dir):
+    return f"cached/{_family(game_dir)}_runs_manifest.json"
+
+
 def config_game_key(game):
     """Benchmark game key from a game's config: 'pacman' -> 'MsPacman'."""
     if str(SRC) not in sys.path:
@@ -191,7 +256,7 @@ def aggregate_games(games=None):
 
 
 def _load_manifest(game_dir):
-    path = game_dir / MANIFEST
+    path = game_dir / _manifest_rel(game_dir)
     if path.exists():
         with open(path) as f:
             return json.load(f)
@@ -283,7 +348,7 @@ def launch_all(games=None, experiments=None, max_workers=3, force=False,
                         or not _run_recorded(gd, manifest, key, s)):
                     jobs.append((game, gd, key, extra, s))
         # persist seeds/overrides even when everything is already trained
-        with open(gd / MANIFEST, "w") as f:
+        with open(gd / _manifest_rel(gd), "w") as f:
             json.dump(manifest, f, indent=2)
 
     total = sum(len(_arm_specs(_game_dir(g), experiments)) *
@@ -301,9 +366,9 @@ def launch_all(games=None, experiments=None, max_workers=3, force=False,
 
     def work(job):
         game, gd, key, extra, seed = job
-        log_path = gd / LOGS / f"fhrdqn100k_{key}_seed{seed}.log"
+        log_path = gd / LOGS / f"{_family(gd)}_{key}_seed{seed}.log"
         cmd = [sys.executable, str(pathlib.Path(__file__).resolve()),
-               *extra, "--seed", str(seed)]
+               *extra, "--seed", str(seed), "--config", CONFIG]
         if steps is not None:
             cmd += ["--steps", str(steps)]
         if eval_episodes is not None:
@@ -326,7 +391,7 @@ def launch_all(games=None, experiments=None, max_workers=3, force=False,
         rel = os.path.relpath(os.path.join(gd, run_dir), gd)
         with locks[game]:
             manifests[game]["runs"].setdefault(key, {})[str(seed)] = rel
-            with open(gd / MANIFEST, "w") as f:
+            with open(gd / _manifest_rel(gd), "w") as f:
                 json.dump(manifests[game], f, indent=2)
         print(f"[{game} {key} seed {seed}] done in {mins:.1f} min -> {rel}")
 
@@ -350,7 +415,8 @@ def load_runs(game, arm):
     gd = _game_dir(game)
     manifest = _load_manifest(gd)
     if not manifest["seeds"]:
-        raise RuntimeError(f"no runs recorded in {gd / MANIFEST} — launch_all() first")
+        raise RuntimeError(f"no runs recorded in {gd / _manifest_rel(gd)} — "
+                           "launch_all() first")
     runs = []
     for seed in manifest["seeds"]:
         rel = manifest["runs"].get(arm, {}).get(str(seed))
@@ -400,7 +466,13 @@ def main():
                     help="numbered fhr_experiments entries (default: all defined)")
     ap.add_argument("--max-workers", type=int, default=3)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--config", default=CONFIG,
+                    help="per-game config filename (default: %(default)s). "
+                         "Lets one game dir host several recipes, each config "
+                         "carrying its own agent_class and thus its own "
+                         "manifest family — e.g. config_effrainbow_100k.yaml")
     args = ap.parse_args()
+    globals()["CONFIG"] = args.config             # every helper reads the global
 
     if args.arm is not None:                      # child mode
         if args.seed is None:
