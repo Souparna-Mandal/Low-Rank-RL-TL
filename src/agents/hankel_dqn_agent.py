@@ -87,6 +87,67 @@ class EpisodicReplayBuffer:
         out = (torch.cat(states), torch.cat(actions), torch.cat(rewards), nexts)
         return out + (handles,) if with_handles else out
 
+    def _nstep_transition(self, ep_idx: int, t: int, n: int, gamma: float):
+        """(state, action, R, next_state_or_None, discount) for the n-step
+        window starting at flat position (ep, t): with m = min(n, steps left in
+        the episode), R = sum_{k<m} gamma^k r_{t+k}, discount = gamma^m, and the
+        bootstrap state is the one m steps ahead (None iff the episode
+        terminated there — the caller masks it, so the target collapses to R).
+        Truncated episodes bootstrap from their stored final_next_state."""
+        if ep_idx == len(self._episodes):  # open episode
+            states, actions, rewards = (self._open_states, self._open_actions,
+                                        self._open_rewards)
+            L = len(states)
+            m = min(n, L - t)
+            R, g = 0.0, 1.0
+            for k in range(m):
+                R += g * float(rewards[t + k])
+                g *= gamma
+            nxt = states[t + m] if t + m < L else self._pending_next
+            return (states[t], actions[t],
+                    torch.tensor([R], dtype=torch.float32), nxt, gamma ** m)
+        ep = self._episodes[ep_idx]
+        L = len(ep["states"])
+        m = min(n, L - t)
+        R, g = 0.0, 1.0
+        for k in range(m):
+            R += g * float(ep["rewards"][t + k])
+            g *= gamma
+        nxt = (ep["states"][t + m:t + m + 1] if t + m < L
+               else ep["final_next_state"])          # None iff terminated
+        return (ep["states"][t:t + 1], ep["actions"][t:t + 1],
+                torch.tensor([R], dtype=torch.float32), nxt, gamma ** m)
+
+    def sample_nstep_transitions(self, batch_size: int, n_step: int, gamma: float,
+                                 with_handles: bool = False):
+        """Uniform transitions with SAMPLE-TIME n-step targets. Storage stays
+        strictly per-step (one entry per env step, per-step rewards — the FHR
+        reward_lags/gather_predecessors contracts are untouched); only the
+        returned target is aggregated. The index draw is the identical single
+        random.sample call as sample_transitions, so the RNG stream matches it
+        for any n_step. Returns (states, actions, returns, next_states,
+        discounts) with next_states a list of (1, obs) tensors or None and
+        discounts the per-sample gamma^m bootstrap factors; with_handles
+        appends the (ep_idx, t) positions of the sampled START states."""
+        lengths = [len(ep["states"]) for ep in self._episodes] + [len(self._open_states)]
+        cum = np.cumsum([0] + lengths)
+        flat = random.sample(range(cum[-1]), batch_size)
+        states, actions, returns, nexts, discounts, handles = [], [], [], [], [], []
+        for f in flat:
+            ep_idx = int(np.searchsorted(cum, f, side="right")) - 1
+            t = f - cum[ep_idx]
+            s, a, R, nxt, disc = self._nstep_transition(ep_idx, t, n_step, gamma)
+            states.append(s); actions.append(a); returns.append(R)
+            nexts.append(nxt); discounts.append(disc)
+            handles.append((ep_idx, t))
+        out = (torch.cat(states), torch.cat(actions), torch.cat(returns), nexts,
+               torch.tensor(discounts, dtype=torch.float32))
+        return out + (handles,) if with_handles else out
+
+    def update_priorities(self, handles, td_errors) -> None:
+        """No-op stub: the hook a future prioritized-replay implementation will
+        fill in (handles double as priority keys). Uniform sampling ignores it."""
+
     def gather_predecessors(self, handles, r: int):
         """The r temporally preceding same-episode transitions of each
         (ep_idx, t) handle, most recent lag first: output[:, j] holds the

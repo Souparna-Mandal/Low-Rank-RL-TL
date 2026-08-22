@@ -85,7 +85,8 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         eps_start: float , eps_min: float, decay_rate: float,
         discount_factor: float, base_loss = nn.HuberLoss,
         device="auto", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
-        grad_clip_norm = 10.0, double=False):
+        grad_clip_norm = 10.0, double=False,
+        weight_decay=0.01, adam_eps=1e-8, amsgrad=True):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
         function along with the replay buffer for sampling from prior experiences. 
@@ -112,6 +113,10 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             gd_steps_ceil (int, optional): capping the maximum number of gradient steps. Defaults to 100
             grad_clip_norm (float, optional): max global L2 norm for gradient clipping per step. Defaults to 10.0
             Double (Bool, optional): If enabled it uses Double DQN for Q value target estimation
+            weight_decay / adam_eps / amsgrad: AdamW hyperparameters. Defaults
+                keep the historical behaviour (AdamW's implicit wd=0.01,
+                eps=1e-8, amsgrad on); data-efficient Atari configs set
+                wd=0, eps=1.5e-4, amsgrad off (the DrQ/Dopamine values).
         """
         
         BaseAgent.__init__(self, env)
@@ -125,7 +130,9 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         
-        self.optimiser = optim.AdamW(self.policy_net.parameters(), lr=nn_learning_rate, amsgrad=True)
+        self.optimiser = optim.AdamW(self.policy_net.parameters(), lr=nn_learning_rate,
+                                     amsgrad=amsgrad, weight_decay=weight_decay,
+                                     eps=adam_eps)
         self.device = device
         self.loss = DqnLoss(discount_factor, base_loss)
         self.batch_size =  batch_size
