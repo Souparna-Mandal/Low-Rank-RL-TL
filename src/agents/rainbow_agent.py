@@ -122,7 +122,8 @@ class RainbowIQNNetwork(nn.Module):
 
     def __init__(self, encoder: nn.Module, feature_dim: int, n_actions: int,
                  n_cos: int = 64, head_hidden: int = 512, sigma0: float = 0.5,
-                 dueling: bool = True, n_quantiles_act: int = 32):
+                 dueling: bool = True, n_quantiles_act: int = 32,
+                 noisy: bool = True, fixed_act_taus: bool = False):
         super().__init__()
         self.encoder = encoder
         self.feature_dim = feature_dim
@@ -130,18 +131,25 @@ class RainbowIQNNetwork(nn.Module):
         self.n_cos = n_cos
         self.dueling = dueling
         self.n_quantiles_act = n_quantiles_act
+        self.noisy = noisy
+        self.fixed_act_taus = fixed_act_taus
 
         # Cosine tau-embedding projected into feature space (plain, per IQN).
         self.tau_fc = nn.Linear(n_cos, feature_dim)
         self.register_buffer("_cos_freqs",
                              math.pi * torch.arange(1, n_cos + 1, dtype=torch.float32))
 
-        # Dueling noisy streams operating on the (phi * tau_emb) conditioned features.
-        self.adv_hidden = NoisyLinear(feature_dim, head_hidden, sigma0)
-        self.adv = NoisyLinear(head_hidden, n_actions, sigma0)
+        # Dueling streams operating on the (phi * tau_emb) conditioned features.
+        # noisy=False (e.g. EfficientRainbowAgent with epsilon-greedy exploration)
+        # swaps every NoisyLinear for a plain nn.Linear — halves head FLOPs and
+        # makes forwards deterministic given weights.
+        make = ((lambda i, o: NoisyLinear(i, o, sigma0)) if noisy
+                else (lambda i, o: nn.Linear(i, o)))
+        self.adv_hidden = make(feature_dim, head_hidden)
+        self.adv = make(head_hidden, n_actions)
         if dueling:
-            self.val_hidden = NoisyLinear(feature_dim, head_hidden, sigma0)
-            self.val = NoisyLinear(head_hidden, 1, sigma0)
+            self.val_hidden = make(feature_dim, head_hidden)
+            self.val = make(head_hidden, 1)
 
     def _tau_embed(self, taus: torch.Tensor) -> torch.Tensor:
         # taus: (B, N) -> cosine features (B, N, n_cos) -> (B, N, F)
@@ -161,17 +169,27 @@ class RainbowIQNNetwork(nn.Module):
     def _sample_taus(self, batch: int, n: int, device) -> torch.Tensor:
         return torch.rand(batch, n, device=device)
 
+    def _act_taus(self, batch: int, n: int, device) -> torch.Tensor:
+        """Taus for expected-Q evaluation (acting / Double-Q selection / analysis
+        traces). fixed_act_taus=True uses the deterministic midpoint grid
+        (k + 0.5)/n — no RNG draw, same expectation — so acting and the Hankel
+        Q/V/A traces are deterministic given weights."""
+        if self.fixed_act_taus:
+            grid = (torch.arange(n, device=device, dtype=torch.float32) + 0.5) / n
+            return grid.unsqueeze(0).expand(batch, n)
+        return self._sample_taus(batch, n, device)
+
     def forward(self, x: torch.Tensor, n_taus: int | None = None) -> torch.Tensor:
-        """Expected-value Q ``(B, n_actions)`` = mean of quantiles over sampled taus."""
+        """Expected-value Q ``(B, n_actions)`` = mean of quantiles over taus."""
         n = n_taus or self.n_quantiles_act
-        taus = self._sample_taus(x.shape[0], n, x.device)
+        taus = self._act_taus(x.shape[0], n, x.device)
         return self.quantiles(x, taus).mean(dim=1)
 
     def value_advantage(self, x: torch.Tensor, n_taus: int | None = None):
         """Expected dueling streams: V ``(B, 1)`` and centred A ``(B, n_actions)``.
         Falls back to (max_a Q, Q - max_a Q) when built without dueling."""
         n = n_taus or self.n_quantiles_act
-        taus = self._sample_taus(x.shape[0], n, x.device)
+        taus = self._act_taus(x.shape[0], n, x.device)
         phi = self.encoder(x)
         h = phi.unsqueeze(1) * self._tau_embed(taus)
         adv = self.adv(F.relu(self.adv_hidden(h))).mean(dim=1)  # (B, A)
@@ -286,7 +304,60 @@ class PrioritizedReplayBuffer:
         return self.tree.size
 
 
-class RainbowDQNAgent(QAgent):
+class IQNTDMixin:
+    """The IQN TD pieces shared by :class:`RainbowDQNAgent` and
+    :class:`EfficientRainbowAgent`: pairwise quantile-Huber loss and the
+    Bellman-backed target quantiles (with per-sample discounts, so n-step
+    returns with tail windows work natively).
+
+    Host-class contract: ``policy_net``/``target_net`` are
+    :class:`RainbowIQNNetwork` instances, plus attributes ``batch_size``,
+    ``n_quantiles_target``, ``huber_kappa``, ``double``, ``device``.
+    ``n_quantiles_select`` (class attr, default None) sets the tau count for
+    Double-DQN's expected-Q action selection; None keeps the network default.
+    """
+
+    n_quantiles_select: int | None = None
+
+    def _quantile_huber(self, td, taus):
+        """Quantile-Huber loss element ``rho`` for pairwise TD errors.
+
+        Args:
+            td: (B, N, N') pairwise errors target_j - theta_i.
+            taus: (B, N) online quantile fractions (indexing dim 1 of ``td``).
+        Returns:
+            (B, N, N') per-pair loss.
+        """
+        abs_td = td.abs()
+        huber = torch.where(abs_td <= self.huber_kappa,
+                            0.5 * td.pow(2),
+                            self.huber_kappa * (abs_td - 0.5 * self.huber_kappa))
+        # |tau - 1{td < 0}| * huber / kappa
+        indicator = (td.detach() < 0).float()
+        return (taus.unsqueeze(2) - indicator).abs() * huber / self.huber_kappa
+
+    def _target_quantiles(self, rewards, discounts, non_final_mask, next_states):
+        """Bellman-backed target quantiles ``T_theta`` of shape (B, N')."""
+        B = self.batch_size
+        tau_p = self.policy_net._sample_taus(B, self.n_quantiles_target, self.device)
+        next_theta_a = torch.zeros(B, self.n_quantiles_target, device=self.device)
+        if non_final_mask.any():
+            if self.double:
+                next_actions = self.policy_net(
+                    next_states, n_taus=self.n_quantiles_select).argmax(1)
+            else:
+                next_actions = self.target_net(
+                    next_states, n_taus=self.n_quantiles_select).argmax(1)
+            nf_q = self.target_net.quantiles(next_states, tau_p[non_final_mask])  # (nf,N',A)
+            gathered = nf_q.gather(
+                2, next_actions.view(-1, 1, 1).expand(-1, self.n_quantiles_target, 1)).squeeze(2)
+            next_theta_a[non_final_mask] = gathered  # (nf, N')
+        # terminal rows keep next_theta_a = 0 (masked by non_final below)
+        nf = non_final_mask.float().unsqueeze(1)
+        return rewards.unsqueeze(1) + nf * discounts.unsqueeze(1) * next_theta_a
+
+
+class RainbowDQNAgent(IQNTDMixin, QAgent):
     """Noisy, dueling, prioritised, multi-step Double-DQN with IQN distributional RL.
 
     Reuses ``QAgent.save`` / ``load`` / ``update_target_network`` / ``act_greedy``
@@ -455,40 +526,9 @@ class RainbowDQNAgent(QAgent):
         self._ingest(state_t, action_t, reward, next_state_t, terminated, truncated)
 
     # --------------------------------------------------------------- learning
-    def _quantile_huber(self, td, taus):
-        """Quantile-Huber loss element ``rho`` for pairwise TD errors.
-
-        Args:
-            td: (B, N, N') pairwise errors target_j - theta_i.
-            taus: (B, N) online quantile fractions (indexing dim 1 of ``td``).
-        Returns:
-            (B, N, N') per-pair loss.
-        """
-        abs_td = td.abs()
-        huber = torch.where(abs_td <= self.huber_kappa,
-                            0.5 * td.pow(2),
-                            self.huber_kappa * (abs_td - 0.5 * self.huber_kappa))
-        # |tau - 1{td < 0}| * huber / kappa
-        indicator = (td.detach() < 0).float()
-        return (taus.unsqueeze(2) - indicator).abs() * huber / self.huber_kappa
-
-    def _target_quantiles(self, rewards, discounts, non_final_mask, next_states):
-        """Bellman-backed target quantiles ``T_theta`` of shape (B, N')."""
-        B = self.batch_size
-        tau_p = self.policy_net._sample_taus(B, self.n_quantiles_target, self.device)
-        next_theta_a = torch.zeros(B, self.n_quantiles_target, device=self.device)
-        if non_final_mask.any():
-            if self.double:
-                next_actions = self.policy_net(next_states).argmax(1)  # expected-Q select
-            else:
-                next_actions = self.target_net(next_states).argmax(1)
-            nf_q = self.target_net.quantiles(next_states, tau_p[non_final_mask])  # (nf,N',A)
-            gathered = nf_q.gather(
-                2, next_actions.view(-1, 1, 1).expand(-1, self.n_quantiles_target, 1)).squeeze(2)
-            next_theta_a[non_final_mask] = gathered  # (nf, N')
-        # terminal rows keep next_theta_a = 0 (masked by non_final below)
-        nf = non_final_mask.float().unsqueeze(1)
-        return rewards.unsqueeze(1) + nf * discounts.unsqueeze(1) * next_theta_a
+    # _quantile_huber / _target_quantiles come from IQNTDMixin (extracted
+    # verbatim; n_quantiles_select=None keeps the network-default tau count for
+    # Double-DQN selection, i.e. behaviour is unchanged).
 
     def train(self):
         gd_steps = min(len(self.replay_buffer) // (self.buffer_util * self.batch_size),
