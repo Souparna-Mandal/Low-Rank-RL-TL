@@ -1,0 +1,110 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_mountaincar_ccond_baseline_seed44_20260822-220910",
+      "66": "cached/runs/sb3_mountaincar_ccond_baseline_seed66_20260822-220910"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_mountaincar_ccond_exp1_seed44_20260822-222233",
+      "66": "cached/runs/sb3_mountaincar_ccond_exp1_seed66_20260822-222250"
+    },
+    "exp2": {
+      "66": "cached/runs/sb3_mountaincar_ccond_exp2_seed66_20260822-224302",
+      "44": "cached/runs/sb3_mountaincar_ccond_exp2_seed44_20260822-224240"
+    },
+    "exp3": {
+      "44": "cached/runs/sb3_mountaincar_ccond_exp3_seed44_20260822-225840",
+      "66": "cached/runs/sb3_mountaincar_ccond_exp3_seed66_20260822-225852"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_mountaincar_ccond_exp4_seed44_20260822-231408",
+      "66": "cached/runs/sb3_mountaincar_ccond_exp4_seed66_20260822-231501"
+    },
+    "exp5": {
+      "66": "cached/runs/sb3_mountaincar_ccond_exp5_seed66_20260822-232952",
+      "44": "cached/runs/sb3_mountaincar_ccond_exp5_seed44_20260822-232952"
+    },
+    "exp6": {
+      "44": "cached/runs/sb3_mountaincar_ccond_exp6_seed44_20260822-234617",
+      "66": "cached/runs/sb3_mountaincar_ccond_exp6_seed66_20260822-234622"
+    },
+    "exp7": {
+      "66": "cached/runs/sb3_mountaincar_ccond_exp7_seed66_20260823-000239",
+      "44": "cached/runs/sb3_mountaincar_ccond_exp7_seed44_20260823-000227"
+    },
+    "exp8": {
+      "44": "cached/runs/sb3_mountaincar_ccond_exp8_seed44_20260823-003908",
+      "66": "cached/runs/sb3_mountaincar_ccond_exp8_seed66_20260823-003926"
+    },
+    "exp9": {
+      "66": "cached/runs/sb3_mountaincar_ccond_exp9_seed66_20260823-120645",
+      "44": "cached/runs/sb3_mountaincar_ccond_exp9_seed44_20260823-120645"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared"
+    },
+    "exp2": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate"
+    },
+    "exp3": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared"
+    },
+    "exp4": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate"
+    },
+    "exp5": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared",
+      "reward_lags": true
+    },
+    "exp6": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate",
+      "reward_lags": true
+    },
+    "exp7": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared",
+      "reward_lags": true
+    },
+    "exp8": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate",
+      "reward_lags": true
+    },
+    "exp9": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    }
+  }
+}

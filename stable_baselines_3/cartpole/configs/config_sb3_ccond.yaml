@@ -1,0 +1,117 @@
+# SB3 FHR comparison — CartPole-v1, TUNED recipe (fresh-target port).
+#
+# The MountainCar tuning study (stable_baselines_3/mountaincar_tuning/
+# TUNING_LOG.md) found the FHR edge needs continuously fresh bootstrap
+# targets: Polyak soft updates keep the recurrence penalty supplying a
+# persistent gradient, where hard frozen targets put it to sleep between
+# syncs. This config ports that recipe here: Polyak tau 0.005 synced every
+# step + a MORE AGGRESSIVE learning rate than the zoo entry (2.3e-3 -> 4e-3;
+# the penalty is the stabiliser that licenses the hotter setting). These
+# values are the mechanism-guided starting point, not yet tuned on CartPole.
+#
+# CartPole freshness caveat: the zoo entry already syncs HARD every 10 env
+# steps — an ultra-fresh target. The Polyak port (timescale ~ 1/tau = 200
+# updates) makes target motion smooth rather than strictly fresher, so
+# CartPole is the test of smoothness-vs-freshness, not staleness.
+#
+# The stock RL-Zoo recipe lives in config_sb3_zoo.yaml (standard-SB3
+# reference; published zoo QR-DQN: 500.0 +/- 0.0). run_sb3_seeds.py reads
+# this file by default; pass config="configs/config_sb3_zoo.yaml" (own
+# manifest cached/sb3_runs_manifest_zoo.json) for the reference. Runs
+# recorded under the old zoo-recipe config are archived in
+# cached/sb3_runs_manifest.zoo-recipe.json (arm keys exp1-2 = that sweep).
+experiment:
+  name: sb3_cartpole_ccond
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    1: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    2: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    3: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    5: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    6: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    8: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    # 9: standard FHR — ONE global c optimised by autodiff over the whole run,
+    # at this env's best recorded lambda (see the notebook's variant table).
+    9: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1       # raw env, as the zoo trains it
+
+algo:                     # RL-Zoo QR-DQN, CartPole-v1, tuned deltas marked
+  type: dqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
+                          # tuning is identical apart from n_quantiles
+  n_timesteps: 50000
+  learning_rate: 2.3e-3   # TUNED (zoo: 2.3e-3) — aggressive, FHR-stabilised
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  gamma: 0.99
+  tau: 0.005              # TUNED (zoo: hard sync every 10 steps) — Polyak,
+  target_update_interval: 1   # synced every env step
+  train_freq: 256         # the zoo burst schedule: 128 gradient steps every
+  gradient_steps: 128     # 256 env steps (replay ratio 0.5)
+  exploration_fraction: 0.16
+  exploration_final_eps: 0.04
+  net_arch: [256, 256]
+  n_quantiles: 10
+
+agent:                    # shared FHR block; exp<N> arms override on top
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 256  # hard warm-up: the first two 128-step bursts
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: 475      # CartPole-v1 standard bar
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 2000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  state_bounds:           # finite obs bounds for q_matrix_dqn's grid (raw
+                          # CartPole velocity dims are unbounded); same ranges
+                          # the classic configs use for their normalise wrapper
+    low: [-4.8, -10.0, -0.41887903, -10.0]
+    high: [4.8, 10.0, 0.41887903, 10.0]
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2
