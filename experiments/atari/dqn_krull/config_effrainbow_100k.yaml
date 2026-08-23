@@ -16,7 +16,11 @@ experiment:
   agent_class: efficient_rainbow
   include_in_aggregate: true
   fhr_experiments:
-    2: {fhr_weight: 0.5, fhr_order: 2}   # same arm as the BBF comparison
+    3: {fhr_weight: 2, fhr_order: 8}   # same arm as the BBF comparison
+    # ARX: reward lags absorb the score-event kinks the pure-AR penalty taxes
+    # (see cached/kink_diagnostic.png). Paired 1:1 against exp2 (λ0.5, r2):
+    # the ONLY difference is reward_lags.
+    # 4: {fhr_weight: 0.5, fhr_order: 2, reward_lags: True}
 
 environment:
   name: ALE/Krull-v5
@@ -79,8 +83,8 @@ agent:
   adam_eps: 0.00015
   amsgrad: false
   # FHR block (baseline arm overrides fhr_weight to 0):
-  fhr_weight: 0.05
-  fhr_order: 2
+  fhr_weight: 2
+  fhr_order: 4
   reward_lags: False
   warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
   c_learning_rate: 0.01
