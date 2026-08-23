@@ -65,6 +65,18 @@ def build_agent(cfg: dict, env, q_network=None, nn_extra_kwargs: dict = None,
     )
 
 
+def build_ppo_agent(cfg: dict, env):
+    """PPOAgent from cfg["agent"] and cfg["network"]["hidden_sizes"];
+    see experiments/*/config_ppo.yaml."""
+    from agents.ppo_agent import PPOAgent
+    return PPOAgent(
+        **cfg["agent"],
+        hidden_sizes=tuple(cfg["network"]["hidden_sizes"]),
+        env=env,
+        device=cfg["experiment"]["_device"],
+    )
+
+
 def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
     """dqn_training_loop"""
     return dqn_training_loop(
@@ -88,6 +100,24 @@ def train_policy_iteration(cfg: dict, agent, env, run_logger=None, DEBUG=False):
         run_logger=run_logger,
         DEBUG=DEBUG,
     )
+  
+def train_ppo(cfg: dict, agent, env, DEBUG=False, progress=True,
+              return_raw=False):
+    """ppo_training_loop driven by cfg["training"] (no analysis/run_logger
+    hooks — PPO results land in the notebook or a results_ppo/ cache).
+    progress=False silences the tqdm bar. return_raw=True yields
+    (returns, raw_returns) so normalised and unnormalised can both be reported
+    (see environment.normalise.running in the config)."""
+    from ppo_training import ppo_training_loop
+    return ppo_training_loop(
+        agent, env,
+        **cfg["training"],
+        np_seed=cfg["experiment"]["seed"],
+        DEBUG=DEBUG,
+        progress=progress,
+        return_raw=return_raw,
+    )
+
 
 
 def make_run_logger(cfg: dict, config_path: str = "config.yaml", base_dir=None):
