@@ -441,3 +441,92 @@ def test_adapter_surfaces_and_analysis_compatibility(tmp_path):
                                     rollout_env, seed=1)
     assert "Hankel Q" in seqs and len(seqs["Hankel Q"]) > 0
     rollout_env.close()
+
+
+# ---------------------------------------- state-conditioned c predictor
+from agents.sb3_fhr import FHRCoefficientPredictor, _bellman_init  # noqa: E402
+
+
+def test_c_predictor_init_matches_bellman_everywhere():
+    """Zero-weight/Bellman-bias output layer: every anchor starts with exactly
+    the global head's init, for both modes, AR and ARX."""
+    torch.manual_seed(0)
+    for mode in ("shared", "separate"):
+        for reward_lags in (False, True):
+            pred = FHRCoefficientPredictor(3, 0.99, reward_lags, mode,
+                                           in_dim=8, n_actions=2)
+            c0, d0 = _bellman_init(3, 0.99, reward_lags)
+            feats = torch.randn(16, 8)
+            acts = torch.randint(0, 2, (16,))
+            c, d = pred(feats, acts)
+            assert torch.allclose(c, c0.expand(16, 3)), (mode, reward_lags)
+            if reward_lags:
+                assert torch.allclose(d, d0.expand(16, 3))
+            else:
+                assert d is None
+
+
+def test_c_predictor_lambda0_bit_exact_matches_stock_sb3():
+    """c_predictor construction must not perturb a fhr_weight=0 run: the
+    penalty branch is never entered and the extra torch RNG draws happen
+    after the policy is built."""
+    def run(cls, **extra):
+        _seed_all(3)
+        model = cls("MlpPolicy", gym.make("CartPole-v1"),
+                    **_dqn_kwargs(), **extra)
+        model.set_logger(configure(None, ["stdout"]))
+        _fill_buffer(model)
+        model.train(gradient_steps=8, batch_size=32)
+        return model.q_net.state_dict()
+
+    stock = run(DQN)
+    fhr = run(FHRDQN, fhr_weight=0.0, c_predictor="separate")
+    assert stock.keys() == fhr.keys()
+    for k in stock:
+        assert torch.equal(stock[k], fhr[k]), k
+
+
+@pytest.mark.parametrize("mode", ["shared", "separate"])
+def test_c_predictor_trains_and_reports(mode):
+    _seed_all(0)
+    model = _filled_model(fhr_weight=0.5, warmup_grad_steps=0,
+                          c_predictor=mode)
+    before = {k: v.clone() for k, v in model.fhr_predictor.state_dict().items()}
+    head_c0 = model.fhr_head.c.detach().clone()
+    model.train(gradient_steps=6, batch_size=32)
+    after = model.fhr_predictor.state_dict()
+    assert any(not torch.equal(before[k], after[k]) for k in before), \
+        "predictor never updated"
+    # the global head is inert when the predictor is active
+    assert torch.equal(model.fhr_head.c.detach(), head_c0)
+    # last optimiser group holds exactly the predictor's params at c lr
+    group = model.policy.optimizer.param_groups[model._fhr_group_index]
+    assert group["lr"] == model.c_learning_rate
+    assert {id(p) for p in group["params"]} == \
+        {id(p) for p in model.fhr_predictor.parameters()}
+    rows = model.drain_diagnostics()
+    assert rows and np.isfinite(rows[-1]["c_1"])
+    assert "c_spread" in rows[-1] and np.isfinite(rows[-1]["c_spread"])
+
+
+def test_c_predictor_arx_trains():
+    _seed_all(1)
+    model = _filled_model(fhr_weight=0.5, warmup_grad_steps=0,
+                          c_predictor="separate", reward_lags=True)
+    model.train(gradient_steps=6, batch_size=32)
+    rows = model.drain_diagnostics()
+    assert np.isfinite(rows[-1]["d_1"]) and np.isfinite(rows[-1]["penalty_raw"])
+    assert model.nan_skips == 0
+
+
+def test_c_predictor_save_load_roundtrip(tmp_path):
+    _seed_all(2)
+    model = _filled_model(fhr_weight=0.5, warmup_grad_steps=0,
+                          c_predictor="shared")
+    model.train(gradient_steps=4, batch_size=32)
+    p = tmp_path / "ccond.zip"
+    model.save(p)
+    loaded = FHRDQN.load(p, env=gym.make("CartPole-v1"), device="cpu")
+    assert loaded.c_predictor == "shared"
+    for k, v in model.fhr_predictor.state_dict().items():
+        assert torch.equal(v, loaded.fhr_predictor.state_dict()[k]), k
