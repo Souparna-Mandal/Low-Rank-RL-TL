@@ -1,0 +1,118 @@
+# Atari-100k config for the EfficientRainbow recipe on Krull under the
+# CORRECTED protocol (episodic-life training, full-game eval) — the fair
+# same-protocol counterpart to the BBF comparison. Launched via
+#   run_fhrdqn_atari100k.py --config config_effrainbow_100k.yaml --games krull
+# (baseline arm = fhr_weight forced to 0; exp<N> arms apply fhr_experiments).
+# The old effrainbow runs trained under the pre-2026-08-21 game-restart
+# protocol and live in the archived manifest family — never pool with these.
+experiment:
+  name: dqn_asterix_effrainbow100k
+  seed: 0
+  seeds: [0]
+  device: auto
+  save_artifacts: true
+  # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
+  # augmentation over NatureCNNEncoder (src/agents/efficient_rainbow_agent.py).
+  agent_class: efficient_rainbow
+  include_in_aggregate: false
+  fhr_experiments:
+    3: {fhr_weight: 2, fhr_order: 8}   # same arm as the BBF comparison
+
+environment:
+  name: ALE/Asterix-v5
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: false, state: {}}
+  reward:
+    clip_sign: true
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    # Dopamine episodic-life protocol (what DER/DrQ/SPR/BBF train under):
+    # life loss ends the AGENT episode (bootstrap cut, EpisodicLifeWrapper)
+    # while the GAME continues to real game-over. Final evaluation always
+    # scores FULL games regardless (the launcher overrides both flags).
+    terminal_on_life_loss: false
+    episodic_life: true
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+    repeat_action_probability: 0.0
+    full_action_space: false
+
+network:
+  # efficient_rainbow builds its head from agent.head_hidden; unused here.
+  fc_hidden: 512
+
+agent:
+  replay_buffer_capacity: 100000    # holds the entire 100k-step run
+  batch_size: 32
+  nn_learning_rate: 0.0001
+  eps_start: 1.0
+  eps_min: 0.01
+  # eps 1 -> 0.01 over ~5k post-warm-up steps (DrQ): 0.01 ** (1/5000)
+  decay_rate: 0.999079
+  discount_factor: 0.99
+  TD_LR: 0.01                        # hard target copy at every update tick
+  buffer_util: 0.1
+  gd_steps_ceil: 64                  # with train_frequency_steps 1 -> replay ratio 2
+  grad_clip_norm: 30.0
+  double: true
+  # DrQ "Efficient DQN" recipe (arXiv:2004.13649 Table 4) + IQN head sizes:
+  n_step: 10                        # multi-step returns (sample-time aggregation)
+  n_quantiles: 8                    # online loss taus (also Double-Q selection)
+  n_quantiles_target: 8             # target loss taus
+  n_quantiles_act: 32               # fixed-grid taus for acting / analysis traces
+  n_quantiles_fhr: 8                # fixed-grid taus for the FHR anchor/lag forward
+  n_cos: 64
+  head_hidden: 512
+  huber_kappa: 1.0
+  use_augmentation: true            # DrQ random shift + intensity, gradient steps only
+  aug_pad: 4
+  aug_intensity: 0.05
+  prioritized_replay: false         # reserved: PER over the episodic buffer, later
+  # DrQ/Dopamine Adam settings (QAgent defaults keep the legacy wd=0.01):
+  weight_decay: 0.0
+  adam_eps: 0.00015
+  amsgrad: false
+  # FHR block (baseline arm overrides fhr_weight to 0):
+  fhr_weight: 2
+  fhr_order: 4
+  reward_lags: False
+  warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
+  c_learning_rate: 0.01
+
+training:
+  no_episodes: 100000               # upper bound; max_env_steps ends training
+  max_env_steps: 100000             # THE Atari-100k interaction budget
+  target_network_update_steps: 1     # DrQ: hard target copy every env step (TD_LR 1.0)
+  train_frequency_steps: 32          # one gradient step per env step (post warm-up)
+  use_episode_training: False
+  solved_reward: 1000000000         # no early stopping under a fixed budget
+  warmup_steps: 1600                # DER's min-replay-history (this recipe's own)
+  early_stopping_patience_eps: 1000000
+  no_eps_to_avg: 20
+
+# Final-policy evaluation (raw FULL-GAME scores; see evaluate_policy_atari):
+evaluation:
+  episodes: 32
+  epsilon: 0.001
+  base_seed: 1000
+
+analysis:
+  ep_freq: 200                      # a few Hankel ticks across the run
+  methods: []                       # pixel inputs -> no state-grid Q matrix
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5
