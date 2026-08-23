@@ -36,7 +36,7 @@ agent:
   discount_factor: 0.99
   TD_LR: 0.005           # soft target-network updates (Polyak-style, every 2 steps)
   buffer_util: 2         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
-  gd_steps_ceil: 2       # hard cap on gradient steps per training call
+  gd_steps_ceil: 1       # hard cap on gradient steps per training call
   grad_clip_norm: 20.0   # max global L2 norm for gradient clipping per step
   double: True
 

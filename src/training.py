@@ -84,6 +84,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       warmup_steps: int = 0, early_stopping_patience_eps: int = 50,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict | None = None,
+                      max_env_steps: int | None = None,
                       DEBUG=False, atari= False, run_logger=None):
     """The default behaviour is that we wait for atleast train_frequency_steps between training. However this is only invoked after every
     episode. This means that if after train_frequency_steps it will only update once the episode ends and not in between.
@@ -99,6 +100,14 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         np_seed (int, optional): _description_. Defaults to 52.
         no_eps_to_avg (int, optional): _description_. Defaults to 10.
         analysis_config (dict, optional): _description_. Defaults to None (== {}, no analysis).
+        max_env_steps (int, optional): hard cap on TRAINING environment
+            interactions — e.g. 100_000 for the Atari-100k protocol. Training
+            stops exactly at the cap, mid-episode if necessary; the partial
+            episode still lands in rewards.csv, so the steps column sums to
+            the cap. Warm-up steps count (they are agent-env interactions).
+            Analysis-tick rollouts and post-training evaluation do NOT count —
+            like the benchmark's evaluation episodes, they collect no training
+            data. Defaults to None (episode count alone ends training).
         DEBUG (bool, optional): _description_. Defaults to False.
         run_logger (RunLogger, optional): when provided, analysis figures are
             saved to its run directory instead of rendered inline, rank stats go
@@ -136,10 +145,14 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             if step_count > warmup_steps: # start the counters for training and updating target network
                 # This is used to bring the Network used to Calculate Q-Targets up to date with the policy network
                 agent.decay_epsilon()
-                s_tn_upd+= 1 
+                s_tn_upd+= 1
                 s_train+= 1
             step_count += 1
-            
+            # Fixed interaction budget (e.g. Atari-100k's 100k steps): end the
+            # episode NOW — the outer break below stops the whole loop.
+            if max_env_steps is not None and step_count >= max_env_steps:
+                truncated = True
+
             # Check if enough steps have passed to update the target network
             if s_tn_upd >= target_network_update_steps:
                 s_tn_upd = 0
@@ -174,7 +187,14 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         episode_hook = getattr(agent, "notify_episode_end", None)
         if episode_hook is not None:
             episode_hook(episode, epsiode_total_reward)
-        
+
+        # Interaction budget exhausted — stop after logging the (possibly
+        # partial) episode above; the post-loop block writes rewards.csv and
+        # the final checkpoint exactly as on a normal finish.
+        if max_env_steps is not None and step_count >= max_env_steps:
+            print(f"environment-step budget reached ({step_count:,} >= {max_env_steps:,}) — stopping training")
+            break
+
         # print training status
         if episode % no_eps_to_avg == 0:
             window = episode_rewards_training[-no_eps_to_avg:]
@@ -227,6 +247,41 @@ def _greedy_episode_return(agent, env, seed: int) -> float:
         state, reward, terminated, truncated, info = env.step(agent.pi(state))
         total += info.get("raw_reward", reward)
     return total
+
+
+def evaluate_policy_atari(agent, env, episodes: int = 32,
+                          epsilon: float = 0.001, base_seed: int = 1000) -> list[float]:
+    """Atari-100k final-policy evaluation: `episodes` near-greedy rollouts and
+    the RAW (unclipped, unscaled) game score of each.
+
+    Protocol notes (matching the published benchmark lineage):
+      * EfficientZero reports the average of 32 evaluation episodes; the
+        DER/SPR convention evaluates epsilon-greedy with epsilon = 0.001 —
+        both are the defaults here.
+      * Scores come from info["raw_reward"] when a reward wrapper (sign clip /
+        scale) is active, so training-time reward shaping never touches the
+        reported score.
+      * The ALE v5 registration's 108k-frame episode cap applies via
+        truncation, matching the benchmark's max-episode length.
+      * Resets are seeded base_seed + i, so a rerun scores the same episodes.
+      * This is evaluation, not training: nothing enters the replay buffer and
+        the training step budget is unaffected. The agent's exploration
+        epsilon is restored afterwards.
+    """
+    saved_eps = agent.epsilon
+    agent.epsilon = epsilon
+    scores: list[float] = []
+    try:
+        for i in range(episodes):
+            state, _ = env.reset(seed=int(base_seed) + i)
+            total, terminated, truncated = 0.0, False, False
+            while not (terminated or truncated):
+                state, reward, terminated, truncated, info = env.step(agent.pi(state))
+                total += info.get("raw_reward", reward)
+            scores.append(float(total))
+    finally:
+        agent.epsilon = saved_eps
+    return scores
 
 
 def policy_iteration_loop(agent, env, no_iterations: int, solved_reward: int,

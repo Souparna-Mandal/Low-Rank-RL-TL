@@ -1,0 +1,752 @@
+"""FHR (learned-linear-recurrence Hankel-rank) regulariser bootstrapped onto
+Stable-Baselines3's sample-efficient DQN-family methods.
+
+Two algorithm subclasses — FHRDQN (stable_baselines3.DQN) and FHRQRDQN
+(sb3_contrib.QRDQN) — reproduce their parent's train() step exactly and add the
+FHR penalty of agents/fhrdqn_agent.py on top of the TD batch:
+
+    rho_b = Q(s_t, a_t) - sum_j c_j Q(s_{t-j}, a_{t-j})
+                        - [reward_lags] sum_k d_k r_{t-k}
+    L = L_TD + lambda * Huber(anchor, prediction)
+
+Design contracts carried over from FHRDQNAgent (src/agents/fhrdqn_agent.py):
+  * fhr_weight=0 reproduces the stock SB3 algorithm bit-for-bit: the penalty
+    block is skipped entirely, the replay buffer draws the same np.random
+    stream as stable_baselines3.common.buffers.ReplayBuffer, and the extra
+    c/d optimiser param group receives no gradients.
+  * The penalty rides the ordinary i.i.d. TD batch — every sampled transition
+    with t >= r contributes, its r same-episode predecessors fetched from the
+    (episode, t)-annotated ring buffer. Anchor and lags both use the online
+    network; the anchor is the same tensor as the TD term's Q(s_t, a_t)
+    (for QR-DQN, the quantile mean of the taken action's quantiles).
+  * c (and d for ARX) live in their own param group of the policy optimiser:
+    weight_decay 0, independent lr, excluded from gradient clipping (which
+    targets policy.parameters()) and from the target-network sync.
+  * Hard warm-up: lambda is exactly 0 for the first warmup_grad_steps
+    gradient steps, then full strength (no ramp-up). Optional one-way
+    automatic ramp-DOWN mirrors FHRDQNAgent.notify_episode_end.
+  * No log/sign transform anywhere — the recurrence is on raw Q-values.
+
+The rest of this module is the glue that makes an SB3 run indistinguishable
+from a repo-native run for the analysis stack and the result viewer app:
+
+  * FHRSB3Callback drives RunLogger (rewards.csv with the steps column,
+    train_diagnostics.csv with the FHR metric names the viewer knows,
+    checkpoints latest/best/final) and calls training.run_analysis_tick — the
+    same Q-matrix rank / Hankel sweep / autoregressive-value-probe dispatch
+    the classic dqn_training_loop uses — every analysis.ep_freq episodes.
+  * SB3QAgentAdapter exposes the QAgent surface (device, policy_net, pi,
+    act_greedy, save) those analyses expect, wrapping q_net (DQN) or the
+    quantile-mean of quantile_net (QR-DQN).
+"""
+import re
+import warnings
+
+import gymnasium as gym
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from stable_baselines3 import DQN
+from stable_baselines3.common.buffers import ReplayBuffer
+from stable_baselines3.common.callbacks import BaseCallback
+
+try:
+    from sb3_contrib import QRDQN
+except ImportError:  # pragma: no cover - sb3_contrib is an optional extra
+    QRDQN = None
+
+
+class FHREpisodicReplayBuffer(ReplayBuffer):
+    """SB3 ReplayBuffer + per-slot (episode id, t-within-episode) bookkeeping.
+
+    Sampling draws the identical np.random stream as the stock buffer (the
+    two randint calls of BaseBuffer.sample/_get_samples, in the same order),
+    so a lambda=0 FHR run and a stock SB3 run consume randomness identically.
+    The sampled slot indices are stashed on self.last_batch_inds; the FHR
+    train step resolves each index's r ring-predecessors arithmetically —
+    slot i-1 holds t-1 of the same episode unless evicted, and eviction or an
+    episode boundary shows up as an episode-id mismatch (ids are unique and
+    unwritten slots hold -1), which drops the sample from the penalty.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.n_envs != 1:
+            raise ValueError(
+                "FHREpisodicReplayBuffer needs n_envs == 1: predecessor "
+                f"slots are ring-adjacent only for a single env (got {self.n_envs})")
+        if self.optimize_memory_usage:
+            raise ValueError("FHREpisodicReplayBuffer does not support "
+                             "optimize_memory_usage=True")
+        self.episode_ids = np.full((self.buffer_size,), -1, dtype=np.int64)
+        self.t_in_episode = np.zeros((self.buffer_size,), dtype=np.int64)
+        self._current_episode = 0
+        self._current_t = 0
+        self.last_batch_inds: np.ndarray | None = None
+
+    def add(self, obs, next_obs, action, reward, done, infos) -> None:
+        self.episode_ids[self.pos] = self._current_episode
+        self.t_in_episode[self.pos] = self._current_t
+        super().add(obs, next_obs, action, reward, done, infos)
+        # done covers terminated and truncated alike — an episode boundary
+        # either way (matches EpisodicReplayBuffer.close on both)
+        if bool(np.asarray(done).reshape(-1)[0]):
+            self._current_episode += 1
+            self._current_t = 0
+        else:
+            self._current_t += 1
+
+    def sample(self, batch_size: int, env=None):
+        # verbatim BaseBuffer.sample so the RNG stream matches stock SB3;
+        # only the stashing of batch_inds is new
+        upper_bound = self.buffer_size if self.full else self.pos
+        batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+        self.last_batch_inds = batch_inds
+        return self._get_samples(batch_inds, env=env)
+
+    def predecessors(self, batch_inds: np.ndarray, order: int):
+        """(keep, pred): keep marks batch rows with `order` valid same-episode
+        predecessors; pred[(kept) i, j-1] is the slot of t-j (most recent
+        first, matching c_1..c_r). Besides the episode-id match, each lag slot
+        must hold exactly t-j: when a single episode is >= buffer_size steps
+        long the ring wraps within the episode and the seam slots carry the
+        same episode id at the wrong t — the exact-t check drops those."""
+        lags = np.arange(1, order + 1)
+        pred = (batch_inds[:, None] - lags[None, :]) % self.buffer_size
+        same_episode = self.episode_ids[pred] == self.episode_ids[batch_inds][:, None]
+        lag_t_ok = (self.t_in_episode[pred]
+                    == self.t_in_episode[batch_inds][:, None] - lags[None, :])
+        keep = ((self.t_in_episode[batch_inds] >= order)
+                & (same_episode & lag_t_ok).all(axis=1))
+        return keep, pred
+
+
+class FHRRecurrenceHead(nn.Module):
+    """The learned recurrence coefficients c (and d for ARX), Bellman-informed
+    init as in FHRDQNAgent: with reward lags c1=1/gamma, d1=-1/gamma; pure AR
+    with r>=2 c=(1+1/gamma, -1/gamma, 0, ...); r=1 pure AR c1=1/gamma."""
+
+    def __init__(self, order: int, gamma: float, reward_lags: bool):
+        super().__init__()
+        c0 = torch.zeros(order)
+        if reward_lags:
+            c0[0] = 1.0 / gamma
+            d0 = torch.zeros(order)
+            d0[0] = -1.0 / gamma
+        elif order >= 2:
+            c0[0], c0[1] = 1.0 + 1.0 / gamma, -1.0 / gamma
+        else:
+            c0[0] = 1.0 / gamma
+        self.c = nn.Parameter(c0)
+        self.d = nn.Parameter(d0) if reward_lags else None
+
+
+# The FHR parameter set a numbered experiment arm may override — mirrors
+# run_fhrdqn_seeds.FHR_PARAMS so launchers/notebooks can validate identically.
+FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
+              "warmup_grad_steps", "c_learning_rate",
+              "rampdown_reward_threshold", "rampdown_penalty_threshold",
+              "rampdown_penalty_topk", "rampdown_patience_eps",
+              "rampdown_episodes")
+
+
+class _FHRMixin:
+    """Shared FHR machinery for the SB3 subclasses. Assumes the host class is
+    an SB3 OffPolicyAlgorithm with self.gamma, self.policy.optimizer, and an
+    FHREpisodicReplayBuffer. Config knobs and semantics are 1:1 with
+    FHRDQNAgent (see that class's docstring)."""
+
+    def _set_fhr_config(self, fhr_weight, fhr_order, reward_lags,
+                        warmup_grad_steps, c_learning_rate,
+                        rampdown_reward_threshold, rampdown_penalty_threshold,
+                        rampdown_penalty_topk, rampdown_patience_eps,
+                        rampdown_episodes):
+        self.fhr_weight = fhr_weight
+        self.fhr_order = fhr_order
+        self.reward_lags = reward_lags
+        self.warmup_grad_steps = warmup_grad_steps
+        self.c_learning_rate = c_learning_rate
+        self.rampdown_reward_threshold = rampdown_reward_threshold
+        self.rampdown_penalty_threshold = rampdown_penalty_threshold
+        self.rampdown_penalty_topk = rampdown_penalty_topk
+        self.rampdown_patience_eps = rampdown_patience_eps
+        self.rampdown_episodes = rampdown_episodes
+
+    def _validate_fhr_config(self):
+        if self.fhr_order < 1:
+            raise ValueError(f"fhr_order must be >= 1, got {self.fhr_order}")
+        if self.rampdown_episodes < 0:
+            raise ValueError(f"rampdown_episodes must be >= 0, got {self.rampdown_episodes}")
+        if self.rampdown_patience_eps < 1:
+            raise ValueError(f"rampdown_patience_eps must be >= 1, got {self.rampdown_patience_eps}")
+        if self.rampdown_penalty_topk < 1:
+            raise ValueError(f"rampdown_penalty_topk must be >= 1, got {self.rampdown_penalty_topk}")
+        if self.fhr_order == 1 and not self.reward_lags and self.fhr_weight > 0:
+            warnings.warn(
+                "Pure AR with fhr_order=1 cannot be satisfied by a "
+                "Bellman-consistent Q under constant per-step rewards; use "
+                "fhr_order >= 2 or reward_lags=True.", stacklevel=2)
+
+    def _setup_model(self) -> None:
+        super()._setup_model()
+        self._validate_fhr_config()
+        if not isinstance(self.replay_buffer, FHREpisodicReplayBuffer):
+            raise TypeError("FHR algorithms need replay_buffer_class="
+                            "FHREpisodicReplayBuffer (the default) — got "
+                            f"{type(self.replay_buffer).__name__}")
+        if getattr(self, "n_steps", 1) > 1:
+            raise ValueError(
+                "FHR algorithms do not support n_steps > 1: forcing the FHR "
+                "buffer bypasses SB3's NStepReplayBuffer selection, and the "
+                "recurrence penalty assumes 1-step adjacency anyway")
+        self.fhr_head = FHRRecurrenceHead(
+            self.fhr_order, self.gamma, self.reward_lags).to(self.device)
+        coeffs = [self.fhr_head.c]
+        if self.fhr_head.d is not None:
+            coeffs.append(self.fhr_head.d)
+        # Own param group: no weight decay, independent lr; excluded from
+        # gradient clipping (which targets policy.parameters()) and from the
+        # target-net polyak sync (not part of q_net).
+        self.policy.optimizer.add_param_group(
+            {"params": coeffs, "lr": self.c_learning_rate, "weight_decay": 0.0})
+        self._fhr_group_index = len(self.policy.optimizer.param_groups) - 1
+
+        # "NN%" relative penalty bar parsed once, as in FHRDQNAgent
+        self._rd_pen_abs = None
+        self._rd_pen_frac = None
+        if isinstance(self.rampdown_penalty_threshold, str):
+            m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*%\s*",
+                             self.rampdown_penalty_threshold)
+            if not m:
+                raise ValueError(
+                    "rampdown_penalty_threshold must be a number or a "
+                    "percentage string like '40%', got "
+                    f"{self.rampdown_penalty_threshold!r}")
+            self._rd_pen_frac = float(m.group(1)) / 100.0
+        elif self.rampdown_penalty_threshold is not None:
+            self._rd_pen_abs = float(self.rampdown_penalty_threshold)
+        # mutable training state — keep restored values on a .load() resume
+        if not hasattr(self, "_fhr_grad_steps"):
+            self._fhr_grad_steps = 0
+            self.nan_skips = 0
+            # penalty_raw values bucketed by the episode in progress when the
+            # gradient burst ran (FHRSB3Callback advances the hint at every
+            # rollout end); notify_episode_end(e) consumes bucket e
+            self._ep_penalty_buckets: dict[int, list[float]] = {}
+            self._fhr_episode_hint = 0
+            self._rd_window: list[tuple[float, float]] = []
+            self._pen_top: list[float] = []
+            self._rd_k = None
+            self._pending_diags: list[dict] = []
+
+    def _get_torch_save_params(self):
+        state_dicts, tensors = super()._get_torch_save_params()
+        return state_dicts + ["fhr_head"], tensors
+
+    def _update_learning_rate(self, optimizers) -> None:
+        # SB3's schedule update overwrites every param group's lr — restore
+        # the coefficients' independent learning rate afterwards
+        super()._update_learning_rate(optimizers)
+        self.policy.optimizer.param_groups[self._fhr_group_index]["lr"] = \
+            self.c_learning_rate
+
+    # -- penalty schedule: hard warm-up, optional triggered ramp-down -------
+    def _rampdown_scale(self) -> float:
+        if self._rd_k is None:
+            return 1.0
+        if self.rampdown_episodes <= 0:
+            return 0.0
+        return max(0.0, 1.0 - self._rd_k / self.rampdown_episodes)
+
+    def _lambda_eff(self) -> float:
+        if self._fhr_grad_steps < self.warmup_grad_steps:
+            return 0.0
+        return self.fhr_weight * self._rampdown_scale()
+
+    def _penalty_bar(self) -> float | None:
+        if self._rd_pen_abs is not None:
+            return self._rd_pen_abs
+        if (self._rd_pen_frac is not None
+                and len(self._pen_top) >= self.rampdown_penalty_topk):
+            return self._rd_pen_frac * float(np.mean(self._pen_top))
+        return None
+
+    def notify_episode_end(self, episode: int, episode_reward: float) -> None:
+        """Per-episode hook (FHRSB3Callback calls it): the lambda ramp-down
+        trigger of FHRDQNAgent.notify_episode_end, adapted to SB3's burst
+        scheduling. The classic loop trains inside every episode, so each
+        episode has its own residuals; SB3 trains in bursts sparser than
+        episodes, so residuals are bucketed by the episode in progress when
+        the burst ran, and an episode whose bucket is empty (no burst during
+        its lifetime) counts as no-data: the penalty gate below ignores it
+        instead of letting it veto the trigger (v1's all-finite gate would
+        deadlock under burst scheduling)."""
+        vals = self._ep_penalty_buckets.pop(episode, [])
+        ep_pen = float(np.mean(vals)) if vals else float("nan")
+        if self._rd_k is not None:
+            self._rd_k += 1
+            return
+        if self.rampdown_reward_threshold is None or self.fhr_weight <= 0:
+            return
+        if self._fhr_grad_steps < self.warmup_grad_steps:
+            return
+        if np.isfinite(ep_pen):
+            self._pen_top.append(ep_pen)
+            self._pen_top.sort(reverse=True)
+            del self._pen_top[self.rampdown_penalty_topk:]
+        self._rd_window.append((float(episode_reward), ep_pen))
+        del self._rd_window[:-self.rampdown_patience_eps]
+        if len(self._rd_window) < self.rampdown_patience_eps:
+            return
+        rewards = [r for r, _ in self._rd_window]
+        pens = [p for _, p in self._rd_window]
+        if float(np.mean(rewards)) < self.rampdown_reward_threshold:
+            return
+        bar = self._penalty_bar()
+        finite_pens = [p for p in pens if np.isfinite(p)]
+        if self.rampdown_penalty_threshold is not None and (
+                bar is None or not finite_pens
+                or not all(p >= bar for p in finite_pens)):
+            return
+        self._rd_k = 1
+        print(f"FHR lambda ramp-down triggered at episode {episode}: "
+              f"mean reward {np.mean(rewards):.1f} >= "
+              f"{self.rampdown_reward_threshold} over "
+              f"{self.rampdown_patience_eps} eps — lambda -> 0 over "
+              f"{self.rampdown_episodes} episode(s)")
+
+    def _companion_radius(self) -> float:
+        c = self.fhr_head.c.detach().cpu().numpy()
+        roots = np.roots(np.concatenate(([1.0], -c)))
+        return float(np.abs(roots).max()) if roots.size else 0.0
+
+    # -- per-gradient-step penalty + diagnostics ----------------------------
+    def _fhr_base_diag(self, td_loss: float, lam: float) -> dict:
+        diag = {"td_loss": td_loss, "lambda_eff": lam,
+                "penalty_raw": np.nan, "penalty_weighted": 0.0,
+                "residual_rms": np.nan, "b_h": np.nan, "unique_eps": np.nan,
+                "sum_c": float(self.fhr_head.c.detach().sum()),
+                "companion_radius": self._companion_radius(),
+                "rampdown_scale": self._rampdown_scale(),
+                "rampdown_penalty_bar": (float("nan")
+                                         if (bar := self._penalty_bar()) is None
+                                         else bar),
+                "nan_skips": self.nan_skips}
+        for j in range(self.fhr_order):
+            diag[f"c_{j + 1}"] = float(self.fhr_head.c[j].detach())
+            if self.reward_lags:
+                diag[f"d_{j + 1}"] = float(self.fhr_head.d[j].detach())
+        return diag
+
+    def _fhr_penalty(self, anchor_q_sa: torch.Tensor, lag_q_fn, lam: float,
+                     diag: dict) -> torch.Tensor | None:
+        """The recurrence-residual penalty on the current TD batch.
+
+        anchor_q_sa: (B,) online Q(s_t, a_t) — the same tensor the TD loss
+        uses, so the anchor gradient is shared. lag_q_fn(obs, actions) -> (N,)
+        evaluates online Q(s, a) for the flattened predecessor batch.
+        Returns the Huber penalty (in the graph iff lam > 0) or None when no
+        batch sample has r valid predecessors; fills diag in place.
+        """
+        buf = self.replay_buffer
+        inds = buf.last_batch_inds
+        keep, pred = buf.predecessors(inds, self.fhr_order)
+        diag["b_h"] = float(keep.sum())
+        diag["unique_eps"] = float(
+            np.unique(buf.episode_ids[inds[keep]]).size) if keep.any() else 0.0
+        if not keep.any():
+            return None
+        r = self.fhr_order
+        pred_k = pred[keep]                                   # (n, r)
+        n = pred_k.shape[0]
+        flat = pred_k.reshape(-1)
+        obs = buf.to_torch(buf.observations[flat, 0]).float()
+        acts = buf.to_torch(buf.actions[flat, 0]).long().reshape(n * r, -1)[:, :1]
+        keep_t = torch.as_tensor(np.flatnonzero(keep), device=self.device)
+        # lambda = 0 (warm-up / baseline diagnostics): keep the penalty out of
+        # the graph, exactly as FHRDQNAgent does
+        with torch.enable_grad() if lam > 0 else torch.no_grad():
+            q_lags = lag_q_fn(obs, acts).view(n, r)
+            prediction = q_lags @ self.fhr_head.c
+            if self.reward_lags:
+                rews = buf.to_torch(buf.rewards[pred_k, 0]).float()   # (n, r)
+                prediction = prediction + rews @ self.fhr_head.d
+            anchor = anchor_q_sa[keep_t]
+            penalty = F.huber_loss(anchor, prediction)
+        diag["penalty_raw"] = float(penalty.detach())
+        diag["penalty_weighted"] = lam * diag["penalty_raw"]
+        if lam > 0:
+            self._ep_penalty_buckets.setdefault(
+                self._fhr_episode_hint, []).append(diag["penalty_raw"])
+        diag["residual_rms"] = float(
+            (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
+        return penalty
+
+    def _fhr_aggregate_pending(self, step_diags: list[dict]) -> None:
+        """nanmean-aggregate one train() call's per-step diagnostics into a
+        single row (the FHRDQNAgent.train contract) and queue it for the
+        callback to flush into train_diagnostics.csv."""
+        if not step_diags:
+            return
+
+        def _nanmean(vals):
+            finite = [v for v in vals if not np.isnan(v)]
+            return float(np.mean(finite)) if finite else float("nan")
+
+        self._pending_diags.append(
+            {k: _nanmean([d[k] for d in step_diags]) for k in step_diags[0]})
+
+    def drain_diagnostics(self) -> list[dict]:
+        rows, self._pending_diags = self._pending_diags, []
+        return rows
+
+
+class FHRDQN(_FHRMixin, DQN):
+    """stable_baselines3 DQN + the FHR recurrence penalty. fhr_weight=0 is
+    bit-for-bit stock DQN (same RNG stream, same updates)."""
+
+    def __init__(self, *args, fhr_weight: float = 0.0, fhr_order: int = 2,
+                 reward_lags: bool = False, warmup_grad_steps: int = 2000,
+                 c_learning_rate: float = 5e-3,
+                 rampdown_reward_threshold: float | None = None,
+                 rampdown_penalty_threshold: float | str | None = None,
+                 rampdown_penalty_topk: int = 20,
+                 rampdown_patience_eps: int = 10,
+                 rampdown_episodes: int = 0, **kwargs):
+        self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
+                             warmup_grad_steps, c_learning_rate,
+                             rampdown_reward_threshold,
+                             rampdown_penalty_threshold,
+                             rampdown_penalty_topk, rampdown_patience_eps,
+                             rampdown_episodes)
+        kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
+        super().__init__(*args, **kwargs)
+
+    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+        # DQN.train (sb3 2.9.0) verbatim, with the FHR penalty riding the
+        # TD batch and the FHRDQNAgent NaN guard.
+        self.policy.set_training_mode(True)
+        self._update_learning_rate(self.policy.optimizer)
+        if self._vec_normalize_env is not None:
+            raise RuntimeError("FHRDQN does not support VecNormalize — lag "
+                               "observations would bypass the normalisation")
+
+        losses = []
+        step_diags = []
+        for _ in range(gradient_steps):
+            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+            with torch.no_grad():
+                next_q_values = self.q_net_target(replay_data.next_observations)
+                next_q_values, _ = next_q_values.max(dim=1)
+                next_q_values = next_q_values.reshape(-1, 1)
+                target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+
+            current_q_values = self.q_net(replay_data.observations)
+            current_q_values = torch.gather(current_q_values, dim=1, index=replay_data.actions.long())
+
+            loss = F.smooth_l1_loss(current_q_values, target_q_values)
+            losses.append(loss.item())
+
+            lam = self._lambda_eff()
+            diag = self._fhr_base_diag(td_loss=losses[-1], lam=lam)
+            if self.fhr_weight > 0:
+                def lag_q(obs, acts):
+                    return self.q_net(obs).gather(1, acts).squeeze(1)
+                penalty = self._fhr_penalty(
+                    current_q_values.squeeze(1), lag_q, lam, diag)
+                if penalty is not None and lam > 0:
+                    loss = loss + lam * penalty
+            step_diags.append(diag)
+            self._fhr_grad_steps += 1
+
+            if not torch.isfinite(loss):
+                self.nan_skips += 1
+                diag["nan_skips"] = self.nan_skips
+                continue
+            self.policy.optimizer.zero_grad()
+            loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            if not torch.isfinite(grad_norm):
+                self.nan_skips += 1
+                diag["nan_skips"] = self.nan_skips
+                self.policy.optimizer.zero_grad()
+                continue
+            self.policy.optimizer.step()
+
+        self._n_updates += gradient_steps
+        self._fhr_aggregate_pending(step_diags)
+
+        self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record("train/loss", np.mean(losses))
+
+
+if QRDQN is not None:
+    from sb3_contrib.common.utils import quantile_huber_loss
+
+    class FHRQRDQN(_FHRMixin, QRDQN):
+        """sb3_contrib QR-DQN + the FHR recurrence penalty on the quantile-mean
+        Q-values. fhr_weight=0 is bit-for-bit stock QR-DQN."""
+
+        def __init__(self, *args, fhr_weight: float = 0.0, fhr_order: int = 2,
+                     reward_lags: bool = False, warmup_grad_steps: int = 2000,
+                     c_learning_rate: float = 5e-3,
+                     rampdown_reward_threshold: float | None = None,
+                     rampdown_penalty_threshold: float | str | None = None,
+                     rampdown_penalty_topk: int = 20,
+                     rampdown_patience_eps: int = 10,
+                     rampdown_episodes: int = 0, **kwargs):
+            self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
+                                 warmup_grad_steps, c_learning_rate,
+                                 rampdown_reward_threshold,
+                                 rampdown_penalty_threshold,
+                                 rampdown_penalty_topk, rampdown_patience_eps,
+                                 rampdown_episodes)
+            kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
+            super().__init__(*args, **kwargs)
+
+        def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+            # QRDQN.train (sb3_contrib 2.9.0) verbatim + FHR penalty on the
+            # quantile means, with the FHRDQNAgent NaN guard.
+            self.policy.set_training_mode(True)
+            self._update_learning_rate(self.policy.optimizer)
+            if self._vec_normalize_env is not None:
+                raise RuntimeError("FHRQRDQN does not support VecNormalize — "
+                                   "lag observations would bypass the normalisation")
+
+            losses = []
+            step_diags = []
+            for _ in range(gradient_steps):
+                replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+                with torch.no_grad():
+                    next_quantiles = self.quantile_net_target(replay_data.next_observations)
+                    next_greedy_actions = next_quantiles.mean(dim=1, keepdim=True).argmax(dim=2, keepdim=True)
+                    next_greedy_actions = next_greedy_actions.expand(batch_size, self.n_quantiles, 1)
+                    next_quantiles = next_quantiles.gather(dim=2, index=next_greedy_actions).squeeze(dim=2)
+                    target_quantiles = replay_data.rewards + (1 - replay_data.dones) * discounts * next_quantiles
+
+                current_quantiles = self.quantile_net(replay_data.observations)
+                actions = replay_data.actions[..., None].long().expand(batch_size, self.n_quantiles, 1)
+                current_quantiles = torch.gather(current_quantiles, dim=2, index=actions).squeeze(dim=2)
+
+                loss = quantile_huber_loss(current_quantiles, target_quantiles, sum_over_quantiles=True)
+                losses.append(loss.item())
+
+                lam = self._lambda_eff()
+                diag = self._fhr_base_diag(td_loss=losses[-1], lam=lam)
+                if self.fhr_weight > 0:
+                    def lag_q(obs, acts):
+                        quantiles = self.quantile_net(obs)
+                        idx = acts[..., None].expand(-1, self.n_quantiles, 1)
+                        return quantiles.gather(dim=2, index=idx).squeeze(dim=2).mean(dim=1)
+                    penalty = self._fhr_penalty(
+                        current_quantiles.mean(dim=1), lag_q, lam, diag)
+                    if penalty is not None and lam > 0:
+                        loss = loss + lam * penalty
+                step_diags.append(diag)
+                self._fhr_grad_steps += 1
+
+                if not torch.isfinite(loss):
+                    self.nan_skips += 1
+                    diag["nan_skips"] = self.nan_skips
+                    continue
+                self.policy.optimizer.zero_grad()
+                loss.backward()
+                grad_norm = None
+                if self.max_grad_norm is not None:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                if grad_norm is not None and not torch.isfinite(grad_norm):
+                    self.nan_skips += 1
+                    diag["nan_skips"] = self.nan_skips
+                    self.policy.optimizer.zero_grad()
+                    continue
+                self.policy.optimizer.step()
+
+            self._n_updates += gradient_steps
+            self._fhr_aggregate_pending(step_diags)
+
+            self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
+            self.logger.record("train/loss", np.mean(losses))
+
+
+class QuantileMeanQNet(nn.Module):
+    """quantile_net wrapped to the (B, n_actions) Q-row surface the repo's
+    analyses expect: the mean over the quantile dimension."""
+
+    def __init__(self, quantile_net: nn.Module):
+        super().__init__()
+        self.quantile_net = quantile_net
+
+    def forward(self, x):
+        return self.quantile_net(x).mean(dim=1)
+
+
+class SB3QAgentAdapter:
+    """The QAgent surface (device, policy_net, pi, act_greedy, save) that the
+    repo's analysis stack expects, over a trained/training SB3 model. All Q
+    evaluations use the online network: q_net for DQN, the quantile mean of
+    quantile_net for QR-DQN.
+
+    epsilon=None uses the model's current exploration_rate for pi();
+    set adapter.epsilon = 0.0 for greedy post-training rollouts.
+    """
+
+    def __init__(self, model, epsilon: float | None = None):
+        self.model = model
+        self.epsilon = epsilon
+        if hasattr(model, "quantile_net"):
+            self.policy_net = QuantileMeanQNet(model.quantile_net)
+        else:
+            self.policy_net = model.q_net
+
+    @property
+    def device(self):
+        return self.model.device
+
+    def act_greedy(self, state: torch.Tensor) -> int:
+        with torch.no_grad():
+            return int(self.policy_net(state).argmax(dim=1).item())
+
+    def pi(self, state: np.ndarray) -> int:
+        eps = self.model.exploration_rate if self.epsilon is None else self.epsilon
+        if np.random.rand() < eps:
+            return int(self.model.action_space.sample())
+        state_t = torch.tensor(np.asarray(state), dtype=torch.float32,
+                               device=self.device).unsqueeze(0)
+        return self.act_greedy(state_t)
+
+    def save(self, path):
+        # SB3 zip archive (despite the .pt name RunLogger uses); reload with
+        # FHRDQN.load / FHRQRDQN.load
+        self.model.save(str(path))
+
+
+class BoundedObservations(gym.Wrapper):
+    """Override an env's observation space with finite bounds (observations
+    pass through unchanged). q_matrix_dqn builds its state grid from
+    observation_space.low/high, which is infinite on CartPole's velocity dims;
+    the bounds here mirror the normalise-wrapper ranges the classic-control
+    configs use, so Q-matrix grids stay comparable across code paths."""
+
+    def __init__(self, env, low, high):
+        super().__init__(env)
+        self.observation_space = gym.spaces.Box(
+            low=np.asarray(low, dtype=np.float32),
+            high=np.asarray(high, dtype=np.float32),
+            dtype=np.float32)
+
+
+class FHRSB3Callback(BaseCallback):
+    """Drives the repo's per-run artifact contract during SB3 training:
+
+      * rewards.csv (episode,reward,steps — full rewrite each tick)
+      * train_diagnostics.csv (one nanmean row per train() burst, FHR metric
+        names — drained from the model at every episode end)
+      * checkpoints/{latest,best,final}.pt (SB3 zip archives)
+      * every analysis.ep_freq episodes: training.run_analysis_tick on a
+        dedicated analysis env (Q-matrix rank -> rank_stats.csv + figures,
+        Hankel sweep -> hankel_sweep.csv + trajectories, AR value probe ->
+        autoregressive_*.csv + rollouts)
+      * optional early stopping at rolling-mean >= solved_reward, mirroring
+        the classic dqn_training_loop protocol
+
+    Requires the training env to be Monitor-wrapped (SB3 does this by
+    default) and n_envs == 1.
+    """
+
+    def __init__(self, run_logger=None, analysis_config: dict | None = None,
+                 analysis_env: gym.Env | None = None,
+                 training_config: dict | None = None, verbose: int = 0):
+        super().__init__(verbose)
+        self.run_logger = run_logger
+        self.analysis_config = analysis_config or {}
+        self.analysis_env = analysis_env
+        self.training_config = training_config or {}
+        self.episode_rewards: list[float] = []
+        self.episode_steps: list[int] = []
+        self._best_window_mean = -np.inf
+        self._stop = False
+
+    def _adapter(self):
+        return SB3QAgentAdapter(self.model)
+
+    def _log_rewards(self):
+        if self.run_logger is not None and self.episode_rewards:
+            self.run_logger.log_rewards(self.episode_rewards,
+                                        steps=self.episode_steps)
+
+    def _drain_diagnostics(self, episode: int):
+        if self.run_logger is None or not hasattr(self.model, "drain_diagnostics"):
+            return
+        for row in self.model.drain_diagnostics():
+            self.run_logger.log_train_diagnostics(episode, **row)
+
+    def _analysis_tick(self, episode: int):
+        if self.analysis_env is None:
+            return
+        from training import run_analysis_tick   # lazy: needs src/ on sys.path
+        run_analysis_tick(self._adapter(), self.analysis_env,
+                          self.analysis_config, self.run_logger, episode)
+        # the Hankel/AR rollouts leave the analysis env terminated
+        self.analysis_env.reset()
+
+    def _on_rollout_end(self) -> None:
+        # fires right before every train() burst: tag the burst's penalty
+        # residuals with the episode currently in progress, so the lambda
+        # ramp-down consumes per-episode buckets (see notify_episode_end)
+        if hasattr(self.model, "_fhr_episode_hint"):
+            self.model._fhr_episode_hint = len(self.episode_rewards)
+
+    def _on_step(self) -> bool:
+        for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            if not done:
+                continue
+            ep = info.get("episode")
+            if ep is None:      # Monitor wrapper missing — nothing to log
+                continue
+            episode = len(self.episode_rewards)          # 0-based, as classic
+            self.episode_rewards.append(float(ep["r"]))
+            self.episode_steps.append(int(ep["l"]))
+            if hasattr(self.model, "notify_episode_end"):
+                self.model.notify_episode_end(episode, float(ep["r"]))
+            self._drain_diagnostics(episode)
+
+            # best-checkpoint gate on the classic cadence: evaluated every
+            # no_eps_to_avg episodes, short window allowed at the start
+            window = self.training_config.get("no_eps_to_avg", 10)
+            if window and episode % window == 0:
+                mean = float(np.mean(self.episode_rewards[-window:]))
+                if mean > self._best_window_mean:
+                    self._best_window_mean = mean
+                    if self.run_logger is not None:
+                        self.run_logger.checkpoint(self._adapter(), "best")
+
+            ep_freq = self.analysis_config.get("ep_freq")
+            if ep_freq and episode % ep_freq == 0:
+                self._log_rewards()
+                if self.run_logger is not None:
+                    self.run_logger.checkpoint(self._adapter(), "latest")
+                self._analysis_tick(episode)
+
+            # early stop on the classic dqn_training_loop gate: strictly
+            # greater, first evaluated once episode > patience
+            solved = self.training_config.get("solved_reward")
+            patience = self.training_config.get("early_stopping_patience_eps")
+            if (solved is not None and patience
+                    and episode > patience
+                    and float(np.mean(self.episode_rewards[-patience:])) > solved):
+                print(f"early stop at episode {episode}: rolling-{patience} "
+                      f"mean > {solved}")
+                self._stop = True
+        return not self._stop
+
+    def _on_training_end(self) -> None:
+        self._log_rewards()
+        self._drain_diagnostics(max(len(self.episode_rewards) - 1, 0))
+        if self.run_logger is not None:
+            self.run_logger.checkpoint(self._adapter(), "final")

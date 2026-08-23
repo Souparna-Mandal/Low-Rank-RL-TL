@@ -245,13 +245,23 @@ def test_hard_warmup_no_ramp():
     assert a._lambda_eff() == 0.05  # full strength immediately, no ramp
 
 
-def test_atari_path_raises():
-    a = _make_fhr(0.0)
-    try:
-        a.update_buffer_atari(np.zeros(4), 0, 0.0, np.zeros(4), False)
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError:
-        pass
+def test_atari_path_stores_uint8_cpu_episodes():
+    # the atari path stores uint8 CPU frame stacks with the same episodic
+    # bookkeeping as the classical path (same-episode windows still work)
+    a = _make_fhr(0.01)
+    frames = np.random.randint(0, 255, size=(4, 84, 84), dtype=np.uint8)
+    for t in range(5):
+        a.update_buffer_atari(frames, 0, 1.0, frames, terminated=(t == 4))
+    assert len(a.replay_buffer) == 5
+    ep = a.replay_buffer._episodes[0]
+    assert ep["terminated"] is True
+    assert ep["states"].dtype == torch.uint8
+    assert ep["states"].device.type == "cpu"
+    assert ep["states"].shape == (5, 4, 84, 84)
+    # gather_predecessors returns frame-stack windows with trailing dims intact
+    s, act, rew = a.replay_buffer.gather_predecessors([(0, 2)], 2)
+    assert s.shape == (1, 2, 4, 84, 84)
+    assert act.shape == (1, 2) and rew.shape == (1, 2)
 
 
 def test_save_load_roundtrip():

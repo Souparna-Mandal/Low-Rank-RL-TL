@@ -1,0 +1,106 @@
+# SB3 (Stable-Baselines3) FHR comparison — CartPole-v1.
+#
+# The trained method is stock SB3 with the RL-Zoo tuned hyperparameters
+# (https://github.com/DLR-RM/rl-baselines3-zoo, hyperparams/qrdqn.yml) —
+# SB3's best published sample-efficient DQN-family setting for this env.
+# Every arm runs FHRQRDQN from src/agents/sb3_fhr.py; the baseline arm forces
+# fhr_weight 0.0, which is bit-for-bit the stock SB3 algorithm (asserted in
+# tests/test_sb3_fhr.py), so an exp<N>-vs-baseline gap is attributable to the
+# FHR recurrence penalty alone. Launch with stable_baselines_3/src/run_sb3_seeds.py
+# (cwd = this experiment dir); results land in cached/runs/ + the manifest
+# cached/sb3_runs_manifest.json, both read by the result viewer app.
+experiment:
+  name: sb3_cartpole
+  seed: 44                # fallback when `seeds` is absent or empty
+  seeds: [44, 66]         # one run per (arm, seed)
+  # Numbered variants: each entry = ONE full FHR parameter set applied on top
+  # of the agent block (allowed keys = FHR_PARAMS in run_sb3_seeds.py;
+  # fhr_weight 0 is rejected — the baseline arm covers it). Lambda values
+  # bracket the classic-control tuning (dqn_cartpole exp22/exp23).
+  fhr_experiments:
+    1: {fhr_weight: 0.1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
+    2: {fhr_weight: 1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1       # raw env, no normalise/clip wrappers — the zoo
+                          # setting trains on raw observations
+
+algo:                     # RL-Zoo tuned QR-DQN (sb3_contrib), CartPole-v1
+  type: qrdqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
+                          # tuning is identical apart from n_quantiles
+  n_timesteps: 50000
+  learning_rate: 2.3e-3
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  gamma: 0.99
+  target_update_interval: 10
+  train_freq: 256         # the zoo burst schedule: 128 gradient steps every
+  gradient_steps: 128     # 256 env steps (replay ratio 0.5)
+  exploration_fraction: 0.16
+  exploration_final_eps: 0.04
+  net_arch: [256, 256]
+  n_quantiles: 10
+
+agent:                    # FHR penalty defaults (semantics identical to the
+                          # classic FHRDQNAgent; see src/agents/sb3_fhr.py)
+  fhr_weight: 0.147       # lambda on the recurrence residual (Q units)
+  fhr_order: 2            # r: number of Q-value lags = target Hankel rank
+  reward_lags: False      # True = ARX: also learn d_k on the r preceding rewards
+  warmup_grad_steps: 256  # hard warm-up K0: lambda = 0 for the first two
+                          # 128-step gradient bursts (~1.5k env steps)
+  c_learning_rate: 0.03   # lr of the c/d param group (weight_decay 0,
+                          # excluded from grad clipping and target sync)
+  rampdown_reward_threshold: null   # non-null arms the one-way lambda ramp-down
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:                 # early-stop / checkpoint protocol (FHRSB3Callback),
+                          # mirroring the classic dqn_training_loop
+  solved_reward: 475      # rolling-patience mean >= this stops training;
+                          # null disables early stopping
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10       # window for the `best` checkpoint gate
+
+analysis:
+  # Same low-rank diagnostics as the classic runs: Q-matrix rank over a state
+  # grid -> rank_stats.csv, greedy-rollout Hankel spectra -> hankel_sweep.csv,
+  # AR value probe -> autoregressive_*.csv. Dispatched through
+  # training.run_analysis_tick every ep_freq episodes on a dedicated env.
+  ep_freq: 50
+  state_bounds:           # finite obs bounds for q_matrix_dqn's grid (raw
+                          # CartPole velocity dims are unbounded); same ranges
+                          # the classic configs use for their normalise wrapper
+    low: [-4.8, -10.0, -0.41887903, -10.0]
+    high: [4.8, 10.0, 0.41887903, 10.0]
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

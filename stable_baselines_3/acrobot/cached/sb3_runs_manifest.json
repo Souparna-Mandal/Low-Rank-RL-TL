@@ -1,0 +1,47 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "exp3": {
+      "44": "cached/runs/sb3_acrobot_exp3_seed44_20260819-214637",
+      "66": "cached/runs/sb3_acrobot_exp3_seed66_20260819-214637"
+    },
+    "baseline": {
+      "44": "cached/runs/sb3_acrobot_baseline_seed44_20260819-214637",
+      "66": "cached/runs/sb3_acrobot_baseline_seed66_20260819-214637"
+    },
+    "exp2": {
+      "66": "cached/runs/sb3_acrobot_exp2_seed66_20260819-214637",
+      "44": "cached/runs/sb3_acrobot_exp2_seed44_20260819-214637"
+    },
+    "exp1": {
+      "66": "cached/runs/sb3_acrobot_exp1_seed66_20260819-214637",
+      "44": "cached/runs/sb3_acrobot_exp1_seed44_20260819-214637"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 1,
+      "fhr_order": 3,
+      "reward_lags": false,
+      "c_learning_rate": 0.0136
+    },
+    "exp2": {
+      "fhr_weight": 0.0271,
+      "fhr_order": 3,
+      "reward_lags": false,
+      "c_learning_rate": 0.0136
+    },
+    "exp3": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.0136
+    }
+  }
+}

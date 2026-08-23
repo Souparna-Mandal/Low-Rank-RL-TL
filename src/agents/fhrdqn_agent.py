@@ -170,8 +170,20 @@ class FHRDQNAgent(QAgent):
             self.replay_buffer.close(terminated)
 
     def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
-        raise NotImplementedError(
-            "FHRDQNAgent's episodic buffer has no atari (uint8/CPU) path yet")
+        """Atari path: frame stacks stay uint8 on the CPU (a 100k-transition
+        run is ~5.6 GB as uint8 host tensors — float32 on-device would not
+        fit) and move to the device per sampled batch in _train_step, matching
+        QAgent's atari storage convention. Episodic bookkeeping is identical
+        to update_buffer, so the FHR penalty's same-episode predecessor
+        windows work unchanged."""
+        state = torch.as_tensor(np.asarray(state), dtype=torch.uint8).unsqueeze(0)
+        action = torch.tensor([action], dtype=torch.long)
+        reward = torch.tensor([reward], dtype=torch.float32)
+        next_state = (None if terminated else
+                      torch.as_tensor(np.asarray(next_state), dtype=torch.uint8).unsqueeze(0))
+        self.replay_buffer.append(state, action, reward, next_state)
+        if terminated or truncated:
+            self.replay_buffer.close(terminated)
 
     # -- penalty schedule: hard warm-up, optional triggered ramp-down -------
     def _rampdown_scale(self) -> float:
@@ -265,6 +277,11 @@ class FHRDQNAgent(QAgent):
     def _train_step(self):
         states, actions, rewards, next_list, handles = self.replay_buffer.sample_transitions(
             self.batch_size, with_handles=True)
+        # atari storage is uint8/CPU and moves to the device per batch; the
+        # classical path stores on-device float32, for which .to() is a no-op
+        states = states.to(self.device)
+        actions = actions.to(self.device)
+        rewards = rewards.to(self.device)
         non_final_mask = torch.tensor([s is not None for s in next_list], device=self.device)
 
         Q_s_a = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -302,6 +319,9 @@ class FHRDQNAgent(QAgent):
             if keep:
                 p_states, p_actions, p_rewards = self.replay_buffer.gather_predecessors(
                     [handles[i] for i in keep], r)
+                p_states = p_states.to(self.device)
+                p_actions = p_actions.to(self.device)
+                p_rewards = p_rewards.to(self.device)
                 n = len(keep)
                 # lambda = 0 (warm-up): diagnostics only, keep the penalty out
                 # of the graph.
@@ -309,7 +329,10 @@ class FHRDQNAgent(QAgent):
                     # Fused evaluation: one batched forward over all n*r
                     # predecessor states; the anchor Q(s_t, a_t) is shared with
                     # the TD term above. No per-sample loops, no SVD.
-                    out = self.policy_net(p_states.reshape(n * r, -1))
+                    # reshape keeps trailing obs dims intact: (n, r, obs_dim)
+                    # -> (n*r, obs_dim) for MLPs, (n, r, C, H, W) -> (n*r, C,
+                    # H, W) for Atari frame stacks.
+                    out = self.policy_net(p_states.reshape(n * r, *p_states.shape[2:]))
                     q_lags = out.gather(1, p_actions.reshape(n * r, 1)).view(n, r)
                     prediction = q_lags @ self.c
                     if self.reward_lags:
