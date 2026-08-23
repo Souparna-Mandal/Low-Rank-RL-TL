@@ -1,0 +1,19 @@
+{
+  "seeds": [
+    21,
+    56,
+    102
+  ],
+  "runs": {
+    "baseline": {
+      "56": "cached/runs/dqn_mountaincar_fhrdqn_baseline_seed56_20260811-222356",
+      "21": "cached/runs/dqn_mountaincar_fhrdqn_baseline_seed21_20260811-222356",
+      "102": "cached/runs/dqn_mountaincar_fhrdqn_baseline_seed102_20260811-222356"
+    },
+    "fhr": {
+      "56": "cached/runs/dqn_mountaincar_fhrdqn_seed56_20260811-222356",
+      "21": "cached/runs/dqn_mountaincar_fhrdqn_seed21_20260811-222356",
+      "102": "cached/runs/dqn_mountaincar_fhrdqn_seed102_20260811-222356"
+    }
+  }
+}

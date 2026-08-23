@@ -1,0 +1,19 @@
+{
+  "seeds": [
+    52,
+    53,
+    54
+  ],
+  "runs": {
+    "baseline": {
+      "53": "cached/runs/dqn_acrobot_2_fhrdqn_baseline_seed53_20260811-231302",
+      "54": "cached/runs/dqn_acrobot_2_fhrdqn_baseline_seed54_20260811-231302",
+      "52": "cached/runs/dqn_acrobot_2_fhrdqn_baseline_seed52_20260811-231302"
+    },
+    "fhr": {
+      "52": "cached/runs/dqn_acrobot_2_fhrdqn_seed52_20260811-231302",
+      "53": "cached/runs/dqn_acrobot_2_fhrdqn_seed53_20260811-231302",
+      "54": "cached/runs/dqn_acrobot_2_fhrdqn_seed54_20260811-231302"
+    }
+  }
+}

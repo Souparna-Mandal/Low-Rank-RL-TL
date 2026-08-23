@@ -1,0 +1,160 @@
+# FHR-DQN on Acrobot-v1 — learned-recurrence (AR/ARX) penalty, no SVDs.
+#
+# The FHR block and the [16,16] net carry the winners of the Optuna study
+# (optuna_fhrdqn/, study acrobot_fhr_16x16, best trial #14, tuned on seeds
+# 52/53). Honest effect size: three independent evaluations of this exact
+# config gave +12 (search), -12.5 (transfer rerun) and +3.1 (3-seed comparison,
+# 2/3 seeds better) vs the lambda=0 baseline — GPU runs are not seed-
+# deterministic, single runs swing ~±15, so read this as small-positive, a big
+# improvement over the old hand-picked lambda=0.5 which was reliably ~25 worse
+# than baseline. The penalty rides the TD batch: every sampled
+# transition with at least fhr_order same-episode predecessors contributes
+#   Huber( Q(s_t,a_t),  sum_j c_j Q(s_{t-j},a_{t-j})  [+ sum_k d_k r_{t-k}] )
+# with one global learned coefficient vector. Acrobot's constant -1/step reward
+# means the exact Bellman recurrence has roots {1, 1/gamma}; the search
+# preferred order 3 over that theory-minimal order 2. fhr_weight: 0.0 turns
+# this file into the plain lambda=0 agent at the same net — exactly what the
+# comparison notebook's baseline arm overrides (one config, one code path, one
+# difference).
+
+experiment:
+  name: dqn_acrobot_2_fhrdqn
+  seed: 52               # fallback when `seeds` is absent or empty
+  # The comparison notebook trains both arms once per seed and reports
+  # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
+  seeds: [52, 53, 54]
+  # Numbered FHR experiments for run_fhrdqn_seeds.py --experiment N [M ...]:
+  # each entry is ONE full FHR parameter set — any subset of fhr_weight,
+  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate, and the
+  # rampdown_* params (see the agent block); unspecified
+  # params inherit the agent block below. A launch trains the shared baseline
+  # (fhr_weight 0, plain _baseline run names, reused if already recorded in
+  # cached/fhrdqn_runs_manifest.json) plus one _exp<N>-tagged arm per number,
+  # so the result viewer's compare mode shows baseline vs each experiment.
+  # Edit/add entries freely — fhr_weight 0 is rejected (baseline covers it).
+  fhr_experiments:
+    1: {fhr_weight: 1, fhr_order: 3, reward_lags: False,
+        warmup_grad_steps: 2000, c_learning_rate: 0.0136}  # = agent block below
+    2: {fhr_weight: 0.0271}  # the earlier tuned lambda, everything else inherited
+    3: {fhr_weight: 1, fhr_order: 2}
+                             # theory-minimal order-2 recurrence at current lambda
+  device: auto
+  # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under
+  # runs/<timestamp>/ instead of rendering analysis figures inline.
+  save_artifacts: true
+
+environment:
+  name: Acrobot-v1
+  render_mode: null
+  discrete_config: null
+  # Verbose normalise kwargs passed straight into make_environment(**env_kwargs).
+  # Empty action/state dicts -> RescaleAction / RescaleObservation are skipped.
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: False
+    state: []
+
+network:
+  # MLP Q-network is defined in ../run_fhrdqn_seeds.py. [16,16] is the net the
+  # Optuna study fixed and tuned at (its lambda=0 baseline, -111.9, already
+  # beats the old [8] net's -129.7).
+  hidden_sizes: [256, 256]
+
+agent:
+  replay_buffer_capacity: 10000
+  batch_size: 128
+  nn_learning_rate: 0.0003
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99995
+  discount_factor: 0.99
+  TD_LR: 0.005           # soft target-network updates
+  buffer_util: 1         # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  gd_steps_ceil: 1       # hard cap on gradient steps per training call
+  grad_clip_norm: 30.0   # max global L2 norm for gradient clipping per step
+                         # (network only — the recurrence coefficients are exempt)
+  # --- FHR learned-recurrence penalty (fhr_weight 0 => exact QAgent) ---
+  # Values below = Optuna best trial #14. The winning cluster sits at lambda
+  # 0.02-0.07, order 3, warm-up ~4000, c_lr ~0.005-0.015; the old hand-picked
+  # (0.5, 2, 500, 0.05) scored -117.4 — worse than baseline.
+  fhr_weight: 1 #0.0271      # lambda on the recurrence residual (Q units) — ~20x
+                          # below the old 0.5, which was in the harmful regime.
+  fhr_order: 3            # r: number of Q-value lags = target Hankel rank. The
+                          # search preferred 3 over the theory-minimal 2
+                          # (constant-reward Bellman roots {1, 1/gamma}).
+  reward_lags: False      # True = ARX: also learn d_k on the r preceding
+                          # rewards. Best trial used False, though most of the
+                          # winning cluster had True — close call.
+  warmup_grad_steps: 2000 # 4250 # hard warm-up K0: lambda = 0 for this many gradient
+                          # steps, then full fhr_weight in one step (no ramp).
+                          # Cadence is 1 grad step per train() call every 2 env
+                          # steps, so this is ~8.5k env steps (~ep 30-60).
+  c_learning_rate: 0.0136 # lr of the c/d param group: weight_decay 0, excluded
+                          # from grad clipping and the target network.
+  # --- automatic lambda ramp-down (armed only when the reward threshold is set) ---
+  # After warm-up, once the mean episode reward over the last
+  # rampdown_patience_eps episodes reaches rampdown_reward_threshold while every
+  # one of them kept a mean recurrence residual (penalty_raw) >=
+  # rampdown_penalty_threshold, the penalty is judged to be fighting an
+  # already-good policy: lambda anneals linearly to 0 over rampdown_episodes
+  # episodes (0 = switch off immediately). One-way; needs dqn_training_loop's
+  # notify_episode_end hook. rampdown_scale lands in train_diagnostics.csv.
+  rampdown_reward_threshold: null   # e.g. -100; null disables the feature
+  rampdown_penalty_threshold: null  # absolute number, or a string like "40%" =
+                                    # that fraction of the mean of the topk
+                                    # largest per-episode residuals seen so far
+                                    # (post-warm-up); null = reward alone gates
+  rampdown_penalty_topk: 20         # history size for the "NN%" relative bar
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  no_episodes: 500
+  target_network_update_steps: 2
+  train_frequency_steps: 2
+  use_episode_training: False   # train mid-episode every train_frequency_steps
+                                # -> one diagnostics row per gradient step (the
+                                # comparison notebook aggregates per episode)
+  solved_reward: -80        # Acrobot-v1 solved at avg reward >= -100
+  warmup_steps: 5000
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+
+analysis:
+  # Low-rank Hankel + Q-function diagnostics — ON by default so every
+  # comparison run records the mechanism plots (spectra figures show
+  # log10(sigma + machine-eps) of the raw value-sequence Hankel; see
+  # plot_matrix_spectra in src/analysis/low_rank/rank.py). Set methods: []
+  # and hankel_sweep.enabled: false for a faster reward-only run.
+  ep_freq: 50
+  methods:                         # Q-matrix rank tracking over a state grid
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8, 8, 8]   # one bin-count per obs dim (Acrobot obs_dim = 6)
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true                  # greedy-rollout Hankel spectra +
+                                   # effective-rank evolution in the viewer
+    n_rollouts: 5
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 10
+      stride: 5
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false                 # <- true for held-out AR-fit quality of the
+                                   #    frozen greedy policy's value sequences
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

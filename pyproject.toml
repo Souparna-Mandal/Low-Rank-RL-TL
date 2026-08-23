@@ -16,7 +16,17 @@ dependencies = [
     "ale-py>=0.12.0",
     "opencv-python>=4.13.0.92",
     "nbconvert>=7.16",
+    "optuna>=4.9.0",
 ]
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

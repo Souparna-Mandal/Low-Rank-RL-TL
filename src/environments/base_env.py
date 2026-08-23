@@ -11,18 +11,25 @@ import numpy as np
 from .wrappers.action_wrappers import DiscretiseActionWrapper
 from .wrappers.discrete_wrappers import DiscreteActionWrapper, DiscreteStateWrapper
 from .wrappers.observation_wrappers import OneHotObservationWrapper
+from .wrappers.discrete_wrappers import DiscreteStateWrapper
+from .wrappers.generative_wrappers import GenerativeStateWrapper
+from .wrappers.observation_wrappers import UnderlyingStateWrapper
+from .wrappers.reward_wrappers import ScaleReward
 
 environments = {}
 
 ## Initialise the Environments ## 
 
-def make_environment(env_name: str, render_mode = None, 
-                    discrete_config: dict = {'no_action_bins': 0,
-                                            'no_state_bins': 0 },
+def make_environment(env_name: str, render_mode = None,
+                    discrete_config: dict = None,
                     **env_kwargs) -> gym.Env:
-    """Create a new environment and return the gym environment type, Pass in the config for 
-    state/action space discretisation via the argument and any extra args like normalising actions by the agents
-    or normalising state observations is done via additional keyword arguments. 
+    """Create a new environment and return the gym environment type.
+
+    discrete_config: {'state_bins': [bins per obs dim]} wraps the env in a
+    DiscreteStateWrapper (applied last, so it bins over the clipped/normalised
+    bounds). `generative: true` adds GenerativeStateWrapper (teleport() for
+    generative-model rollouts). Normalising/clipping of actions and state
+    observations is done via additional keyword arguments.
 
     Args:
         env_name (str): name of an existing gym environment like acrobot-v2
@@ -30,6 +37,10 @@ def make_environment(env_name: str, render_mode = None,
     Returns:
         gym.env: the created environment object.
     """
+    # Reward preprocessing (applies to both the Atari and classic branches).
+    # config: reward: {scale: 0.01} — raw reward stays in info["raw_reward"].
+    reward_cfg = env_kwargs.get('reward', None) or {}
+
     # Atari envs processing
     atari_cfg = env_kwargs.get('atari', None)
     if atari_cfg:
@@ -46,6 +57,8 @@ def make_environment(env_name: str, render_mode = None,
         )
         if atari_cfg['frame_stack'] > 1:
             env = FrameStackObservation(env, stack_size=atari_cfg['frame_stack'])
+        if reward_cfg.get('scale') is not None:
+            env = ScaleReward(env, reward_cfg['scale'])
         return env
 
     env = gym.make(env_name, render_mode=render_mode)
@@ -77,6 +90,18 @@ def make_environment(env_name: str, render_mode = None,
             env = DiscreteActionWrapper(env, n_actions=discrete_config['no_action_bins'])
         if discrete_config['no_state_bins'] > 0:
             env = DiscreteStateWrapper(env, n_states=discrete_config['no_state_bins'])  
+    # Generative-model access (teleport to arbitrary states). Innermost so
+    # teleport's reset clears the TimeLimit/termination bookkeeping.
+    if env_kwargs.get('generative'):
+        env = GenerativeStateWrapper(env)
+
+    # Native-state observation for envs whose obs is a lossy encoding of the
+    # true state (e.g. Acrobot's cos/sin). Applied before clip/discretise so
+    # those bin the underlying state that teleport writes.
+    state_obs_cfg = env_kwargs.get('state_observation')
+    if state_obs_cfg:
+        env = UnderlyingStateWrapper(env, low=state_obs_cfg['low'],
+                                     high=state_obs_cfg['high'])
 
     # Normalise the Actions. MUST come before ClipAction: gymnasium's
     # ClipAction re-advertises the action space as Box(-inf, inf), and
@@ -106,6 +131,13 @@ def make_environment(env_name: str, render_mode = None,
         
     # Normalise the State Observations (fixed linear rescale to a known range;
     # see normalise.running.obs below for the running-statistics version)
+    # Normalise the Actions  
+    if len(env_kwargs['normalise']['action']) > 0:
+        env = RescaleAction(env, 
+                            min_action = env_kwargs['normalise']['action']['min'],
+                            max_action = env_kwargs['normalise']['action']['max'])
+        
+    # Normalise the State Observations
     if len(env_kwargs['normalise']['state']) > 0:
         env = RescaleObservation(env,
                             np.array(env_kwargs['normalise']['state']['min'], dtype=np.float32),
@@ -135,4 +167,12 @@ def make_environment(env_name: str, render_mode = None,
         clip_reward = running.get('clip_reward', 10.0)
         if clip_reward:
             env = ClipReward(env, -clip_reward, clip_reward)
+    # Scale Rewards
+    if reward_cfg.get('scale') is not None:
+        env = ScaleReward(env, reward_cfg['scale'])
+
+    # State discretisation service — applied last so its bin bounds are the
+    # clipped/normalised (finite) ones. Observations pass through unchanged.
+    if discrete_config is not None and discrete_config.get('state_bins'):
+        env = DiscreteStateWrapper(env, state_bins=discrete_config['state_bins'])
     return env

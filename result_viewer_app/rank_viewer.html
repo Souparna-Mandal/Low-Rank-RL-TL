@@ -164,6 +164,41 @@ details.tbl td:first-child,details.tbl th:first-child{text-align:left}
 .muted-note{color:var(--muted);font-size:12px}
 .pill-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .pill-row label{color:var(--muted);font-size:12px}
+/* compare mode */
+#cmpbtn.on{border-color:var(--accent);color:var(--accent)}
+.cmp-list{display:grid;gap:4px 18px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));margin:4px 0 6px}
+.cmp-item{display:flex;align-items:flex-start;gap:9px;font-size:13px;cursor:pointer;
+  padding:6px 8px;border-radius:8px}
+.cmp-item:hover{background:var(--surface-2)}
+.cmp-item input{accent-color:var(--accent);margin-top:3px}
+.cmp-item .nm{font-weight:560;color:var(--ink)}
+.cmp-item .meta{color:var(--muted);font-size:12px}
+.cmp-item .diff{color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums}
+.cmp-sec{display:flex;align-items:center;gap:10px;margin:14px 0 2px;border-top:1px dashed var(--border);padding-top:12px}
+.cmp-sec:first-of-type{border-top:none;margin-top:4px;padding-top:0}
+.cmp-sec h3{font-size:12.5px;font-weight:620;margin:0;color:var(--ink-2);letter-spacing:.02em}
+.cmp-sec button{font-size:11px;padding:2px 9px;border-radius:6px;color:var(--ink-2)}
+.badge{display:inline-block;font-size:10.5px;line-height:1.5;padding:0 6px;border-radius:6px;
+  border:1px solid var(--border);color:var(--muted);margin-left:6px;vertical-align:1px;font-weight:400}
+.badge.warn{color:#b58900;border-color:rgba(181,137,0,.45)}
+/* per-chart export buttons (appear on hover) */
+.chart .expbtns{position:absolute;top:-3px;right:0;display:flex;gap:4px;opacity:0;
+  transition:opacity .15s;z-index:6}
+.chart:hover .expbtns,.chart .expbtns:focus-within{opacity:1}
+.expbtns button{font-size:10.5px;padding:3px 8px;border-radius:6px;color:var(--ink-2);
+  background:var(--surface);line-height:1.3}
+/* double-click-to-rename labels */
+[data-editable]{border-radius:4px}
+[data-editable].editing{outline:1.5px dashed var(--accent);outline-offset:1px;
+  background:var(--surface-2);cursor:text;min-width:24px}
+/* config-diff table */
+.difftbl{overflow-x:auto;margin-top:8px}
+.difftbl table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;min-width:420px}
+.difftbl th,.difftbl td{border:1px solid var(--grid);padding:4px 10px;text-align:left;vertical-align:top}
+.difftbl th{background:var(--surface-2);color:var(--ink-2);font-weight:600;white-space:nowrap}
+.difftbl th .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.difftbl td:first-child{color:var(--ink-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;white-space:nowrap}
+.difftbl td.chg{font-weight:640}
 </style>
 </head>
 <body>
@@ -179,6 +214,7 @@ details.tbl td:first-child,details.tbl th:first-child{text-align:left}
         <input type="checkbox" id="livechk" checked>
         <span class="dot"></span><span id="livestat">Live</span>
       </label>
+      <button id="cmpbtn" title="Compare experiments across seeds: mean ± range, seeds overlaid, or side-by-side panels">⇄ Compare</button>
       <button id="refreshbtn" title="Refresh now">⟳</button>
       <button id="themebtn" title="Toggle light / dark">◐</button>
     </div>
@@ -197,9 +233,109 @@ const el=(t,a={},...kids)=>{const n=document.createElement(t);
 const SLOTS=["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
 const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
+// ---- persisted user labels + preferences ----
+// Any chart title, legend entry or variant name is renameable by double-click;
+// overrides live in localStorage so they survive reloads and apply to exports.
+// Keys: "t:<title>" chart titles (global), "n:<name>" series/legend names
+// (global), "g:<groupKey>" compare variants (per experiment+arm).
+const LBL_KEY="rv-labels-v1";
+let RV_LABELS={};
+try{RV_LABELS=JSON.parse(localStorage.getItem(LBL_KEY)||"{}")||{};}catch(e){RV_LABELS={};}
+function saveLabels(){try{localStorage.setItem(LBL_KEY,JSON.stringify(RV_LABELS));}catch(e){}}
+const lbl=(key,def)=>{const v=RV_LABELS[key];return typeof v==="string"&&v?v:def;};
+const dn=name=>lbl("n:"+name,name);      // display name for a series/legend entry
+// Turn a span into a rename target: double-click edits in place, Enter/blur
+// commits, Escape cancels, clearing the text restores the default.
+function makeEditable(span,storeKey,defText,opts){
+  const {onDone,onClick}=opts||{};
+  span.setAttribute("data-editable","");
+  span.title=(span.title?span.title+" · ":"")+"double-click to rename";
+  // Intercept single clicks: a click on a rename target must never trigger the
+  // row/legend action directly (the re-render would destroy the span before a
+  // double-click could land). Instead, the caller's onClick (toggle/select)
+  // fires after a short delay UNLESS a double-click arrives first — so names
+  // remain fully clickable AND renameable.
+  span.addEventListener("click",e=>{
+    e.preventDefault();e.stopPropagation();
+    if(span.isContentEditable)return;
+    if(onClick){clearTimeout(span._clickT);span._clickT=setTimeout(onClick,280);}
+  });
+  span.addEventListener("dblclick",ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    clearTimeout(span._clickT);
+    if(span.isContentEditable)return;
+    try{span.contentEditable="plaintext-only";}catch(e){span.contentEditable="true";}
+    if(span.contentEditable==="inherit")span.contentEditable="true";
+    span.classList.add("editing");
+    const orig=span.textContent;
+    span.focus();
+    const sel=getSelection(),r=document.createRange();
+    r.selectNodeContents(span);sel.removeAllRanges();sel.addRange(r);
+    let cancel=false;
+    const onKey=e=>{
+      if(e.key==="Enter"){e.preventDefault();span.blur();}
+      else if(e.key==="Escape"){e.preventDefault();cancel=true;span.blur();}
+      e.stopPropagation();
+    };
+    const onBlur=()=>{
+      span.removeEventListener("keydown",onKey);
+      span.removeEventListener("blur",onBlur);
+      span.contentEditable="false";span.classList.remove("editing");
+      if(cancel){span.textContent=orig;return;}
+      const v=span.textContent.trim();
+      if(!v||v===defText){delete RV_LABELS[storeKey];span.textContent=defText;}
+      else RV_LABELS[storeKey]=v;
+      saveLabels();
+      (onDone||rerender)();
+    };
+    span.addEventListener("keydown",onKey);
+    span.addEventListener("blur",onBlur);
+  });
+}
+// view preferences persisted across sessions (metric, axes, smoothing, ...)
+const PREF_KEY="rv-prefs-v1";
+function loadPrefs(){
+  try{return JSON.parse(localStorage.getItem(PREF_KEY)||"{}")||{};}catch(e){return {};}
+}
+function savePrefs(){
+  try{localStorage.setItem(PREF_KEY,JSON.stringify({
+    metric:STATE.metric,rwY:STATE.rwY,rwRollW:STATE.rwRollW,
+    cmpView:STATE.cmpView,cmpY:STATE.cmpY,cmpRollW:STATE.cmpRollW,
+  }));}catch(e){}
+}
+const SEL_KEY="rv-cmp-sel-v1";
+function saveCmpSel(){try{localStorage.setItem(SEL_KEY,JSON.stringify([...STATE.cmpSel]));}catch(e){}}
+function loadCmpSel(){try{return new Set(JSON.parse(localStorage.getItem(SEL_KEY)||"[]"));}catch(e){return new Set();}}
+
+// /api/runs returns {runs, manifests}; older backends returned a bare list
+function normRunsPayload(resp){
+  if(Array.isArray(resp))return {runs:resp,manifests:{}};
+  return {runs:resp&&resp.runs||[],manifests:resp&&resp.manifests||{}};
+}
+const expShort=exp=>exp.split("/").pop();
+// "20260813-175543" -> "2026-08-13 17:55"
+function fmtStamp(stamp){
+  if(!stamp)return "";
+  const m=stamp.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}$/);
+  return m?`${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`:stamp;
+}
+// compact "k=v" summary of a manifest overrides dict (an arm's config diff)
+function fmtOverride(v){
+  if(v===true)return "on";
+  if(v===false)return "off";
+  if(typeof v==="number")return String(+(+v).toPrecision(6));
+  return String(v);
+}
+function fmtOverrides(ov,max=Infinity){
+  const es=Object.entries(ov||{});
+  const shown=es.slice(0,max).map(([k,v])=>`${k}=${fmtOverride(v)}`);
+  if(es.length>max)shown.push(`+${es.length-max} more`);
+  return shown.join(" · ");
+}
+
 // curated numeric metrics shared by rank_stats.csv and hankel_sweep.csv
 const METRICS=[
-  ["eff_rank","Effective rank","singular values needed to capture 90% of the Frobenius energy — lower = more low-rank"],
+  ["eff_rank","Effective rank","singular values needed to capture 99.9% of the Frobenius energy — lower = more low-rank"],
   ["stable_rank","Stable rank","‖M‖_F² / ‖M‖_2² — how many singular values carry the energy"],
   ["spikiness","Spikiness","max entry vs RMS entry — a few dominant entries vs spread energy"],
   ["row_coherence","Row coherence","alignment of the top-r row space with the standard basis — ~1 spread, ≫1 concentrated"],
@@ -209,7 +345,7 @@ const METRICS=[
   ["nnz_rows","Non-zero rows","count of rows with non-negligible energy"],
   ["nnz_cols","Non-zero columns","count of columns with non-negligible energy"],
 ];
-const SUB_RE=/^(.+)-sub(\d{6})$/, ROLL_RE=/^(.+)-rollout(\d+)$/;
+const SUB_RE=/^(.+)-sub(\d{6})(-heatmap)?$/, ROLL_RE=/^(.+)-rollout(\d+)$/;
 
 const fmtN=x=>{if(x==null||!isFinite(x))return "–";
   const a=Math.abs(x);
@@ -224,6 +360,69 @@ const mean=vs=>vs.reduce((a,b)=>a+b,0)/vs.length;
 // 100k+-element arrays a long run produces (each element becomes an argument)
 const arrMin=(a,f)=>{let m=Infinity;for(const v of a){const x=f?f(v):v;if(x<m)m=x;}return m;};
 const arrMax=(a,f)=>{let m=-Infinity;for(const v of a){const x=f?f(v):v;if(x>m)m=x;}return m;};
+
+// ---- env-steps (samples) axis helpers ----
+// rewards rows are [episode, reward, steps|null]; steps is null on legacy runs
+// of envs where it can't be derived, or on a torn final line mid-rewrite.
+// cumSteps: Map episode -> cumulative env steps at the END of that episode, so
+// any per-episode series can be re-based onto a sample-count x-axis.
+function cumSteps(rewards){
+  if(!rewards||!rewards.length||rewards[0].length<3)return null;
+  const map=new Map(); let tot=0;
+  for(const r of rewards){
+    if(r[2]==null)break;            // torn tail — later rows have no x yet
+    tot+=r[2]; map.set(r[0],tot);
+  }
+  return map.size?map:null;
+}
+const fmtSteps=v=>Math.abs(v)>=1e6?(v/1e6).toFixed(v%1e6?1:0)+"M"
+  :Math.abs(v)>=1000?(v/1000).toFixed(v%1000?1:0)+"k":String(Math.round(v));
+// trailing moving average over [x,y] points (x kept at the window's end)
+function rollingPts(pts,w){
+  if(w<=1||pts.length<w)return pts.slice();
+  const out=[]; let acc=0;
+  for(let i=0;i<pts.length;i++){
+    acc+=pts[i][1];
+    if(i>=w)acc-=pts[i-w][1];
+    if(i>=w-1)out.push([pts[i][0],acc/w]);
+  }
+  return out;
+}
+// running total of y over [x,y] points — cumulative-reward curves
+function cumulativePts(pts){
+  let tot=0; return pts.map(p=>[p[0],tot+=p[1]]);
+}
+// Seed aggregation for x-axes that don't align across runs (env steps): sample
+// every curve onto a shared grid by linear interpolation, then aggregate the
+// seeds whose own span covers each grid point — an early-stopped seed drops
+// out of the mean instead of being extrapolated. band = min–max across seeds.
+function gridAgg(perSeed,n=400){
+  const curves=perSeed.filter(c=>c&&c.length)
+    .map(c=>[...c].sort((a,b)=>a[0]-b[0]));
+  if(!curves.length)return {pts:[],band:[]};
+  const lo=arrMin(curves,c=>c[0][0]), hi=arrMax(curves,c=>c[c.length-1][0]);
+  if(!(hi>lo))return seedAgg(curves);
+  // uniform grid, plus each single-point curve's exact x — a singleton only
+  // matches its own x, so it must be a grid point to contribute at all
+  const gxs=new Set();
+  for(let i=0;i<n;i++)gxs.add(lo+(hi-lo)*i/(n-1));
+  for(const c of curves)if(c.length===1)gxs.add(c[0][0]);
+  const pts=[],band=[];
+  for(const x of [...gxs].sort((a,b)=>a-b)){
+    const vals=[];
+    for(const c of curves){
+      if(x<c[0][0]-1e-9||x>c[c.length-1][0]+1e-9)continue;
+      let a=0,b=c.length-1;               // binary search for x's segment
+      while(b-a>1){const mid=(a+b)>>1;(c[mid][0]<=x)?a=mid:b=mid;}
+      const [x0,y0]=c[a],[x1,y1]=c[b];
+      vals.push(x1===x0?y0:y0+(y1-y0)*(x-x0)/(x1-x0));
+    }
+    if(!vals.length)continue;
+    pts.push([x,mean(vals)]);
+    band.push([x,arrMin(vals),arrMax(vals)]);
+  }
+  return {pts,band};
+}
 
 // sequential ramp (single hue): early = light/recessive, late = dark/prominent
 function seqColor(t){
@@ -243,14 +442,69 @@ function seqColor(t){
     const next=cur==="dark"?"light":"dark";
     document.documentElement.dataset.theme=next;
     localStorage.setItem("rv-theme",next);
-    if(STATE.data)rerender();
+    if(STATE.data||STATE.compare)rerender();
   };
 })();
 
-const STATE={runs:[],runsKey:"",cur:null,data:null,colors:{},hidden:new Set(),
+const STATE={runs:[],runsKey:"",manifests:{},cur:null,data:null,colors:{},hidden:new Set(),
   ep:null,tauIdx:null,playing:null,live:true,followLast:false,dragging:false,
   sig:null,pending:null,metric:"eff_rank",sweepRows:null,trajEp:undefined,trajCache:{},
-  persistEp:null};
+  persistEp:null,
+  // autoregressive value-recurrence panel selections
+  arCoeffSplit:null,arRolloutEp:undefined,arRolloutSplit:null,
+  arRolloutSubset:null,arRolloutCache:{},arRolloutHorizon:null,
+  arHorizonEp:null,arHorizonSplit:null,
+  // learning-curve axis/mode selections (single-run reward card)
+  rwX:null,rwY:"ret",rwRollW:50,
+  // compare mode: overlay experiments averaged across seeds. cmpHidden holds
+  // group KEYS (stable under renames), selection persists across reloads.
+  compare:false,cmpSel:loadCmpSel(),cmpCache:{},cmpHidden:new Set(),
+  cmpStatus:null,cmpStatsMatrix:null,cmpSweepMatrix:null,
+  // compare axis/view selections: x = episodes|env steps, view = how seeds
+  // are drawn (mean ± range, all seeds overlaid, side-by-side panels)
+  cmpX:null,cmpY:"ret",cmpRollW:50,cmpView:"mean"};
+// restore persisted view preferences (unknown/invalid values are ignored)
+(function(){
+  const p=loadPrefs();
+  if(METRICS.some(m=>m[0]===p.metric))STATE.metric=p.metric;
+  if(["ret","cum"].includes(p.rwY))STATE.rwY=p.rwY;
+  if([1,10,25,50,100].includes(p.rwRollW))STATE.rwRollW=p.rwRollW;
+  if(["mean","overlay","side"].includes(p.cmpView))STATE.cmpView=p.cmpView;
+  if(["ret","cum"].includes(p.cmpY))STATE.cmpY=p.cmpY;
+  if([1,10,25,50,100].includes(p.cmpRollW))STATE.cmpRollW=p.cmpRollW;
+})();
+
+// Fetch JSON with a stall watchdog: over an SSH/VSCode tunnel a dropped link
+// leaves fetch() pending forever with no error, so the page sat on "Loading..."
+// indefinitely. Abort if no bytes arrive for STALL_MS and surface the failure;
+// onProgress receives the decompressed byte count as chunks stream in.
+const STALL_MS=25000;
+async function fetchJSON(url,onProgress){
+  const ctl=new AbortController();
+  let watchdog=null;
+  const arm=()=>{clearTimeout(watchdog);
+    watchdog=setTimeout(()=>ctl.abort(
+      new Error(`no data for ${STALL_MS/1000}s — connection or tunnel stalled`)),STALL_MS);};
+  arm();
+  try{
+    const resp=await fetch(url,{signal:ctl.signal});
+    if(!resp.ok)throw new Error(`server returned ${resp.status}`);
+    arm();
+    if(!resp.body)return await resp.json();
+    const reader=resp.body.getReader();
+    const chunks=[];let got=0;
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      arm();
+      chunks.push(value);got+=value.length;
+      if(onProgress)onProgress(got);
+    }
+    const buf=new Uint8Array(got);
+    let off=0;for(const c of chunks){buf.set(c,off);off+=c.length;}
+    return JSON.parse(new TextDecoder().decode(buf));
+  }finally{clearTimeout(watchdog);}
+}
 
 function computeSig(d){
   if(!d)return "";
@@ -292,33 +546,105 @@ function parseSweep(d){
   }
   return rows.length?rows:null;
 }
+// ordering shared by the run selector and compare list: baseline first (the
+// reference), then exp<N> DESCENDING (latest experiment number on top), then
+// the legacy "fhr"/other named arms, then unmanaged runs
+function armOrder(arm){
+  if(arm==="baseline")return [0,0,""];
+  const m=/^exp(\d+)$/.exec(arm||"");
+  if(m)return [1,-(+m[1]),""];
+  if(arm)return [2,0,arm];
+  return [3,0,""];
+}
+function cmpArr(a,b){
+  for(let i=0;i<Math.max(a.length,b.length);i++){
+    const x=a[i]??0,y=b[i]??0;
+    if(x<y)return -1; if(x>y)return 1;
+  }
+  return 0;
+}
+const runStamp=run=>(run.match(/_(\d{8}-\d{6})$/)||[])[1]||null;
+function runOptionText(r,currentFamily){
+  if(r.arm!=null){
+    const st=runStamp(r.run);
+    // family tag only for runs OUTSIDE the exp's current (latest) family
+    const tagFam=r.family&&currentFamily&&r.family!==currentFamily;
+    return `${r.arm} · seed ${r.seed}`
+      +(tagFam?` [${famShort(r.family)}]`:"")
+      +(st?` · ${fmtStamp(st)}`:"");
+  }
+  return r.run+(r.tracked===false?"  (not in manifest)":"");
+}
+// change key over the run list INCLUDING the manifest annotations: a launcher
+// records a finished run without creating any new dir, so tracking arm/seed
+// flips while the name set stays identical — the key must still change
+const runsKeyOf=runs=>runs.map(r=>r.exp+"/"+r.run
+  +"@"+(r.arm||"")+"."+(r.family||"")+"."+(r.tracked===false?0:1)).join(",");
 function updateRunOptions(runs){
-  STATE.runs=runs; STATE.runsKey=runs.map(r=>r.exp+"/"+r.run).join(",");
+  STATE.runs=runs; STATE.runsKey=runsKeyOf(runs);
   const sel=$("#runsel"), cur=sel.value;
   sel.disabled=!runs.length; sel.innerHTML="";
   if(!runs.length){sel.append(el("option",{text:"(no runs)"}));return;}
+  // most recently updated family per exp — its options need no family tag
+  const curFam={};
+  for(const r of runs)if(r.family){
+    const b=curFam[r.exp];
+    if(!b||(r.mtime||0)>b.m)curFam[r.exp]={f:r.family,m:r.mtime||0};
+  }
+  const byExp=new Map();          // insertion order = most recent exp first
   for(const r of runs){
-    const o=el("option",{value:r.exp+" "+r.run});
-    o.textContent=r.exp+"  ·  "+r.run;
-    sel.append(o);
+    if(!byExp.has(r.exp))byExp.set(r.exp,[]);
+    byExp.get(r.exp).push(r);
+  }
+  for(const [exp,rs] of byExp){
+    rs.sort((a,b)=>cmpArr(armOrder(a.arm),armOrder(b.arm))
+      ||((+a.seed||0)-(+b.seed||0))||((b.mtime||0)-(a.mtime||0)));
+    const og=el("optgroup",{label:exp});
+    for(const r of rs){
+      const o=el("option",{value:r.exp+" "+r.run});
+      o.textContent=runOptionText(r,(curFam[exp]||{}).f);
+      og.append(o);
+    }
+    sel.append(og);
   }
   if([...sel.options].some(o=>o.value===cur))sel.value=cur;
 }
+let TICKING=false;
 async function tick(force){
   if(!STATE.live&&!force)return;
+  // don't yank the DOM out from under an in-progress double-click rename —
+  // removing a focused contenteditable never fires blur, so the edit would
+  // be silently lost
+  if(!force&&document.activeElement&&document.activeElement.isContentEditable)return;
+  // Single-flight: a slow tunnel makes the full-payload fetch outlive the 4s
+  // poll interval, and overlapping multi-MB downloads starve each other until
+  // none ever finishes. Never start a poll while a load or poll is in flight.
+  if(TICKING||STATE.loading)return;
+  TICKING=true;
   try{
-    const runs=await (await fetch("/api/runs")).json();
-    if(runs.map(r=>r.exp+"/"+r.run).join(",")!==STATE.runsKey)updateRunOptions(runs);
+    const {runs,manifests}=normRunsPayload(await fetchJSON("/api/runs"));
+    STATE.manifests=manifests;
+    const changed=runsKeyOf(runs)!==STATE.runsKey;
+    if(changed)updateRunOptions(runs);
+    if(STATE.compare){
+      // compare live-refresh: a brand-new run in a selected group pulls its
+      // summary in; an already-loaded summary refetches when its sig changes.
+      // Re-check STATE.compare after every await — the user may have exited
+      // compare mid-flight, and painting the compare view then would leave a
+      // zombie UI over the single-run page.
+      if(changed)await cmpLoad();
+      else if((await cmpRefreshChanged())&&STATE.compare)renderCompare();
+      setLiveUI(true);setUpdated();return;
+    }
     if(!STATE.cur){if(runs.length)await loadRun(runs[0].exp,runs[0].run);setLiveUI(true);return;}
     const {exp,run}=STATE.cur;
     // Cheap change probe first — the full payload is tens of MB on long runs,
     // so only re-download it when the run's artifacts actually changed.
-    const sigResp=await fetch(`/api/sig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
-    if(sigResp.ok){
-      const {sig}=await sigResp.json();
+    try{
+      const {sig}=await fetchJSON(`/api/sig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
       if(sig===STATE.sig){setLiveUI(true);setUpdated();return;}
-    }
-    const data=await (await fetch(`/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`)).json();
+    }catch(e){/* no /api/sig on older backends — fall through to the full fetch */}
+    const data=await fetchJSON(`/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
     const sig=computeSig(data);
     if(sig!==STATE.sig){
       if(STATE.dragging||STATE.playing)STATE.pending=data;
@@ -326,6 +652,7 @@ async function tick(force){
     }
     setLiveUI(true);
   }catch(e){setLiveUI(false);}
+  finally{TICKING=false;}
 }
 function applyData(data){
   STATE.data=data; STATE.sig=computeSig(data);
@@ -346,11 +673,44 @@ function setUpdated(){
 }
 
 async function boot(){
-  $("#runsel").onchange=e=>loadRun(...e.target.value.split(" "));
-  $("#refreshbtn").onclick=()=>tick(true);
+  $("#runsel").onchange=e=>{exitCompare();loadRun(...e.target.value.split(" "));};
+  $("#refreshbtn").onclick=()=>{
+    if(STATE.compare){STATE.cmpCache={};cmpLoad();}
+    else tick(true);
+  };
+  $("#cmpbtn").onclick=()=>{
+    STATE.compare=!STATE.compare;
+    $("#cmpbtn").classList.toggle("on",STATE.compare);
+    if(STATE.compare){
+      stopPlay();
+      // sensible default: start from the group of the run being viewed
+      if(STATE.cur&&!STATE.cmpSel.size){
+        const g=runGroups().find(g=>g.runs.some(
+          r=>r.exp===STATE.cur.exp&&r.run===STATE.cur.run));
+        if(g){STATE.cmpSel.add(g.key);saveCmpSel();}
+      }
+      cmpLoad();
+    }else if(STATE.data)render();
+    else if(STATE.cur)loadRun(STATE.cur.exp,STATE.cur.run);
+    else $("#app").innerHTML="";
+  };
   $("#livechk").onchange=e=>{STATE.live=e.target.checked;setLiveUI();if(STATE.live)tick(true);};
   setLiveUI();
-  const runs=await (await fetch("/api/runs")).json();
+  let runs;
+  try{
+    const payload=normRunsPayload(await fetchJSON("/api/runs"));
+    runs=payload.runs;
+    STATE.manifests=payload.manifests;
+  }catch(e){
+    const app=$("#app"); app.innerHTML="";
+    const retry=el("button",{text:"Retry"});
+    retry.onclick=()=>boot();
+    app.append(el("div",{class:"empty"},
+      el("div",{text:`Can't reach the viewer server: ${e.message||e}`}),
+      el("div",{style:"margin-top:12px"},retry)));
+    setLiveUI(false);
+    return;
+  }
   updateRunOptions(runs);
   if(!runs.length){
     $("#app").innerHTML="";
@@ -366,30 +726,41 @@ async function boot(){
   setInterval(tick,4000);
 }
 
+let LOADSEQ=0;
 async function loadRun(exp,run){
+  const seq=++LOADSEQ;  // a newer loadRun (run switch) makes this one stale
   STATE.cur={exp,run};
   STATE.hidden=new Set(); STATE.ep=null; STATE.tauIdx=null; STATE.followLast=false;
   STATE.pending=null; STATE.trajEp=undefined; STATE.trajCache={}; STATE.persistEp=null;
+  STATE.rwX=null;   // re-pick the learning-curve x-axis for the new run
+  STATE.loading=true;
   stopPlay();
-  $("#app").innerHTML='<div class="empty">Loading... (long runs can be a few MB over a tunnel)</div>';
+  $("#app").innerHTML='<div class="empty" id="loadmsg">Loading... (long runs can be a few MB over a tunnel)</div>';
   try{
-    const resp=await fetch(`/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`);
-    if(!resp.ok)throw new Error(`server returned ${resp.status}`);
-    const data=await resp.json();
+    const data=await fetchJSON(
+      `/api/run/${encodeURIComponent(exp)}/${encodeURIComponent(run)}`,
+      got=>{if(seq!==LOADSEQ)return;
+        const m=$("#loadmsg");
+        if(m)m.textContent=`Loading... ${(got/1e6).toFixed(1)} MB received`;});
+    if(seq!==LOADSEQ)return;  // user switched runs while this one downloaded
     STATE.data=data; STATE.sig=computeSig(data);
     STATE.sweepRows=parseSweep(data);
     assignColors(data);
     render();
     setUpdated();
   }catch(e){
+    if(seq!==LOADSEQ)return;  // superseded — don't paint a stale error
     const app=$("#app"); app.innerHTML="";
     const retry=el("button",{text:"Retry"});
     retry.onclick=()=>loadRun(exp,run);
     app.append(el("div",{class:"empty"},
       el("div",{text:`Failed to load ${exp}/${run}: ${e.message||e}`}),
+      el("div",{class:"muted-note",style:"margin-top:8px",
+        text:"If this keeps happening over SSH/VSCode port forwarding, the tunnel "
+          +"may have dropped — reconnect it (or reload the page), then retry."}),
       el("div",{style:"margin-top:12px"},retry)));
     setLiveUI(false);
-  }
+  }finally{if(seq===LOADSEQ)STATE.loading=false;}
 }
 
 // ---- data helpers ----
@@ -470,7 +841,7 @@ function splitFigSlugs(){
   const subs={},main=[];
   for(const slug of Object.keys(STATE.data.figures)){
     const m=SUB_RE.exec(slug);
-    if(m)(subs[m[1]]=subs[m[1]]||[]).push({len:+m[2],slug});
+    if(m)(subs[m[1]]=subs[m[1]]||[]).push({len:+m[2],slug,heat:!!m[3]});
     else main.push(slug);
   }
   for(const b in subs)subs[b].sort((a,c)=>a.len-c.len);
@@ -495,14 +866,20 @@ function openLightbox(src,label){
     const close=el("button",{class:"lb-close",title:"Close (Esc)","aria-label":"Close"},"×");
     const img=el("img",{class:"lb-img",id:"lb-img",alt:""});
     const cap=el("div",{class:"lb-cap",id:"lb-cap"});
-    lb.append(close,el("div",{class:"lb-inner"},img,cap));
+    const dl=el("a",{class:"btn",id:"lb-dl",text:"⬇ Download PNG",
+      style:"color:#f2f2f0;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);text-decoration:none"});
+    dl.onclick=e=>e.stopPropagation();
+    lb.append(close,el("div",{class:"lb-inner"},img,cap,dl));
     document.body.append(lb);
     const hide=()=>lb.classList.remove("show");
-    lb.onclick=e=>{if(e.target!==$("#lb-img"))hide();};
+    lb.onclick=e=>{if(e.target!==$("#lb-img")&&e.target!==$("#lb-dl"))hide();};
     document.addEventListener("keydown",e=>{if(e.key==="Escape")hide();});
   }
   $("#lb-img").src=src; $("#lb-img").alt=label||"";
   $("#lb-cap").textContent=label||"";
+  const dl=$("#lb-dl");
+  dl.href=src;
+  dl.setAttribute("download",slugify(label||"figure")+".png");
   lb.classList.add("show");
 }
 // attach a click-to-enlarge handler + zoom badge to a figure panel
@@ -514,7 +891,8 @@ function makeZoomable(panel,img,label){
 
 // ================= RENDER =================
 function render(){
-  CHARTS.length=0; EP_HOOKS.length=0;
+  if(STATE.compare){renderCompare();return;}
+  resetChartRegistries();
   const app=$("#app"); app.innerHTML="";
   const d=STATE.data;
 
@@ -534,6 +912,27 @@ function render(){
   if((d.trajectories||[]).length) app.append(tracesCard());
 
   if(d.stats) app.append(metricsCard());
+  // Autoregressive value-recurrence probe panels (absent unless the run
+  // enabled analysis.autoregressive_value_probe). Each is built inside its own
+  // try/catch: render() has already cleared #app, so an exception escaping here
+  // would leave the whole viewer blank with no clue why. A broken panel should
+  // cost you that panel, not the page.
+  for(const build of [trainDiagnosticsCard,
+                      autoregressivePredictionErrorCard,
+                      autoregressiveHorizonCard,
+                      autoregressiveCoefficientCard,
+                      autoregressiveRolloutCard]){
+    try{
+      const cardEl=build();
+      if(cardEl) app.append(cardEl);
+    }catch(err){
+      console.error(`${build.name} failed`,err);
+      app.append(el("div",{class:"card"},
+        el("h2",{text:"Panel failed to render"}),
+        el("p",{class:"desc",text:`${build.name} threw: ${err&&err.message||err}. `
+          +`The rest of the page is unaffected; see the browser console for the stack.`})));
+    }
+  }
   if(d.rewards&&d.rewards.length) app.append(rewardCard());
 
   if(d.config){
@@ -541,17 +940,33 @@ function render(){
     det.append(el("pre",{text:d.config}));
     app.append(el("div",{class:"card"},det));
   }
-  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config)
+  if(!d.stats&&!STATE.sweepRows&&!d.rewards&&!eps.length&&!d.config
+     &&!(d.train_diagnostics&&d.train_diagnostics.rows.length))
     app.append(el("div",{class:"empty"},"This run has no artifacts yet."));
 }
 
 function tiles(){
   const d=STATE.data, box=el("div",{class:"tiles"});
+  // manifest identity of the run being viewed: arm, seed and its config diff
+  const cur=STATE.cur&&STATE.runs.find(r=>r.exp===STATE.cur.exp&&r.run===STATE.cur.run);
+  if(cur&&cur.arm!=null){
+    const fam=(((STATE.manifests[cur.exp]||{}).families||{})[cur.family])||{};
+    const ov=(fam.overrides||{})[cur.arm];
+    box.append(tile("Variant",cur.arm,"seed "+cur.seed
+      +(ov&&Object.keys(ov).length&&cur.arm!=="baseline"
+        ?" · "+fmtOverrides(ov,2):"")));
+  }else if(cur&&cur.tracked===false){
+    box.append(tile("Variant","not in manifest",
+      "still training, superseded, or from another launcher"));
+  }
   const rw=d.rewards||[];
   if(rw.length){
     const best=arrMax(rw,r=>r[1]), last=rw[rw.length-1][1];
     box.append(tile("Best reward",fmtN(best),`over ${rw.length.toLocaleString()} episodes`,true));
     box.append(tile("Final reward",fmtN(last),`episode ${rw[rw.length-1][0].toLocaleString()}`));
+    const cs=cumSteps(rw);
+    if(cs)box.append(tile("Env steps",fmtSteps([...cs.values()].pop()),
+      d.steps_source==="derived"?"derived from |reward|":"samples collected"));
   }
   if(STATE.sweepRows){
     const rows=STATE.sweepRows;
@@ -582,9 +997,13 @@ function legendBar(names){
   for(const n of names){
     const item=el("span",{class:"item"+(STATE.hidden.has(n)?" off":"")});
     item.style.color=cssv(STATE.colors[n]);
-    item.append(el("span",{class:"key"}),el("span",{class:"nm",text:n}));
-    item.querySelector(".nm").style.color="var(--ink-2)";
-    item.onclick=()=>{STATE.hidden.has(n)?STATE.hidden.delete(n):STATE.hidden.add(n);rerender();};
+    const toggle=()=>{STATE.hidden.has(n)?STATE.hidden.delete(n):STATE.hidden.add(n);rerender();};
+    const nm=el("span",{class:"nm",text:dn(n)});
+    nm.style.color="var(--ink-2)";
+    // single click (incl. on the name) toggles; double-click renames globally
+    makeEditable(nm,"n:"+n,n,{onClick:toggle});
+    item.append(el("span",{class:"key"}),nm);
+    item.onclick=toggle;
     bar.append(item);
   }
   return bar;
@@ -594,7 +1013,7 @@ function metricSelect(){
   for(const [k,label] of METRICS)
     sel.append(el("option",{value:k,text:label}));
   sel.value=STATE.metric;
-  sel.onchange=()=>{STATE.metric=sel.value;rerender();};
+  sel.onchange=()=>{STATE.metric=sel.value;savePrefs();rerender();};
   return el("div",{class:"pill-row"},el("label",{text:"Metric"}),sel);
 }
 
@@ -718,23 +1137,29 @@ function subSpectraSection(subs,ep){
       el("small",{text:`   ${STATE.tauIdx+1} / ${taus.length}`}));
     host.innerHTML="";
     const wrap=el("div",{class:"figs"});
-    for(const b of bases){
-      const entry=subs[b].find(s=>s.len===L&&STATE.data.figures[s.slug].episodes.includes(ep));
-      const name=pretty(b);
-      const panel=el("div",{class:"fig"});
-      const cap=el("div",{class:"cap"});
+    const panel=(name,cap,entry,noneText)=>{
+      const p=el("div",{class:"fig"});
+      const head=el("div",{class:"cap"});
       const dot=el("span",{class:"dot"}); dot.style.background=cssv(STATE.colors[name]||"--accent");
-      cap.append(dot,el("span",{text:`${name} · 0→${L}`}));
-      panel.append(cap);
+      head.append(dot,el("span",{text:cap}));
+      p.append(head);
       if(entry){
-        const img=el("img",{loading:"lazy",alt:`${name} spectrum at τ=${L}`,
+        const img=el("img",{loading:"lazy",alt:cap,
           src:`/fig/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(`ep${pad6(ep)}_${entry.slug}.png`)}`});
-        panel.append(img);
-        makeZoomable(panel,img,`${name} · 0→${L} · episode ${ep.toLocaleString()}`);
+        p.append(img);
+        makeZoomable(p,img,`${cap} · episode ${ep.toLocaleString()}`);
       }else{
-        panel.append(el("div",{class:"none",text:"no figure at this τ"}));
+        p.append(el("div",{class:"none",text:noneText}));
       }
-      wrap.append(panel);
+      return p;
+    };
+    for(const b of bases){
+      const name=pretty(b);
+      const at=heat=>subs[b].find(s=>s.len===L&&!!s.heat===heat
+        &&STATE.data.figures[s.slug].episodes.includes(ep));
+      wrap.append(panel(name,`${name} · 0→${L}`,at(false),"no figure at this τ"));
+      if(subs[b].some(s=>s.heat))
+        wrap.append(panel(name,`${name} · heatmap · 0→${L}`,at(true),"no heatmap at this τ"));
     }
     host.append(wrap);
   }
@@ -929,34 +1354,1396 @@ function metricsCard(){
   return card;
 }
 function rewardCard(){
+  const d=STATE.data;
+  const cs=cumSteps(d.rewards), src=d.steps_source;
+  if(STATE.rwX==null)STATE.rwX=cs?"steps":"ep";     // default to samples axis
+  if(STATE.rwX==="steps"&&!cs)STATE.rwX="ep";
+  const onSteps=STATE.rwX==="steps";
+
   const card=el("div",{class:"card"});
-  card.append(el("h2",{text:"Episode reward"}),
-    el("p",{class:"desc",text:"Training reward per episode."}));
-  const series=[{name:"reward",color:"--accent",pts:STATE.data.rewards.map(r=>[r[0],r[1]])}];
-  card.append(lineChart({title:"Reward",hint:"",series,wide:true,noEndLabel:true,
-    episodeAxis:true,xLabel:"episode"}));
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Learning curve"}),
+    el("p",{class:"desc",text:"Training reward against "
+      +(onSteps?"environment steps — the sample-count axis learning curves are "
+        +"reported on in the literature":"training episodes")
+      +(onSteps&&src==="derived"
+        ?". Steps are derived from |reward| (±1-reward-per-step env; this run "
+         +"predates the steps column)":"")+"."})),
+    rewardControls(cs));
+  card.append(head);
+
+  // base [x, episode return] points in the chosen x
+  const base=[];
+  for(const r of d.rewards){
+    const x=onSteps?cs.get(r[0]):r[0];
+    if(x==null)continue;
+    base.push([x,r[1]]);
+  }
+  const acc="--accent";
+  const series=[];
+  if(STATE.rwY==="cum"){
+    series.push({name:"cumulative reward",color:acc,pts:cumulativePts(base)});
+  }else{
+    const smooth=STATE.rwRollW>1&&base.length>=STATE.rwRollW;
+    series.push({name:"return",color:acc,pts:base,
+      opacity:smooth?.3:1,width:smooth?1.4:2,hover:!smooth});
+    if(smooth)series.push({name:`rolling-${STATE.rwRollW} return`,color:acc,
+      pts:rollingPts(base,STATE.rwRollW)});
+  }
+  card.append(lineChart({series,wide:true,noEndLabel:true,
+    episodeAxis:!onSteps,
+    epToX:onSteps?(ep=>cs.get(ep)):undefined,
+    yLabel:STATE.rwY==="cum"?"cumulative reward":"episode return",
+    xLabel:onSteps?"env steps (samples)":"episode",
+    xPrefix:onSteps?"step ":undefined}));
+  return card;
+}
+// x-axis / y-mode / smoothing pickers for the learning curve
+function rewardControls(cs){
+  const xSel=el("select",{"aria-label":"X axis"});
+  xSel.append(el("option",{value:"ep",text:"x: episodes"}));
+  const stepOpt=el("option",{value:"steps",text:"x: env steps (samples)"});
+  if(!cs)stepOpt.disabled=true;
+  xSel.append(stepOpt);
+  xSel.value=STATE.rwX;
+  xSel.onchange=()=>{STATE.rwX=xSel.value;rerender();};
+
+  const ySel=el("select",{"aria-label":"Y mode"});
+  for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
+    ySel.append(el("option",{value:v,text:t}));
+  ySel.value=STATE.rwY;
+  ySel.onchange=()=>{STATE.rwY=ySel.value;savePrefs();rerender();};
+
+  const sSel=el("select",{"aria-label":"Smoothing"});
+  for(const w of [1,10,25,50,100])
+    sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
+  sSel.value=String(STATE.rwRollW);
+  sSel.disabled=STATE.rwY==="cum";
+  sSel.onchange=()=>{STATE.rwRollW=+sSel.value;savePrefs();rerender();};
+
+  return el("div",{class:"pill-row"},xSel,ySel,sSel);
+}
+
+// ================= TRAINING DIAGNOSTICS (train_diagnostics.csv) =================
+// One small-multiple chart per numeric diagnostic column agent.train() returns:
+// loss terms, the penalty schedule, and — for recurrence-regularised agents —
+// the learned AR coefficients. Column set is whatever the agent logs, so the
+// card adapts to any agent's diagnostics dict.
+const DIAG_HINTS={
+  td_loss:"Huber TD loss, averaged over the train() call's gradient steps",
+  penalty_raw:"unweighted regulariser value (Hankel tail / recurrence residual)",
+  penalty_weighted:"lambda_eff × penalty_raw — the term actually added to the loss",
+  lambda_eff:"effective penalty weight after warm-up gating",
+  residual_rms:"RMS of the recurrence residual over retained samples",
+  b_h:"samples in the batch with enough same-episode predecessors",
+  unique_eps:"distinct episodes contributing penalty samples per batch",
+  sum_c:"sum of the AR coefficients — 1 at the constant-reward Bellman recurrence",
+  companion_radius:"spectral radius of the AR companion matrix — ~1/gamma is the healthy reference",
+  gate_frac:"fraction of penalty windows dropped as off-manifold",
+  converged_frac:"fraction of penalty windows already below the convergence tail",
+  ext_gate_frac:"fraction of windows dropped by the external keep-mask",
+  batch_eff_rank:"mean effective rank of the penalty windows' Hankel batch",
+  rampdown_scale:"automatic lambda ramp-down multiplier — 1 until triggered, then linear to 0 over rampdown_episodes",
+  rampdown_penalty_bar:"residual bar an episode must reach to count as high for the ramp-down trigger (absolute, or NN% of the top-k residual mean)",
+  rel_tail:"mean relative singular-value tail energy of the penalty windows",
+  nan_skips:"cumulative optimiser steps skipped on non-finite loss/grad",
+};
+const DIAG_ORDER=["td_loss","penalty_raw","penalty_weighted","lambda_eff",
+  "residual_rms","b_h","unique_eps","sum_c","companion_radius"];
+function trainDiagnosticsCard(){
+  const t=STATE.data&&STATE.data.train_diagnostics;
+  if(!t||!t.rows||!t.rows.length)return null;
+  const ei=t.columns.indexOf("episode"); if(ei<0)return null;
+  const cols=t.columns.filter(c=>c!=="episode").sort((a,b)=>{
+    const ia=DIAG_ORDER.indexOf(a),ib=DIAG_ORDER.indexOf(b);
+    return (ia<0?DIAG_ORDER.length:ia)-(ib<0?DIAG_ORDER.length:ib)||a.localeCompare(b);
+  });
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Training diagnostics"}),
+    el("p",{class:"desc",text:"Per-train() diagnostics returned by the agent "
+      +"(train_diagnostics.csv): loss terms, the penalty schedule and, for "
+      +"recurrence-regularised agents, the learned AR coefficients. Values are "
+      +"averaged per episode when an episode logs several train() calls."}));
+  const grid=el("div",{class:"grid-charts"});
+  for(const col of cols){
+    const ci=t.columns.indexOf(col);
+    const acc={};
+    for(const row of t.rows){
+      const x=+row[ei],y=parseFloat(row[ci]);
+      if(!isFinite(x)||!isFinite(y))continue;
+      (acc[x]=acc[x]||[]).push(y);
+    }
+    const pts=Object.keys(acc).map(Number).sort((a,b)=>a-b).map(e=>[e,mean(acc[e])]);
+    if(!pts.length)continue;
+    grid.append(lineChart({title:col,hint:DIAG_HINTS[col]||"",
+      series:[{name:col,color:"--accent",pts}],noEndLabel:true,
+      episodeAxis:true,xLabel:"episode"}));
+  }
+  card.append(grid);
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/train_diagnostics.csv`,
+      download:"train_diagnostics.csv",text:"train_diagnostics.csv"})));
+  return card;
+}
+
+// ============ AUTOREGRESSIVE VALUE-RECURRENCE PROBE ============
+// Reads autoregressive_value_metrics.csv, autoregressive_value_coefficients.csv
+// and autoregressive_rollouts/epNNNNNN.npz. Each recurrence order gets a fixed
+// colour so the same order is the same colour in every chart on the page.
+const AR_SPLIT_LABELS={
+  held_out_trajectory_split:"Held-out trajectories",
+  prefix_suffix_split:"Prefix / suffix within trajectory"};
+const AR_SPLIT_HINTS={
+  held_out_trajectory_split:"fitted on some trajectories, scored on trajectories from the same frozen policy that it never saw",
+  prefix_suffix_split:"fitted on the first half of every trajectory, scored on forecasting the second half"};
+
+function arTable(which){
+  const t=STATE.data&&STATE.data[which];
+  if(!t||!t.rows||!t.rows.length)return null;
+  const index={}; t.columns.forEach((c,i)=>index[c]=i);
+  return {index,rows:t.rows};
+}
+function arOrders(){
+  const t=arTable("autoregressive_metrics"); if(!t)return [];
+  return [...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+}
+function arOrderColour(){
+  const map={}; arOrders().forEach((o,i)=>map[o]=SLOTS[i%SLOTS.length]);
+  return map;
+}
+
+function autoregressivePredictionErrorCard(){
+  const t=arTable("autoregressive_metrics"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Value predictability over training"}),
+    el("p",{class:"desc",text:"How well one global linear recurrence, fitted per checkpoint, predicts the value signal of the frozen greedy policy one step ahead. The error is 1 − R², the fraction of the signal's variance the prediction leaves unexplained: 0 is perfect, 1 is no better than predicting the signal's own mean. One line per recurrence order. Errors at longer forecast windows are in the card below, one curve point per window."}));
+  const colour=arOrderColour();
+  const orders=arOrders();
+  const legend=el("div",{class:"legend"});
+  for(const o of orders){
+    const item=el("span",{class:"item fixed"});
+    item.style.color=cssv(colour[o]);
+    item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"order "+o}));
+    item.querySelector(".nm").style.color="var(--ink-2)";
+    legend.append(item);
+  }
+  card.append(legend);
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  for(const split of splits){
+    card.append(el("h3",{class:"ct",text:AR_SPLIT_LABELS[split]||split}));
+    card.append(el("p",{class:"ch",text:AR_SPLIT_HINTS[split]||""}));
+    const grid=el("div",{class:"grid-charts"});
+    for(const subset of ["training","test"]){
+      for(const [column,label,hint] of [
+        ["one_minus_r_squared_one_step_ahead","One step ahead — "+subset,
+         "each prediction made from the true previous values, so errors never accumulate"]]){
+        const series=orders.map(o=>({
+          name:"order "+o, color:colour[o],
+          pts:t.rows.filter(r=>+r[t.index.order]===o
+                              && r[t.index.split]===split
+                              && r[t.index.subset]===subset)
+                    .map(r=>[+r[t.index.episode],+r[t.index[column]]])
+                    .filter(p=>Number.isFinite(p[1]))
+                    .sort((a,b)=>a[0]-b[0]),
+          endLabel:false}));
+        if(series.every(s=>!s.pts.length))continue;
+        grid.append(lineChart({title:label,hint,series,episodeAxis:true,
+          xLabel:"episode"}));
+      }
+    }
+    card.append(grid);
+  }
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_metrics.csv`,
+      download:"autoregressive_value_metrics.csv",text:"autoregressive_value_metrics.csv"})));
+  return card;
+}
+
+function autoregressiveHorizonCard(){
+  const t=arTable("autoregressive_horizons"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"How far ahead can the recurrence see?"}),
+    el("p",{class:"desc",text:"At forecast horizon τ the recurrence predicts τ steps from the true history, is then re-anchored on the values that actually occurred, and predicts the next τ — which is how such a model would really be used. The endpoints are the other two regimes: τ = 1 is exactly one step ahead, and a τ longer than the trajectory is exactly free running. A curve that rises then flattens has saturated, meaning the recurrence has decayed to predicting the signal's mean; a curve that keeps climbing steeply is an unstable fit."}));
+
+  const episodes=[...new Set(t.rows.map(r=>+r[t.index.episode]))].sort((a,b)=>a-b);
+  if(STATE.arHorizonEp===null||!episodes.includes(STATE.arHorizonEp))
+    STATE.arHorizonEp=episodes[episodes.length-1];
+  const epSelect=el("select");
+  for(const e of episodes) epSelect.append(el("option",{value:String(e),text:"episode "+e}));
+  epSelect.value=String(STATE.arHorizonEp);
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  const splitSelect=el("select");
+  for(const s of splits) splitSelect.append(el("option",{value:s,text:AR_SPLIT_LABELS[s]||s}));
+  splitSelect.value=STATE.arHorizonSplit||splits[0];
+  STATE.arHorizonSplit=splitSelect.value;
+
+  card.append(el("div",{class:"pill-row"},
+    el("label",{text:"Checkpoint"}),epSelect,
+    el("label",{text:"Fitted on"}),splitSelect));
+
+  const host=el("div",{});
+  card.append(host);
+  const colour=arOrderColour();
+
+  function paint(){
+    host.innerHTML="";
+    const orders=[...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+    const legend=el("div",{class:"legend"});
+    for(const o of orders){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(colour[o]||SLOTS[0]);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"order "+o}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      legend.append(item);
+    }
+    host.append(legend);
+    const grid=el("div",{class:"grid-charts"});
+    // error against horizon, at the selected checkpoint
+    for(const subset of ["training","test"]){
+      const series=orders.map(o=>({
+        name:"order "+o,color:colour[o]||SLOTS[0],
+        pts:t.rows.filter(r=>+r[t.index.order]===o
+                            && +r[t.index.episode]===STATE.arHorizonEp
+                            && r[t.index.split]===STATE.arHorizonSplit
+                            && r[t.index.subset]===subset)
+                  .map(r=>[+r[t.index.forecast_horizon],+r[t.index.one_minus_r_squared]])
+                  .filter(p=>Number.isFinite(p[1]))
+                  .sort((a,b)=>a[0]-b[0]),
+        endLabel:false}));
+      if(series.every(s=>!s.pts.length))continue;
+      grid.append(lineChart({title:`error vs horizon — ${subset}`,
+        hint:`episode ${STATE.arHorizonEp}`,series,
+        xLabel:"forecast horizon τ (steps)",xPrefix:"τ = "}));
+    }
+    // error at each horizon across training, for the smallest order
+    const smallestOrder=orders[0];
+    const horizons=[...new Set(t.rows.map(r=>+r[t.index.forecast_horizon]))]
+      .sort((a,b)=>a-b);
+    const overTraining=horizons.map((h,i)=>({
+      name:"τ = "+h,color:SLOTS[i%SLOTS.length],
+      pts:t.rows.filter(r=>+r[t.index.order]===smallestOrder
+                          && +r[t.index.forecast_horizon]===h
+                          && r[t.index.split]===STATE.arHorizonSplit
+                          && r[t.index.subset]==="test")
+                .map(r=>[+r[t.index.episode],+r[t.index.one_minus_r_squared]])
+                .filter(p=>Number.isFinite(p[1]))
+                .sort((a,b)=>a[0]-b[0]),
+      endLabel:false}));
+    if(!overTraining.every(s=>!s.pts.length)){
+      grid.append(lineChart({title:`order ${smallestOrder}: each horizon over training — test`,
+        hint:"does the value signal become predictable further ahead as the agent learns?",
+        series:overTraining,episodeAxis:true,xLabel:"episode",wide:true}));
+    }
+    host.append(grid);
+  }
+  epSelect.onchange=()=>{STATE.arHorizonEp=+epSelect.value;paint();};
+  splitSelect.onchange=()=>{STATE.arHorizonSplit=splitSelect.value;paint();};
+  paint();
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_horizon_metrics.csv`,
+      download:"autoregressive_value_horizon_metrics.csv",text:"autoregressive_value_horizon_metrics.csv"})));
+  return card;
+}
+
+function autoregressiveCoefficientCard(){
+  const t=arTable("autoregressive_coefficients"); if(!t)return null;
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Recurrence coefficients over training"}),
+    el("p",{class:"desc",text:"Each order gets its own chart, with one line per lag: lag 1 is the weight on the immediately preceding value, lag 0 is the fitted intercept. This is where coefficient drift shows up — a stable order has lines that settle, a drifting one does not."}));
+
+  const splits=[...new Set(t.rows.map(r=>r[t.index.split]))];
+  const splitSelect=el("select");
+  for(const s of splits) splitSelect.append(el("option",{value:s,text:AR_SPLIT_LABELS[s]||s}));
+  if(STATE.arCoeffSplit&&splits.includes(STATE.arCoeffSplit)) splitSelect.value=STATE.arCoeffSplit;
+  else STATE.arCoeffSplit=splitSelect.value;
+  card.append(el("div",{class:"pill-row"},el("label",{text:"Fitted on"}),splitSelect));
+
+  const host=el("div",{});
+  card.append(host);
+  function paint(){
+    host.innerHTML="";
+    const orders=[...new Set(t.rows.map(r=>+r[t.index.order]))].sort((a,b)=>a-b);
+    const grid=el("div",{class:"grid-charts"});
+    for(const order of orders){
+      const lags=[...new Set(t.rows.filter(r=>+r[t.index.order]===order)
+                                   .map(r=>+r[t.index.lag]))].sort((a,b)=>a-b);
+      const series=lags.map((lag,i)=>({
+        name: lag===0?"intercept":("lag "+lag),
+        color: SLOTS[i%SLOTS.length],
+        pts: t.rows.filter(r=>+r[t.index.order]===order
+                            && +r[t.index.lag]===lag
+                            && r[t.index.split]===STATE.arCoeffSplit)
+                   .map(r=>[+r[t.index.episode],+r[t.index.coefficient]])
+                   .filter(p=>Number.isFinite(p[1]))
+                   .sort((a,b)=>a[0]-b[0])}));
+      if(series.every(s=>!s.pts.length))continue;
+      grid.append(lineChart({title:"Order "+order,
+        hint:"coefficient value at each checkpoint",series,episodeAxis:true,
+        xLabel:"episode"}));
+    }
+    host.append(grid);
+  }
+  splitSelect.onchange=()=>{STATE.arCoeffSplit=splitSelect.value;paint();};
+  paint();
+  const {exp,run}=STATE.cur;
+  card.append(el("p",{class:"muted-note"},"Raw data: ",
+    el("a",{href:`/csv/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/autoregressive_value_coefficients.csv`,
+      download:"autoregressive_value_coefficients.csv",text:"autoregressive_value_coefficients.csv"})));
+  return card;
+}
+
+function autoregressiveRolloutCard(){
+  const files=(STATE.data&&STATE.data.autoregressive_rollouts)||[];
+  if(!files.length)return null;
+  const card=el("div",{class:"card"});
+  const episodes=files.map(f=>f.episode).sort((a,b)=>a-b);
+  if(STATE.arRolloutEp===undefined||!episodes.includes(STATE.arRolloutEp))
+    STATE.arRolloutEp=episodes[episodes.length-1];
+
+  const epSelect=el("select");
+  for(const e of episodes) epSelect.append(el("option",{value:String(e),text:"episode "+e}));
+  epSelect.value=String(STATE.arRolloutEp);
+
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},
+    el("h2",{text:"Example value rollouts: actual vs predicted"}),
+    el("p",{class:"desc",text:"The true value sequence of one trajectory against what the fitted recurrence predicts for it, one panel per order. One-step-ahead sees the real history at every step; the rolling forecast predicts τ steps and is then re-anchored on the values that actually occurred, so its gap to the actual line is how fast the recurrence loses the signal within a window of that size."})),
+    el("div",{class:"pill-row"},el("label",{text:"Checkpoint"}),epSelect));
+  card.append(head);
+
+  const controls=el("div",{class:"pill-row"});
+  const splitSelect=el("select"), subsetSelect=el("select");
+  for(const [v,l] of Object.entries(AR_SPLIT_LABELS)) splitSelect.append(el("option",{value:v,text:l}));
+  for(const v of ["test","training"]) subsetSelect.append(el("option",{value:v,text:v}));
+  splitSelect.value=STATE.arRolloutSplit||"held_out_trajectory_split";
+  subsetSelect.value=STATE.arRolloutSubset||"test";
+  STATE.arRolloutSplit=splitSelect.value; STATE.arRolloutSubset=subsetSelect.value;
+  // Forecast window: the recurrence re-anchors on the true values every τ
+  // steps, which is what forecast_horizons in the config configures. Options
+  // are filled in from whatever windows the checkpoint actually saved.
+  const horizonSelect=el("select");
+  controls.append(el("label",{text:"Split"}),splitSelect,
+                  el("label",{text:"Subset"}),subsetSelect,
+                  el("label",{text:"Forecast window τ"}),horizonSelect);
+  card.append(controls);
+
+  const host=el("div",{});
+  card.append(host);
+
+  async function paint(){
+    host.innerHTML="";
+    host.append(el("p",{class:"muted-note",text:"Loading rollouts…"}));
+    const {exp,run}=STATE.cur;
+    const file=files.find(f=>f.episode===STATE.arRolloutEp);
+    if(!file){host.innerHTML="";host.append(el("p",{class:"muted-note",text:"No rollouts at this checkpoint."}));return;}
+    const key=exp+"/"+run+"/ar/"+file.file;
+    if(!STATE.arRolloutCache[key]){
+      STATE.arRolloutCache[key]=await (await fetch(
+        `/api/arroll/${encodeURIComponent(exp)}/${encodeURIComponent(run)}/${encodeURIComponent(file.file)}`)).json();
+    }
+    const data=STATE.arRolloutCache[key];
+    host.innerHTML="";
+    // keys look like order2__held_out_trajectory_split__test__0__actual
+    const wanted=`__${STATE.arRolloutSplit}__${STATE.arRolloutSubset}__`;
+    const stems=[...new Set(Object.keys(data)
+      .filter(k=>k.endsWith("__actual")&&k.includes(wanted))
+      .map(k=>k.slice(0,-"__actual".length)))].sort();
+    if(!stems.length){host.append(el("p",{class:"muted-note",text:"No example rollouts for this split and subset."}));return;}
+    // Populate the τ selector from whatever rolling-horizon arrays this
+    // checkpoint actually saved.
+    const availableHorizons=[...new Set(Object.keys(data)
+      .map(k=>(k.match(/__rolling_horizon_(\d+)$/)||[])[1])
+      .filter(Boolean).map(Number))].sort((a,b)=>a-b);
+    if(!availableHorizons.length){
+      host.append(el("p",{class:"muted-note",text:"This run saved no rolling-horizon arrays; re-run the experiment to plot forecasts."}));
+      return;
+    }
+    if(!horizonSelect.options.length){
+      for(const h of availableHorizons)
+        horizonSelect.append(el("option",{value:String(h),text:"τ = "+h}));
+      horizonSelect.value=String(
+        STATE.arRolloutHorizon!=null&&availableHorizons.includes(STATE.arRolloutHorizon)
+          ? STATE.arRolloutHorizon : availableHorizons[availableHorizons.length-1]);
+    }
+    const chosenHorizon=horizonSelect.value;
+
+    const grid=el("div",{class:"grid-charts"});
+    for(const stem of stems){
+      const actual=data[stem+"__actual"]||[];
+      const oneStep=data[stem+"__one_step_ahead"]||[];
+      const order=+(stem.match(/^order(\d+)/)||[0,0])[1];
+      const rolling=data[`${stem}__rolling_horizon_${chosenHorizon}`]||[];
+      // one-step and rolling predictions both align with actual[order:].
+      const series=[
+        {name:"actual",color:"--s1",pts:actual.map((v,i)=>[i,v]),endLabel:false},
+        {name:"one step",color:"--s3",pts:oneStep.map((v,i)=>[i+order,v]),endLabel:false},
+        {name:`τ = ${chosenHorizon}`,color:"--s5",
+         pts:Array.from(rolling,(v,i)=>[i+order,v]),endLabel:false},
+      ].filter(s=>s.pts.length);
+      const index=(stem.match(/__(\d+)$/)||[0,"?"])[1];
+      grid.append(lineChart({title:`Order ${order} · example ${index}`,
+        hint:"value along the trajectory",series,xLabel:"t (steps)",xPrefix:"t = "}));
+    }
+    const legend=el("div",{class:"legend"});
+    for(const [nm,cv] of [["actual","--s1"],["one step ahead","--s3"],["rolling forecast, re-anchored every τ steps","--s5"]]){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(cv);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:nm}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      legend.append(item);
+    }
+    host.append(legend,grid);
+  }
+  epSelect.onchange=()=>{STATE.arRolloutEp=+epSelect.value;paint();};
+  splitSelect.onchange=()=>{STATE.arRolloutSplit=splitSelect.value;paint();};
+  subsetSelect.onchange=()=>{STATE.arRolloutSubset=subsetSelect.value;paint();};
+  horizonSelect.onchange=()=>{
+    STATE.arRolloutHorizon=+horizonSelect.value;
+    paint();};
+  paint();
   return card;
 }
 
 // registry so the scrubber can move every episode-axis chart's marker,
 // and re-paint the episode-synced cards
+// ================= COMPARE MODE =================
+// Overlay several experiments in the same charts, averaged across seeds.
+//
+// Grouping is manifest-first: a run annotated by the server with an arm
+// (recorded in the experiment's cached/*manifest*.json) groups under that arm
+// — "baseline", "exp3", the legacy "fhr" — with its true seed and the config
+// diff (overrides) the arm trained with. Stale run dirs the manifest does not
+// list are kept OUT of the arm's seed average and shown as separate
+// "untracked" groups. Runs of experiments without a manifest fall back to the
+// old name parsing: strip the launch timestamp and seed token from the run id
+// (..._seed21_20260811-222356, seed56, seed102 all collapse to one variant).
+// Each selected group is drawn as one line (mean across its seeds) with a
+// min–max band, fed by the compact /api/summary payload rather than the
+// multi-MB full run payload.
+const SEED_RE=/_(?:seed|s)(\d+)(?=_|$)/;
+function groupOrder(g){
+  if(g.arm)return armOrder(g.arm);
+  return [g.seeded?3:4,-(g.mtime||0),g.variant];
+}
+// short display name for a manifest family: "fhrdqn_runs.old-lambda0.5" shows
+// as "old-lambda0.5"; the current family is never suffixed at all
+const famShort=f=>f&&f.includes(".")?f.split(".").slice(1).join("."):f;
+// default group name: the arm plus a compact form of its config diff
+function groupBaseName(g,famSuffix){
+  if(g.arm){
+    let nm=g.arm;
+    if(g.arm!=="baseline"){
+      const n=g.overrides?Object.keys(g.overrides).length:0;
+      if(n)nm+=n<=2?` · ${fmtOverrides(g.overrides)}`:` · ${n} params`;
+    }
+    if(famSuffix)nm+=` [${famShort(g.family)}]`;
+    return nm;
+  }
+  return g.variant;
+}
+function runGroups(){
+  const by={};
+  for(const r of STATE.runs){
+    const stamp=runStamp(r.run);
+    let key,variant,arm=null,seeded;
+    if(r.arm!=null){                       // manifest-tracked current run
+      arm=r.arm; seeded=true; variant=r.arm;
+      // family in the key: an archived manifest's "baseline" must NEVER pool
+      // with the current family's baseline (different experiment recipes)
+      key=r.exp+"::arm::"+(r.family||"")+"::"+arm;
+    }else{
+      const base=r.run.replace(/_\d{8}-\d{6}$/,"");
+      // two seed conventions: _seed21 (run_fhrdqn_seeds.py) and _s0 (optuna)
+      seeded=SEED_RE.test(base);
+      variant=base.replace(SEED_RE,"")||r.run;
+      // seed-tagged runs of a variant average together; a seedless one-off
+      // with the same name stays its own group (it may predate a config
+      // change — silently folding it in would skew the seed average)
+      key=r.exp+"::"+variant+(seeded?"":"::"+(stamp||r.run));
+    }
+    const g=(by[key]=by[key]||{key,exp:r.exp,arm,family:r.family||null,
+      variant,seeded,stamp,
+      untracked:r.arm==null&&r.tracked===false,runs:[],mtime:0});
+    g.runs.push(r);
+    g.mtime=Math.max(g.mtime,r.mtime||0);
+  }
+  const gs=Object.values(by);
+  for(const g of gs){                      // attach the arm's config diff
+    const fams=(STATE.manifests[g.exp]||{}).families||{};
+    const fam=g.family!=null?fams[g.family]:null;
+    g.overrides=(g.arm&&fam&&(fam.overrides||{})[g.arm])||null;
+  }
+  // family recency: within an exp, the family trained most recently is the
+  // "current" one — it sorts first and keeps an unsuffixed label
+  const famLatest={},famsPerExp={};
+  for(const g of gs)if(g.arm){
+    const k=g.exp+"::"+g.family;
+    famLatest[k]=Math.max(famLatest[k]||0,g.mtime);
+    (famsPerExp[g.exp]=famsPerExp[g.exp]||new Set()).add(g.family);
+  }
+  const famRank=g=>g.arm?-(famLatest[g.exp+"::"+g.family]||0):Infinity;
+  // order: experiment dirs by latest activity, then family (current first),
+  // then baseline → exp<N> descending → legacy arms → name-groups → one-offs
+  const expLatest={};
+  for(const g of gs)expLatest[g.exp]=Math.max(expLatest[g.exp]||0,g.mtime);
+  gs.sort((a,b)=>(expLatest[b.exp]-expLatest[a.exp])
+    ||a.exp.localeCompare(b.exp)
+    ||(famRank(a)===famRank(b)?0:famRank(a)<famRank(b)?-1:1)
+    ||cmpArr(groupOrder(a),groupOrder(b)));
+  // labels: short names; family suffix only for non-current families;
+  // experiment-dir prefix only when a name is ambiguous across experiment
+  // dirs; any double-click rename applied on top
+  const isCurrentFam=g=>{
+    if(!g.arm)return true;
+    const fams=famsPerExp[g.exp];
+    if(!fams||fams.size<2)return true;
+    const latest=[...fams].sort((x,y)=>
+      (famLatest[g.exp+"::"+y]||0)-(famLatest[g.exp+"::"+x]||0))[0];
+    return g.family===latest;
+  };
+  const seen={};
+  for(const g of gs){const nm=groupBaseName(g,!isCurrentFam(g));
+    (seen[nm]=seen[nm]||new Set()).add(g.exp);g._nm=nm;}
+  for(const g of gs){
+    let label=seen[g._nm].size>1?`${expShort(g.exp)} · ${g._nm}`:g._nm;
+    if(!g.arm&&!g.seeded)label+=` @${fmtStamp(g.stamp)||"single"}`;
+    g.autoLabel=label;
+    g.label=lbl("g:"+g.key,label);
+  }
+  return gs;
+}
+function runSeedOf(r){
+  if(r.seed!=null)return String(r.seed);     // manifest-recorded, authoritative
+  const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
+  return m?m[1]:null;
+}
+function groupSeeds(g){
+  return [...new Set(g.runs.map(runSeedOf).filter(Boolean))]
+    .sort((a,b)=>(+a)-(+b));
+}
+// the runs that actually enter a group's seed average. Manifest arms map each
+// seed to exactly one dir already; for name-parsed groups, several launches
+// can leave same-seed dirs on disk (e.g. a relaunch two minutes later) — only
+// the LATEST run per seed is averaged, never a stale duplicate.
+function groupActiveRuns(g){
+  if(g.arm)return g.runs;
+  const bySeed=new Map(),unseeded=[];
+  for(const r of g.runs){
+    const seed=runSeedOf(r);
+    if(seed==null){unseeded.push(r);continue;}
+    const prev=bySeed.get(seed);
+    if(!prev||(r.mtime||0)>(prev.mtime||0))bySeed.set(seed,r);
+  }
+  return [...bySeed.values(),...unseeded];
+}
+function exitCompare(){
+  if(!STATE.compare)return;
+  STATE.compare=false;
+  const b=$("#cmpbtn");if(b)b.classList.remove("on");
+}
+
+// A run mid-training groups by its parsed name; once the launcher records it,
+// the same runs re-key to exp::arm::family::arm. Carry the user's selection
+// and any rename across that transition instead of silently dropping them.
+function migrateCmpSel(groups){
+  if(!STATE.cmpSel.size)return;
+  const present=new Set(groups.map(g=>g.key));
+  const nameKeyToArmKey=new Map();
+  for(const g of groups)if(g.arm)for(const r of g.runs){
+    const base=r.run.replace(/_\d{8}-\d{6}$/,"");
+    if(SEED_RE.test(base))
+      nameKeyToArmKey.set(g.exp+"::"+base.replace(SEED_RE,""),g.key);
+  }
+  let changed=false;
+  for(const key of [...STATE.cmpSel]){
+    if(present.has(key))continue;
+    const armKey=nameKeyToArmKey.get(key);
+    if(!armKey)continue;
+    STATE.cmpSel.delete(key);STATE.cmpSel.add(armKey);changed=true;
+    if(RV_LABELS["g:"+key]&&!RV_LABELS["g:"+armKey]){
+      RV_LABELS["g:"+armKey]=RV_LABELS["g:"+key];
+      delete RV_LABELS["g:"+key];
+      saveLabels();
+    }
+  }
+  if(changed)saveCmpSel();
+}
+
+// live refresh for compare mode: refetch the summary of any loaded run whose
+// change signature moved (a run still training). Returns true when something
+// was refreshed. Transient errors are ignored — the next poll retries.
+async function cmpRefreshChanged(){
+  const sel=runGroups().filter(g=>STATE.cmpSel.has(g.key));
+  let any=false;
+  await Promise.all(sel.flatMap(g=>groupActiveRuns(g)).map(async r=>{
+    const k=r.exp+"::"+r.run, s=STATE.cmpCache[k];
+    if(!s||!s.sig)return;
+    try{
+      const {sig}=await fetchJSON(
+        `/api/sig/${encodeURIComponent(r.exp)}/${encodeURIComponent(r.run)}`);
+      if(sig&&sig!==s.sig){
+        STATE.cmpCache[k]=await fetchJSON(
+          `/api/summary/${encodeURIComponent(r.exp)}/${encodeURIComponent(r.run)}`);
+        any=true;
+      }
+    }catch(e){}
+  }));
+  return any;
+}
+
+let CMPSEQ=0;
+async function cmpLoad(){
+  const seq=++CMPSEQ;
+  // keep the group list fresh (new seed runs appear without leaving the view)
+  try{
+    const {runs,manifests}=normRunsPayload(await fetchJSON("/api/runs"));
+    STATE.manifests=manifests;
+    if(runsKeyOf(runs)!==STATE.runsKey)updateRunOptions(runs);
+  }catch(e){/* keep the stale list; summaries below will surface real trouble */}
+  if(seq!==CMPSEQ||!STATE.compare)return;
+  const groups=runGroups();
+  migrateCmpSel(groups);
+  const need=[];
+  for(const g of groups)if(STATE.cmpSel.has(g.key))
+    for(const r of groupActiveRuns(g))if(!STATE.cmpCache[r.exp+"::"+r.run])need.push(r);
+  if(!need.length){STATE.cmpStatus=null;renderCompare();return;}
+  let done=0;
+  STATE.cmpStatus=`Loading seed runs… 0/${need.length}`;
+  renderCompare();
+  try{
+    await Promise.all(need.map(r=>
+      fetchJSON(`/api/summary/${encodeURIComponent(r.exp)}/${encodeURIComponent(r.run)}`)
+        .then(s=>{
+          STATE.cmpCache[r.exp+"::"+r.run]=s;
+          if(seq===CMPSEQ){
+            done++;STATE.cmpStatus=`Loading seed runs… ${done}/${need.length}`;
+            const st=$("#cmpstatus");if(st)st.textContent=STATE.cmpStatus;
+          }
+        })));
+    if(seq!==CMPSEQ)return;
+    STATE.cmpStatus=null;
+  }catch(e){
+    if(seq!==CMPSEQ)return;
+    STATE.cmpStatus=`Load failed: ${e.message||e} — press ⟳ to retry `
+      +`(a 404 means the running rank_viewer.py predates /api/summary; restart it)`;
+  }
+  if(STATE.compare)renderCompare();
+}
+
+// mean across seeds at each x; band = min–max across seeds
+function seedAgg(perSeed){
+  const by=new Map();
+  for(const pts of perSeed)for(const p of pts){
+    const a=by.get(p[0]);a?a.push(p[1]):by.set(p[0],[p[1]]);
+  }
+  const xs=[...by.keys()].sort((a,b)=>a-b);
+  return {pts:xs.map(x=>[x,mean(by.get(x))]),
+          band:xs.map(x=>{const v=by.get(x);return [x,arrMin(v),arrMax(v)];})};
+}
+// cached episode -> cumulative-env-steps map for one run summary
+function sumStepsOf(s){
+  if(s._cs===undefined)s._cs=cumSteps(s.rewards);
+  return s._cs;
+}
+// re-base [episode, y] points onto the run's env-steps axis when the compare
+// x-axis is steps; null when this run has no step data (it drops off the axis)
+function cmpOnX(s,pts){
+  if(STATE.cmpX!=="steps")return pts;
+  const cs=sumStepsOf(s);
+  if(!cs||!pts)return null;
+  const out=[];
+  for(const p of pts){const x=cs.get(p[0]);if(x!=null)out.push([x,p[1]]);}
+  return out.length?out:null;
+}
+const cmpXLabel=()=>STATE.cmpX==="steps"?"env steps (samples)":"episode";
+const cmpXPrefix=()=>STATE.cmpX==="steps"?"step ":undefined;
+// one chart series per visible group: extract per-seed [episode, value] points
+// from each seed's summary, re-base onto the chosen x-axis, optionally
+// transform (smoothing / cumulative), then seed-average. Exact-x alignment is
+// only valid on the episode axis; env-steps curves aggregate by interpolation.
+function cmpSeries(groups,extract,transform){
+  const out=[];
+  for(const g of groups){
+    if(STATE.cmpHidden.has(g.key))continue;
+    let per=g.sums.map(s=>cmpOnX(s,extract(s))).filter(p=>p&&p.length);
+    if(transform)per=per.map(transform).filter(p=>p&&p.length);
+    if(!per.length)continue;
+    const agg=STATE.cmpX==="steps"?gridAgg(per):seedAgg(per);
+    out.push({name:g.label,color:g.color,pts:agg.pts,band:agg.band});
+  }
+  return out;
+}
+// per-seed curves of one group: [{seed, run, pts}] after re-base + transform
+function cmpSeedEntries(g,extract,transform){
+  const out=[];
+  for(const r of groupActiveRuns(g)){
+    const s=STATE.cmpCache[r.exp+"::"+r.run];
+    if(!s)continue;
+    let pts=cmpOnX(s,extract(s));
+    if(pts&&transform)pts=transform(pts);
+    if(!pts||!pts.length)continue;
+    // manifest-recorded seed first; name parsing only as a fallback
+    let seed=r.seed!=null?String(r.seed):null;
+    if(seed==null){
+      const m=SEED_RE.exec(r.run.replace(/_\d{8}-\d{6}$/,""));
+      seed=m?m[1]:null;
+    }
+    out.push({seed,run:r.run,pts});
+  }
+  out.sort((a,b)=>(+a.seed||0)-(+b.seed||0));
+  return out;
+}
+// [episode, value] points for one column of a {columns, rows} table, optionally
+// filtered to one matrix (stats / sweep_evo have a matrix column, diag doesn't)
+function tableSeries(t,matrix,col){
+  if(!t)return null;
+  const ci=t.columns.indexOf(col);if(ci<0)return null;
+  const ei=t.columns.indexOf("episode"),mi=t.columns.indexOf("matrix");
+  if(ei<0)return null;
+  const pts=[];
+  for(const r of t.rows){
+    if(mi>=0&&matrix!=null&&r[mi]!==matrix)continue;
+    const x=+r[ei],y=parseFloat(r[ci]);
+    if(isFinite(x)&&isFinite(y))pts.push([x,y]);
+  }
+  return pts.sort((a,b)=>a[0]-b[0]);
+}
+// matrix names present in one summary table across all loaded groups
+function cmpMatrices(groups,which){
+  return [...new Set(groups.flatMap(g=>g.sums.flatMap(s=>{
+    const t=s[which];if(!t)return [];
+    const mi=t.columns.indexOf("matrix");
+    return mi<0?[]:t.rows.map(r=>r[mi]);
+  })))].sort();
+}
+// card with a matrix dropdown + a grid of one seed-averaged chart per metric
+function cmpMatrixCard(loaded,which,stateKey,title,desc){
+  const mats=cmpMatrices(loaded,which);
+  if(!mats.length)return null;
+  if(!mats.includes(STATE[stateKey]))STATE[stateKey]=mats[0];
+  const card=el("div",{class:"card"});
+  const head=el("div",{class:"headrow"});
+  head.append(el("div",{},el("h2",{text:title}),el("p",{class:"desc",text:desc})));
+  if(mats.length>1){
+    const ms=el("select",{"aria-label":"Matrix"});
+    for(const m of mats)ms.append(el("option",{value:m,text:m}));
+    ms.value=STATE[stateKey];
+    ms.onchange=()=>{STATE[stateKey]=ms.value;rerender();};
+    head.append(el("div",{class:"pill-row"},el("label",{text:"Matrix"}),ms));
+  }
+  card.append(head);
+  const grid=el("div",{class:"grid-charts"});
+  for(const [key,label,hint] of METRICS){
+    const series=cmpSeries(loaded,s=>tableSeries(s[which],STATE[stateKey],key));
+    if(series.length)grid.append(lineChart({title:label,hint,series,
+      noEndLabel:true,xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+  }
+  card.append(grid);
+  return card;
+}
+
+// axis + seed-view + reward-mode pickers, shared by every compare chart
+function cmpControls(anySteps){
+  const xSel=el("select",{"aria-label":"X axis"});
+  xSel.append(el("option",{value:"ep",text:"x: episodes"}));
+  const stepOpt=el("option",{value:"steps",text:"x: env steps (samples)"});
+  if(!anySteps)stepOpt.disabled=true;
+  xSel.append(stepOpt);
+  xSel.value=STATE.cmpX;
+  xSel.onchange=()=>{STATE.cmpX=xSel.value;rerender();};
+
+  const vSel=el("select",{"aria-label":"Seed view"});
+  for(const [v,t] of [["mean","seeds: mean ± range"],["overlay","seeds: overlaid"],
+                      ["side","seeds: side-by-side"]])
+    vSel.append(el("option",{value:v,text:t}));
+  vSel.value=STATE.cmpView;
+  vSel.onchange=()=>{STATE.cmpView=vSel.value;savePrefs();rerender();};
+
+  const ySel=el("select",{"aria-label":"Reward y"});
+  for(const [v,t] of [["ret","y: episode return"],["cum","y: cumulative reward"]])
+    ySel.append(el("option",{value:v,text:t}));
+  ySel.value=STATE.cmpY;
+  ySel.onchange=()=>{STATE.cmpY=ySel.value;savePrefs();rerender();};
+
+  const sSel=el("select",{"aria-label":"Smoothing"});
+  for(const w of [1,10,25,50,100])
+    sSel.append(el("option",{value:String(w),text:w===1?"no smoothing":`rolling-${w}`}));
+  sSel.value=String(STATE.cmpRollW);
+  sSel.disabled=STATE.cmpY==="cum";
+  sSel.onchange=()=>{STATE.cmpRollW=+sSel.value;savePrefs();rerender();};
+
+  return el("div",{class:"pill-row",style:"margin-top:8px"},xSel,vSel,ySel,sSel);
+}
+
+// dash patterns distinguishing seeds of one variant in the overlaid view
+const DASHES=["","7 4","2 3","9 3 2 3","1 4","12 3"];
+function cmpRewardCard(loaded){
+  const extract=s=>(s.rewards||[]).map(r=>[r[0],r[1]]);
+  // a seed shorter than the rolling window is dropped (and counted) rather
+  // than mixed in raw — a jagged unsmoothed curve inside a chart labelled
+  // "rolling-N" would read as real signal
+  const W=STATE.cmpRollW;
+  let dropped=0;
+  const transform=STATE.cmpY==="cum"?cumulativePts
+    :W>1?(pts=>{if(pts.length>=W)return rollingPts(pts,W);dropped++;return null;}):null;
+  const appendDroppedNote=target=>{if(dropped)target.append(el("p",{class:"muted-note",
+    text:`${dropped} seed run(s) are shorter than the rolling-${W} window and `
+      +"are not drawn — lower the smoothing to see them."}));};
+  const yTitle=STATE.cmpY==="cum"?"Cumulative reward"
+    :W>1?`Episode return (rolling-${W})`:"Episode return";
+
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:yTitle}),
+    el("p",{class:"desc",text:
+      (STATE.cmpY==="cum"
+        ?"Total training reward accumulated so far — steeper is better; on the "
+         +"env-steps axis a horizontal gap between variants is a sample-efficiency gap"
+        :"Training reward per episode")
+      +(STATE.cmpX==="steps"
+        ?" · against environment steps (samples), so variants whose episodes "
+         +"differ in length stay comparable":" · against training episodes")+"."}));
+
+  const vis=loaded.filter(g=>!STATE.cmpHidden.has(g.key));
+  if(STATE.cmpView==="mean"){
+    const series=cmpSeries(loaded,extract,transform);
+    if(!series.length){card.append(el("p",{class:"muted-note",
+      text:dropped?`All seed runs are shorter than the rolling-${W} window — `
+        +"lower the smoothing.":"No reward data on this axis."}));return card;}
+    appendDroppedNote(card);
+    card.append(lineChart({series,wide:true,noEndLabel:true,yLabel:yTitle,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+    return card;
+  }
+
+  const perGroup=vis.map(g=>({g,entries:cmpSeedEntries(g,extract,transform)}))
+    .filter(e=>e.entries.length);
+  if(!perGroup.length){card.append(el("p",{class:"muted-note",
+    text:dropped?`All seed runs are shorter than the rolling-${W} window — `
+      +"lower the smoothing.":"No reward data on this axis."}));return card;}
+  appendDroppedNote(card);
+
+  if(STATE.cmpView==="overlay"){
+    // every seed its own line on one chart: colour = variant, dash = seed.
+    // dash is keyed on the seed's position in the global seed list, so the
+    // same seed gets the same dash in every variant even with unequal sets
+    const globalSeeds=[...new Set(perGroup.flatMap(e=>e.entries.map(x=>x.seed)
+      .filter(s=>s!=null)))].sort((a,b)=>+a-+b);
+    const series=[];
+    for(const {g,entries} of perGroup)
+      entries.forEach((e,i)=>{
+        const di=e.seed!=null?globalSeeds.indexOf(e.seed):i;
+        series.push({
+          name:`${g.label}${e.seed!=null?` · seed ${e.seed}`:""}`,color:g.color,
+          dash:DASHES[di%DASHES.length],width:1.6,endLabel:false,pts:e.pts});
+      });
+    card.append(el("p",{class:"muted-note",
+      text:"One line per seed — colour = variant, dash pattern = seed."}));
+    card.append(lineChart({series,wide:true,noEndLabel:true,yLabel:yTitle,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+    return card;
+  }
+
+  // side-by-side: one panel per variant; identical axes + synced hover so the
+  // panels line up point-for-point. Seed colours are consistent across panels.
+  const seedList=[...new Set(perGroup.flatMap(e=>e.entries.map(x=>x.seed)
+    .filter(s=>s!=null)))].sort((a,b)=>+a-+b);
+  const seedColor={};seedList.forEach((s,i)=>seedColor[s]=SLOTS[i%SLOTS.length]);
+  if(seedList.length){
+    const leg=el("div",{class:"legend"});
+    for(const s of seedList){
+      const item=el("span",{class:"item fixed"});
+      item.style.color=cssv(seedColor[s]);
+      item.append(el("span",{class:"key"}),el("span",{class:"nm",text:"seed "+s}));
+      item.querySelector(".nm").style.color="var(--ink-2)";
+      leg.append(item);
+    }
+    card.append(leg);
+  }
+  const allPts=perGroup.flatMap(e=>e.entries.flatMap(x=>x.pts));
+  const xDomain=[arrMin(allPts,p=>p[0]),arrMax(allPts,p=>p[0])];
+  const yDomain=[arrMin(allPts,p=>p[1]),arrMax(allPts,p=>p[1])];
+  const grid=el("div",{class:"grid-charts",
+    style:"grid-template-columns:repeat(auto-fit,minmax(420px,1fr))"});
+  for(const {g,entries} of perGroup){
+    const series=entries.map((e,i)=>({
+      name:e.seed!=null?`seed ${e.seed}`:e.run,
+      color:e.seed!=null?seedColor[e.seed]:SLOTS[i%SLOTS.length],
+      endLabel:false,pts:e.pts}));
+    grid.append(lineChart({title:g.label,titleColor:g.color,series,
+      xDomain,yDomain,syncKey:"cmp-reward",noEndLabel:true,yLabel:yTitle,
+      xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+  }
+  card.append(grid);
+  card.append(el("p",{class:"muted-note",
+    text:"Panels share axes and hover — the crosshair tracks the same x in every panel."}));
+  return card;
+}
+
+// ---- config diffs across selected groups ----
+// The run dir's config.yaml copy is parsed as text into flat "a.b.c" -> value
+// paths (indentation-based, comments stripped, "- item" lines folded into the
+// parent key). No YAML library: this only needs to be faithful enough to DIFF
+// configs, not to interpret them, and it degrades gracefully on exotic files.
+function parseCfgPaths(text){
+  const out=new Map();
+  if(!text)return out;
+  // pre-pass: a flow map/list ({...} or [...]) may span several physical
+  // lines — merge them into one logical line, or the continuation would be
+  // misparsed as a standalone "key: value" and mint phantom config paths
+  const logical=[];
+  let pend=null,depth=0;
+  for(const raw of text.split(/\r?\n/)){
+    if(pend==null&&(!raw.trim()||raw.trim().startsWith("#")))continue;
+    const line=raw.replace(/\s+#.*$/,"");    // strip inline comments
+    if(pend==null&&!line.trim())continue;
+    const net=(line.match(/[{[]/g)||[]).length-(line.match(/[}\]]/g)||[]).length;
+    if(pend==null){pend=line;depth=net;}
+    else{pend+=" "+line.trim();depth+=net;}
+    if(depth<=0){if(pend.trim())logical.push(pend);pend=null;depth=0;}
+  }
+  if(pend!=null&&pend.trim())logical.push(pend);
+  const stack=[];                            // open mapping keys: {indent,key}
+  for(const line of logical){
+    const indent=line.match(/^ */)[0].length;
+    const t=line.trim();
+    while(stack.length&&stack[stack.length-1].indent>=indent)stack.pop();
+    if(t.startsWith("- ")||t==="-"){         // list item -> append to parent
+      const path=stack.map(s=>s.key).join(".");
+      const item=t.replace(/^-\s*/,"");
+      out.set(path,out.has(path)?out.get(path)+", "+item:item);
+      continue;
+    }
+    const m=t.match(/^([^:]+):\s*(.*)$/);
+    if(!m)continue;
+    const key=m[1].trim();
+    const path=[...stack.map(s=>s.key),key].join(".");
+    if(m[2]==="")stack.push({indent,key});   // opens a nested mapping (or list)
+    else out.set(path,m[2].trim());
+  }
+  return out;
+}
+// value comparison that survives YAML/JSON spelling differences (0.0 vs 0,
+// True vs true vs on, quoted vs bare strings)
+const CFG_BOOL={on:"true",yes:"true",off:"false",no:"false"};
+function cfgNorm(v){
+  const s=String(v).trim().replace(/^['"]|['"]$/g,"");
+  const n=Number(s);
+  if(s!==""&&Number.isFinite(n))return String(n);
+  const low=s.toLowerCase();
+  return CFG_BOOL[low]||low;
+}
+// paths that differ between runs of the SAME variant (name, seed, device) and
+// would flood the table with non-differences
+const CFG_SKIP=/^experiment\.(name|seed|seeds|device|save_artifacts)$/;
+function cmpConfigCard(loaded){
+  if(loaded.length<2)return null;
+  const maps=loaded.map(g=>{
+    const s=g.sums.find(x=>x&&x.config);
+    const m=parseCfgPaths(s&&s.config);
+    // the config copy does NOT reflect the arm's overrides — overlay them.
+    // Raw String(v), not fmtOverride: booleans must stay "true"/"false" so an
+    // override that merely restates the config value compares equal to the
+    // YAML's True/False instead of minting a spurious diff row
+    if(g.overrides)for(const [k,v] of Object.entries(g.overrides))
+      m.set("agent."+k,String(v));
+    return m;
+  });
+  const keys=[...new Set(maps.flatMap(m=>[...m.keys()]))].sort();
+  const rows=[];
+  for(const k of keys){
+    if(CFG_SKIP.test(k))continue;
+    const vals=maps.map(m=>m.has(k)?String(m.get(k)):null);
+    if(new Set(vals.map(v=>v==null?"∅":cfgNorm(v))).size>1)
+      rows.push([k,vals]);
+  }
+  const card=el("div",{class:"card"});
+  card.append(el("h2",{text:"Configuration differences"}),
+    el("p",{class:"desc",text:"Every config parameter that differs between the "
+      +"selected variants — the run dirs' config.yaml copies plus each arm's "
+      +"manifest-recorded overrides (which the copies do not reflect). "
+      +"Identical parameters are hidden."}));
+  if(!rows.length){
+    card.append(el("p",{class:"muted-note",
+      text:"No configuration differences found between the selected variants "
+        +"(beyond name/seed bookkeeping)."}));
+    return card;
+  }
+  const tbl=el("table",{});
+  const hr=el("tr",{},el("th",{text:"parameter"}));
+  for(const g of loaded){
+    const th=el("th",{});
+    const dot=el("span",{class:"dot"});dot.style.background=cssv(g.color);
+    th.append(dot,document.createTextNode(g.label));
+    hr.append(th);
+  }
+  tbl.append(hr);
+  for(const [k,vals] of rows){
+    const present=vals.filter(v=>v!=null);
+    const common=present.length?present.map(cfgNorm)
+      .sort((a,b)=>present.map(cfgNorm).filter(x=>x===a).length
+                  -present.map(cfgNorm).filter(x=>x===b).length).pop():null;
+    const tr=el("tr",{},el("td",{text:k}));
+    for(const v of vals){
+      const td=el("td",{text:v==null?"—":v});
+      if(v!=null&&cfgNorm(v)!==common)td.classList.add("chg");
+      tr.append(td);
+    }
+    tbl.append(tr);
+  }
+  card.append(el("div",{class:"difftbl"},tbl));
+  return card;
+}
+
+function renderCompare(){
+  resetChartRegistries();
+  stopPlay();
+  const app=$("#app");app.innerHTML="";
+  const groups=runGroups();
+  migrateCmpSel(groups);
+
+  const selCard=el("div",{class:"card"});
+  selCard.append(el("h2",{text:"Compare experiments"}),
+    el("p",{class:"desc",text:"Pick the variants to overlay. Manifest-tracked "
+      +"arms group by their true arm and seeds and show the config diff they "
+      +"trained with; other runs group by run id with the seed and timestamp "
+      +"stripped. Baseline first, then experiments in descending order. "
+      +"Double-click a name to rename it everywhere (charts, exports)."}));
+  let curExp=null,list=null;
+  for(const g of groups){
+    if(g.exp!==curExp){                       // one section per experiment dir
+      curExp=g.exp;
+      const inExp=groups.filter(x=>x.exp===curExp);
+      const btn=el("button",{text:inExp.every(x=>STATE.cmpSel.has(x.key))?"none":"all",
+        title:"Select or clear every variant in this experiment"});
+      btn.onclick=()=>{
+        const on=!inExp.every(x=>STATE.cmpSel.has(x.key));
+        for(const x of inExp)on?STATE.cmpSel.add(x.key):STATE.cmpSel.delete(x.key);
+        saveCmpSel();cmpLoad();
+      };
+      selCard.append(el("div",{class:"cmp-sec"},el("h3",{text:curExp}),btn));
+      list=el("div",{class:"cmp-list"});
+      selCard.append(list);
+    }
+    const cb=el("input",{type:"checkbox"});
+    cb.checked=STATE.cmpSel.has(g.key);
+    cb.onchange=()=>{
+      cb.checked?STATE.cmpSel.add(g.key):STATE.cmpSel.delete(g.key);
+      saveCmpSel();cmpLoad();
+    };
+    const seeds=groupSeeds(g);
+    const nm=el("span",{class:"nm",text:g.label});
+    // clicking the name (de)selects like the rest of the row; dblclick renames
+    makeEditable(nm,"g:"+g.key,g.autoLabel,{onClick:()=>cb.click()});
+    const head=el("div",{},nm);
+    if(g.untracked)head.append(el("span",{class:"badge warn",text:"not in manifest",
+      title:"Not (yet) listed in the experiment's manifest: either still "
+        +"training (the launcher records a run when it finishes), superseded "
+        +"by a retrain, or written by another tool. Kept out of the tracked "
+        +"arms' seed averages either way."}));
+    const body=el("span",{},head);
+    if(g.arm&&g.overrides&&Object.keys(g.overrides).length&&g.arm!=="baseline")
+      body.append(el("div",{class:"diff",text:fmtOverrides(g.overrides)}));
+    const nActive=groupActiveRuns(g).length;
+    body.append(el("div",{class:"meta",text:
+      `${g.runs.length} run${g.runs.length>1?"s":""}`
+      +(nActive<g.runs.length
+        ?` (${g.runs.length-nActive} stale same-seed duplicate${g.runs.length-nActive>1?"s":""} ignored)`:"")
+      +(seeds.length?` · seeds ${seeds.join(", ")}`:"")
+      +(g.mtime?` · updated ${new Date(g.mtime*1000).toLocaleDateString()}`:"")}));
+    list.append(el("label",{class:"cmp-item"},cb,body));
+  }
+  if(STATE.cmpStatus)
+    selCard.append(el("p",{class:"muted-note",id:"cmpstatus",text:STATE.cmpStatus}));
+  app.append(selCard);
+
+  const sel=groups.filter(g=>STATE.cmpSel.has(g.key));
+  sel.forEach((g,i)=>{
+    g.color=SLOTS[i%SLOTS.length];
+    g.sums=groupActiveRuns(g).map(r=>STATE.cmpCache[r.exp+"::"+r.run]).filter(Boolean);
+  });
+  const loaded=sel.filter(g=>g.sums.length);
+  if(!loaded.length){
+    if(!STATE.cmpStatus)app.append(el("div",{class:"empty"},
+      "Select experiments above to overlay their seed-averaged metrics."));
+    return;
+  }
+
+  // env-step availability across the loaded runs decides the default x-axis
+  const allSums=loaded.flatMap(g=>g.sums);
+  const nSteps=allSums.filter(s=>sumStepsOf(s)).length;
+  if(STATE.cmpX==null)STATE.cmpX=nSteps===allSums.length&&nSteps>0?"steps":"ep";
+  if(STATE.cmpX==="steps"&&!nSteps)STATE.cmpX="ep";
+
+  // shared legend — click to hide/show a variant in every chart, double-click
+  // the name to rename it (renames persist and flow into exports)
+  const bar=el("div",{class:"legend"});
+  for(const g of loaded){
+    const item=el("span",{class:"item"+(STATE.cmpHidden.has(g.key)?" off":"")});
+    item.style.color=cssv(g.color);
+    const toggle=()=>{
+      STATE.cmpHidden.has(g.key)?STATE.cmpHidden.delete(g.key)
+                                :STATE.cmpHidden.add(g.key);
+      rerender();
+    };
+    const nm=el("span",{class:"nm",text:g.label});
+    nm.style.color="var(--ink-2)";
+    makeEditable(nm,"g:"+g.key,g.autoLabel,{onClick:toggle});
+    const count=el("span",{class:"nm",
+      text:` (${g.sums.length} seed${g.sums.length>1?"s":""})`});
+    count.style.color="var(--ink-2)";
+    item.append(el("span",{class:"key"}),nm,count);
+    item.onclick=toggle;
+    bar.append(item);
+  }
+  const legCard=el("div",{class:"card"});
+  legCard.append(bar,cmpControls(nSteps>0));
+  legCard.append(el("p",{class:"muted-note",text:{
+    mean:"Line = mean across seeds · band = min–max across seeds. Click a name "
+      +"to toggle it in every chart.",
+    overlay:"Reward chart draws every seed as its own line; the metric charts "
+      +"below stay seed-averaged. Click a name to toggle a variant everywhere.",
+    side:"Reward panels sit side by side with identical axes and synced hover; "
+      +"the metric charts below stay seed-averaged. Click a name to toggle a "
+      +"variant everywhere."}[STATE.cmpView]}));
+  if(STATE.cmpX==="steps"){
+    const nDer=allSums.filter(s=>sumStepsOf(s)&&s.steps_source==="derived").length;
+    const nMiss=allSums.length-nSteps;
+    const notes=[];
+    if(nDer)notes.push(`${nDer} run(s) predate the steps column — env steps `
+      +"derived from |reward| (exact for CartPole/MountainCar, ±1 per episode on Acrobot)");
+    if(nMiss)notes.push(`${nMiss} run(s) have no env-step data and are hidden on this axis`);
+    if(notes.length)legCard.append(el("p",{class:"muted-note",text:notes.join(" · ")}));
+  }
+  app.append(legCard);
+
+  const diffCard=cmpConfigCard(loaded);
+  if(diffCard)app.append(diffCard);
+
+  app.append(cmpRewardCard(loaded));
+
+  const diagCols=[...new Set(loaded.flatMap(g=>g.sums.flatMap(
+    s=>s.diag?s.diag.columns.filter(c=>c!=="episode"):[])))]
+    .sort((a,b)=>{
+      const ia=DIAG_ORDER.indexOf(a),ib=DIAG_ORDER.indexOf(b);
+      return (ia<0?DIAG_ORDER.length:ia)-(ib<0?DIAG_ORDER.length:ib)||a.localeCompare(b);
+    });
+  if(diagCols.length){
+    const c=el("div",{class:"card"});
+    c.append(el("h2",{text:"Training diagnostics"}),
+      el("p",{class:"desc",text:"Per-train() diagnostics (train_diagnostics.csv), "
+        +"averaged per episode within each run, then across seeds. A variant that "
+        +"never logs a column simply has no line in that chart."}));
+    const grid=el("div",{class:"grid-charts"});
+    for(const col of diagCols){
+      const series=cmpSeries(loaded,s=>tableSeries(s.diag,null,col));
+      if(series.length)grid.append(lineChart({title:col,hint:DIAG_HINTS[col]||"",
+        series,noEndLabel:true,xLabel:cmpXLabel(),xPrefix:cmpXPrefix()}));
+    }
+    c.append(grid);
+    app.append(c);
+  }
+
+  const statsCard=cmpMatrixCard(loaded,"stats","cmpStatsMatrix",
+    "Rank metrics over training",
+    "Generic per-matrix analysis (rank_stats.csv) for one analysed matrix, seed-averaged.");
+  if(statsCard)app.append(statsCard);
+
+  const sweepCard=cmpMatrixCard(loaded,"sweep_evo","cmpSweepMatrix",
+    "Hankel sweep evolution",
+    "hankel_sweep.csv at full rollout length: averaged over rollouts within each "
+      +"run, then across seeds.");
+  if(sweepCard)app.append(sweepCard);
+}
+
 const CHARTS=[];
 const EP_HOOKS=[];
+// charts sharing a syncKey mirror each other's hover crosshair + tooltip —
+// side-by-side seed panels stay comparable point-for-point. Reset per render.
+const HOVER_SYNC={};
+function resetChartRegistries(){
+  CHARTS.length=0;EP_HOOKS.length=0;
+  for(const k in HOVER_SYNC)delete HOVER_SYNC[k];
+}
 function syncMarkers(ep){for(const c of CHARTS)c.marker(ep);for(const h of EP_HOOKS)h(ep);}
 
+// ================= CHART EXPORT (SVG / PNG for publications) =================
+// Every chart gets hover buttons that download it as a standalone figure:
+// vector SVG or 3× PNG, always in the light palette (independent of the
+// on-screen theme), with a title + legend header, axis labels on both axes,
+// and every CSS variable and class style inlined so the file renders anywhere.
+const EXPORT_FONT="Helvetica, Arial, sans-serif";
+function slugify(s){
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-")
+    .replace(/^-+|-+$/g,"").slice(0,60)||"chart";
+}
+function dlBlob(blob,name){
+  const a=el("a",{href:URL.createObjectURL(blob),download:name});
+  document.body.append(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000);
+}
+// literal-ize var(--x) colours and class-styled text (standalone SVGs carry no
+// page CSS). Must run while the light theme is active so cssv() gives print
+// colours.
+function inlineSvgStyles(node){
+  for(const e of [node,...node.querySelectorAll("*")]){
+    for(const attr of ["stroke","fill"]){
+      const v=e.getAttribute&&e.getAttribute(attr);
+      if(v&&v.startsWith("var("))e.setAttribute(attr,cssv(v.slice(4,-1).trim())||"#888888");
+    }
+    if(e.tagName==="text"){
+      const cls=e.getAttribute("class")||"";
+      if(cls.includes("end-lab")){
+        e.setAttribute("fill","#333333");e.setAttribute("font-size","11");
+        e.setAttribute("font-weight","600");
+      }else if(cls.includes("axis-txt")||cls.includes("axis-lab")){
+        e.setAttribute("fill","#555555");e.setAttribute("font-size","11");
+      }
+      e.removeAttribute("class");
+    }
+  }
+}
+function buildExportSvg(box){
+  const opts=box._opts, meta=box._meta;
+  if(!opts||!meta)return null;
+  const root=document.documentElement;
+  const hadTheme="theme" in root.dataset, prevTheme=root.dataset.theme;
+  root.dataset.theme="light";
+  let svg,legendItems;
+  try{
+    const rebuilt=lineChart({...opts,_export:true});
+    svg=rebuilt.querySelector("svg");
+    if(!svg)return null;
+    for(const n of svg.querySelectorAll("[data-noexport]"))n.remove();
+    inlineSvgStyles(svg);
+    legendItems=meta.series.map(s=>({name:s.name,dash:s.dash,
+      color:s.color&&s.color.startsWith("--")?cssv(s.color):(s.color||"#888888")}));
+  }finally{
+    if(hadTheme)root.dataset.theme=prevTheme; else delete root.dataset.theme;
+  }
+  const vb=svg.getAttribute("viewBox").split(/\s+/).map(Number);
+  const W=vb[2],H=vb[3];
+  const padX=16,gx=18,extraW=gx+30;         // breathing room: y-label + end labels
+  const ctx=document.createElement("canvas").getContext("2d");
+  ctx.font="12px "+EXPORT_FONT;
+  // header: title, wrapped legend rows, optional band note
+  let headerH=10;
+  if(meta.title)headerH+=24;
+  const showLegend=legendItems.length>1;
+  const rows=[];
+  if(showLegend){
+    let row=[],x=padX;
+    for(const it of legendItems){
+      const w=26+ctx.measureText(it.name).width+18;
+      if(x+w>W+extraW-padX&&row.length){rows.push(row);row=[];x=padX;}
+      it.x=x;row.push(it);x+=w;
+    }
+    if(row.length)rows.push(row);
+    headerH+=rows.length*20;
+  }
+  if(meta.band)headerH+=18;
+  headerH+=4;
+
+  const NS="http://www.w3.org/2000/svg";
+  const mkx=(t,a)=>{const n=document.createElementNS(NS,t);
+    for(const k in a)n.setAttribute(k,a[k]);return n;};
+  const out=mkx("svg",{xmlns:NS,width:W+extraW,height:H+headerH,
+    viewBox:`0 0 ${W+extraW} ${H+headerH}`,"font-family":EXPORT_FONT});
+  out.append(mkx("rect",{x:0,y:0,width:W+extraW,height:H+headerH,fill:"#ffffff"}));
+  let y=10;
+  if(meta.title){
+    const t=mkx("text",{x:padX,y:y+15,"font-size":"15","font-weight":"700",fill:"#111111"});
+    t.textContent=meta.title;out.append(t);y+=24;
+  }
+  if(showLegend){
+    for(const row of rows){
+      for(const it of row){
+        const ln=mkx("line",{x1:it.x,x2:it.x+18,y1:y+9,y2:y+9,
+          stroke:it.color,"stroke-width":2.5});
+        if(it.dash)ln.setAttribute("stroke-dasharray",it.dash);
+        out.append(ln);
+        const t=mkx("text",{x:it.x+24,y:y+13,"font-size":"12",fill:"#333333"});
+        t.textContent=it.name;out.append(t);
+      }
+      y+=20;
+    }
+  }
+  if(meta.band){
+    const t=mkx("text",{x:padX,y:y+12,"font-size":"11",fill:"#666666",
+      "font-style":"italic"});
+    t.textContent="shaded band = min–max range";out.append(t);y+=18;
+  }
+  const g=mkx("g",{transform:`translate(${gx},${headerH})`});
+  while(svg.firstChild)g.append(svg.firstChild);
+  out.append(g);
+  if(meta.yLabel){
+    const cy=headerH+12+(H-34-12)/2;        // centred on the plot band (m.t..H-m.b)
+    const t=mkx("text",{"font-size":"11.5",fill:"#555555","text-anchor":"middle",
+      transform:`translate(12 ${cy}) rotate(-90)`});
+    t.textContent=meta.yLabel;out.append(t);
+  }
+  return {node:out,w:W+extraW,h:H+headerH};
+}
+function serializeSvg(node){
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+    +new XMLSerializer().serializeToString(node);
+}
+async function svgToPngBlob(text,w,h,scale){
+  const url=URL.createObjectURL(new Blob([text],{type:"image/svg+xml;charset=utf-8"}));
+  try{
+    const img=new Image();
+    await new Promise((res,rej)=>{img.onload=res;
+      img.onerror=()=>rej(new Error("SVG rasterisation failed"));img.src=url;});
+    const c=document.createElement("canvas");
+    c.width=Math.round(w*scale);c.height=Math.round(h*scale);
+    const cx=c.getContext("2d");
+    cx.fillStyle="#ffffff";cx.fillRect(0,0,c.width,c.height);
+    cx.drawImage(img,0,0,c.width,c.height);
+    return await new Promise(res=>c.toBlob(res,"image/png"));
+  }finally{URL.revokeObjectURL(url);}
+}
+async function exportChart(box,fmt){
+  try{
+    const built=buildExportSvg(box);
+    if(!built)return;
+    const base=slugify(box._meta.title||box._meta.yLabel||"chart")
+      +"__"+slugify(STATE.compare?"compare":(STATE.cur?STATE.cur.run:"run"));
+    const text=serializeSvg(built.node);
+    if(fmt==="svg"){
+      dlBlob(new Blob([text],{type:"image/svg+xml"}),base+".svg");
+      return;
+    }
+    const blob=await svgToPngBlob(text,built.w,built.h,3);
+    if(blob)dlBlob(blob,base+".png");
+    else throw new Error("PNG encoding failed");
+  }catch(err){
+    console.error("chart export failed",err);
+    alert("Chart export failed: "+(err&&err.message||err));
+  }
+}
+
 function lineChart(opts){
-  const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix}=opts;
+  const {title,titleColor,hint,series,wide,noEndLabel,episodeAxis,xLabel,xPrefix,
+         xDomain,yDomain,syncKey,yLabel,_export}=opts;
   const W=wide?960:440, H=wide?300:230;
   const anyEnd=!noEndLabel&&series.some(s=>s.endLabel!==false);
   const m={l:56,r:anyEnd?70:16,t:12,b:34};
   const box=el("div",{class:"chart"});
-  if(title){
+  const tDisp=title?lbl("t:"+title,title):"";
+  if(title&&!_export){
     const ct=el("p",{class:"ct"});
     if(titleColor){const dot=el("span",{class:"dot"});dot.style.background=cssv(titleColor);ct.append(dot);}
-    ct.append(document.createTextNode(title));
+    const tspan=el("span",{text:tDisp});
+    makeEditable(tspan,"t:"+title,title);
+    ct.append(tspan);
     box.append(ct);
   }
-  if(hint)box.append(el("p",{class:"ch",text:hint}));
+  if(hint&&!_export)box.append(el("p",{class:"ch",text:hint}));
   const tip=el("div",{class:"tip"});
 
   const all=series.flatMap(s=>s.pts);
@@ -965,6 +2752,9 @@ function lineChart(opts){
   let ymin=arrMin(all,p=>p[1]), ymax=arrMax(all,p=>p[1]);
   for(const s of series)if(s.band)for(const b of s.band){
     ymin=Math.min(ymin,b[1]);ymax=Math.max(ymax,b[2]);}
+  // caller-shared domains (side-by-side panels must line up exactly)
+  if(xDomain){xmin=xDomain[0];xmax=xDomain[1];}
+  if(yDomain){ymin=yDomain[0];ymax=yDomain[1];}
   if(xmax===xmin)xmax=xmin+1;
   if(ymax===ymin){ymax+=1;ymin-=1;}
   const pad=(ymax-ymin)*0.08; ymax+=pad; ymin-=pad;
@@ -987,7 +2777,7 @@ function lineChart(opts){
   // x ticks + axis label
   for(const v of ticks(xmin,xmax,wide?6:4)){
     const t=mk("text",{x:X(v),y:H-16,"text-anchor":"middle",class:"axis-txt"});
-    t.textContent=v>=1000?(v/1000).toFixed(v%1000?1:0)+"k":String(Math.round(v));svg.append(t);
+    t.textContent=fmtSteps(v);svg.append(t);
   }
   if(xLabel){
     const t=mk("text",{x:W-m.r,y:H-2,"text-anchor":"end",class:"axis-lab"});
@@ -997,7 +2787,7 @@ function lineChart(opts){
 
   // marker line (synced to scrubber; only meaningful on episode-axis charts)
   const marker=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)",
-    "stroke-width":1.5,"stroke-dasharray":"4 4",opacity:.9});
+    "stroke-width":1.5,"stroke-dasharray":"4 4",opacity:.9,"data-noexport":"1"});
   svg.append(marker);
 
   // min–max bands first (under the lines)
@@ -1035,39 +2825,49 @@ function lineChart(opts){
   for(const e of ends){
     svg.append(mk("circle",{cx:e.x,cy:e.y,r:4,fill:e.col,stroke:"var(--surface)","stroke-width":2}));
     let ly=e.y+3; if(ly-prevY<12)ly=prevY+12; prevY=ly;
-    const t=mk("text",{x:e.x+8,y:ly,class:"end-lab"});t.textContent=e.s.name;svg.append(t);
+    const t=mk("text",{x:e.x+8,y:ly,class:"end-lab"});t.textContent=dn(e.s.name);svg.append(t);
   }
 
   // hover crosshair + tooltip (hover-enabled series only)
   const hoverSeries=series.filter(s=>s.hover!==false);
-  const cross=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)","stroke-width":1,opacity:0});
+  const cross=mk("line",{x1:-99,x2:-99,y1:m.t,y2:H-m.b,stroke:"var(--axis)","stroke-width":1,opacity:0,"data-noexport":"1"});
   svg.append(cross);
-  const hoverDots=mk("g",{});svg.append(hoverDots);
-  const overlay=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"});
+  const hoverDots=mk("g",{"data-noexport":"1"});svg.append(hoverDots);
+  const overlay=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent","data-noexport":"1"});
   svg.append(overlay);
 
   const xs=[...new Set(hoverSeries.flatMap(s=>s.pts.map(p=>p[0])))].sort((a,b)=>a-b);
-  function move(ev){
+  // nearest point of one series to x value xv (pts are sorted by x)
+  function nearestPt(pts,xv){
+    let a=0,b=pts.length-1;
+    while(b-a>1){const mid=(a+b)>>1;(pts[mid][0]<=xv)?a=mid:b=mid;}
+    return Math.abs(pts[a][0]-xv)<=Math.abs(pts[b][0]-xv)?pts[a]:pts[b];
+  }
+  function showAt(xv){
     if(!xs.length)return;
     const r=svg.getBoundingClientRect();
-    const px=(ev.clientX-r.left)/r.width*W;
-    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
     let near=xs[0]; for(const x of xs)if(Math.abs(x-xv)<Math.abs(near-xv))near=x;
     cross.setAttribute("x1",X(near));cross.setAttribute("x2",X(near));cross.setAttribute("opacity",.7);
     hoverDots.innerHTML="";
     const rows=[];
+    // per-series nearest within a 1%-of-span tolerance: seed curves on an
+    // env-steps axis never share exact x values, but should all report
+    const tol=(xmax-xmin)/100;
     for(const s of hoverSeries){
-      const p=s.pts.find(q=>q[0]===near); if(!p)continue;
+      if(!s.pts.length)continue;
+      const p=nearestPt(s.pts,near);
+      if(p[0]!==near&&Math.abs(p[0]-near)>tol)continue;
       const c=col(s);
-      hoverDots.append(mk("circle",{cx:X(near),cy:Y(p[1]),r:4,fill:c,
+      hoverDots.append(mk("circle",{cx:X(p[0]),cy:Y(p[1]),r:4,fill:c,
         stroke:"var(--surface)","stroke-width":2}));
       let extra="";
-      if(s.band){const b=s.band.find(q=>q[0]===near);
+      if(s.band){const b=s.band.find(q=>q[0]===p[0]);
         if(b)extra=`  (${fmtN(b[1])}–${fmtN(b[2])})`;}
-      rows.push({name:s.name,color:c,v:fmtN(p[1])+extra});
+      rows.push({name:dn(s.name),color:c,v:fmtN(p[1])+extra});
     }
     tip.innerHTML="";
-    tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))+near.toLocaleString()}));
+    tip.append(el("div",{class:"tep",text:(xPrefix||((xLabel||"x")+" "))
+      +(Number.isInteger(near)?near.toLocaleString():fmtN(near))}));
     for(const rw of rows){
       const row=el("div",{class:"row"});row.style.color=rw.color;
       row.append(el("span",{class:"k"}),
@@ -1080,20 +2880,55 @@ function lineChart(opts){
     let tx=(X(near)/W)*r.width+12; if(tx>r.width-150)tx=(X(near)/W)*r.width-150;
     tip.style.left=Math.max(0,tx)+"px"; tip.style.top="6px";
   }
-  overlay.addEventListener("pointermove",move);
-  overlay.addEventListener("pointerleave",()=>{cross.setAttribute("opacity",0);hoverDots.innerHTML="";tip.style.opacity=0;});
+  function hideHover(){cross.setAttribute("opacity",0);hoverDots.innerHTML="";tip.style.opacity=0;}
+  overlay.addEventListener("pointermove",ev=>{
+    const r=svg.getBoundingClientRect();
+    const px=(ev.clientX-r.left)/r.width*W;
+    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
+    if(syncKey)for(const h of HOVER_SYNC[syncKey]||[])h.showAt(xv);
+    else showAt(xv);
+  });
+  overlay.addEventListener("pointerleave",()=>{
+    if(syncKey)for(const h of HOVER_SYNC[syncKey]||[])h.hide();
+    else hideHover();
+  });
+  if(syncKey&&!_export)(HOVER_SYNC[syncKey]=HOVER_SYNC[syncKey]||[]).push({showAt,hide:hideHover});
 
   box.append(svg,tip);
-  if(episodeAxis)
-    CHARTS.push({marker:ep=>{if(ep>=xmin&&ep<=xmax){marker.setAttribute("x1",X(ep));marker.setAttribute("x2",X(ep));}
+  // scrubber-synced marker: on episode axes directly, on re-based axes via the
+  // caller's episode -> x mapping (opts.epToX), so e.g. the learning curve on
+  // env steps still tracks the episode selected in the spectra scrubber
+  if((episodeAxis||opts.epToX)&&!_export)
+    CHARTS.push({marker:ep=>{
+      const x=opts.epToX?opts.epToX(ep):ep;
+      if(x!=null&&x>=xmin&&x<=xmax){marker.setAttribute("x1",X(x));marker.setAttribute("x2",X(x));}
       else{marker.setAttribute("x1",-99);marker.setAttribute("x2",-99);}}});
+  if(!_export){
+    // publication export: keep everything the rebuild needs, plus the labels
+    // as currently displayed (double-click renames included)
+    box._opts=opts;
+    box._meta={title:tDisp,xLabel:xLabel||"",yLabel:yLabel||tDisp||"",
+      band:series.some(s=>s.band&&s.band.length>1),
+      series:series.map(s=>({name:dn(s.name),color:s.color,dash:s.dash||""}))};
+    const bSvg=el("button",{text:"⬇ SVG",title:"Download as vector SVG (publication-ready)"});
+    const bPng=el("button",{text:"⬇ PNG",title:"Download as high-resolution PNG (3×)"});
+    bSvg.onclick=e=>{e.stopPropagation();exportChart(box,"svg");};
+    bPng.onclick=e=>{e.stopPropagation();exportChart(box,"png");};
+    box.append(el("div",{class:"expbtns"},bSvg,bPng));
+  }
   return box;
 }
 
 function ticks(lo,hi,n){
   const span=hi-lo, step0=span/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
   const norm=step0/mag; let step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
-  const out=[]; for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(6));
+  // Bounded loop: when the range is a few float-ULPs wide, v+step can round
+  // back to v and the naive loop never terminates, freezing the tab.
+  const out=[];
+  for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9&&out.length<200;v+=step){
+    out.push(+v.toFixed(6));
+    if(v+step===v)break;
+  }
   return out;
 }
 

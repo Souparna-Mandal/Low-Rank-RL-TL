@@ -1,0 +1,159 @@
+# FHR-DQN on CartPole-v1 — learned-recurrence (AR/ARX) penalty, no SVDs.
+#
+# The penalty rides the TD batch: every sampled transition with at least
+# fhr_order same-episode predecessors contributes
+#   Huber( Q(s_t,a_t),  sum_j c_j Q(s_{t-j},a_{t-j})  [+ sum_k d_k r_{t-k}] )
+# with one global learned coefficient vector, shared across all episodes and
+# trained by the same optimiser as the network (own param group). Kronecker's
+# theorem makes the zero-residual set exactly the window-Hankel-rank <= r set,
+# so this is the SVD-free surrogate for the HR-DQN nuclear-norm penalty.
+# fhr_weight: 0.0 turns this file into classical Double-DQN — exactly what the
+# comparison notebook's baseline arm overrides (one config, one code path, one
+# difference).
+
+experiment:
+  name: dqn_cartpole_fhrdqn
+  seed: 0                # fallback when `seeds` is absent or empty
+  # The comparison notebook trains both arms once per seed and reports
+  # seed-averaged curves; each (arm, seed) pair gets its own runs/ directory.
+  seeds: [0, 1, 2]
+  # Numbered FHR experiments for run_fhrdqn_seeds.py --experiment N [M ...]:
+  # each entry is ONE full FHR parameter set — any subset of fhr_weight,
+  # fhr_order, reward_lags, warmup_grad_steps, c_learning_rate, and the
+  # rampdown_* params (see the agent block); unspecified
+  # params inherit the agent block below. A launch trains the shared baseline
+  # (fhr_weight 0, plain _baseline run names, reused if already recorded in
+  # cached/fhrdqn_runs_manifest.json) plus one _exp<N>-tagged arm per number,
+  # so the result viewer's compare mode shows baseline vs each experiment.
+  # Edit/add entries freely — fhr_weight 0 is rejected (baseline covers it).
+  fhr_experiments:
+    1: {fhr_weight: 0.147, fhr_order: 4, reward_lags: True,
+        warmup_grad_steps: 1250, c_learning_rate: 0.0149}  # = agent block below
+    2: {fhr_weight: 0.5}     # higher lambda, everything else inherited
+    3: {fhr_weight: 0.147, fhr_order: 2, reward_lags: False}
+                             # theory-minimal pure-AR order-2 recurrence
+  # CPU: the Q-net is a 2x128 MLP and the penalty is one batched forward plus a
+  # length-r matvec — no SVDs, so cuda also works, but CartPole at this size is
+  # fastest on CPU.
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state:
+      min: [-4.8, -10, -0.41887903, -10,]
+      max: [4.8, 10, 0.41887903, 10]
+  clip:
+    action: False
+    state :
+      min: [ null, -100, null, -100]
+      max: [ null, 100, null, 100]
+
+network:
+  # MLP Q-network is defined in ../run_fhrdqn_seeds.py. [128,128] is the net
+  # the Optuna study fixed and tuned at (its lambda=0 baseline already sits at
+  # the CartPole ceiling: best rolling-50 ~476/500).
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 100000
+  batch_size: 128
+  nn_learning_rate: 0.0005
+  eps_start: 1.0
+  eps_min: 0.01
+  decay_rate: 0.99992
+  discount_factor: 0.99
+  TD_LR: 0.3            # soft target-network updates
+  buffer_util: 1        # gradient steps/episode ~ len(buffer) / (buffer_util * batch)
+  gd_steps_ceil: 40     # hard cap on gradient steps per training call
+  grad_clip_norm: 10.0  # max global L2 norm for gradient clipping per step
+                        # (network only — the recurrence coefficients are exempt)
+  double: True
+  # --- FHR learned-recurrence penalty (fhr_weight 0 => exact QAgent) ---
+  # Values below = Optuna best trial #16 (study cartpole_fhr_128x128, seeds
+  # 0/1): 478.7 vs 476.5 lambda=0 baseline — WITHIN NOISE. CartPole at
+  # [128,128] is ceiling-limited (~477-479/500 either arm), so this study
+  # neither shows an FHR benefit nor a cost at the tuned values; the transfer
+  # stage found the params neutral at big nets and harmful at tiny ones.
+  fhr_weight: 0.147       # lambda on the recurrence residual (Q units).
+  fhr_order: 4            # r: number of Q-value lags = target Hankel rank
+                          # (theory-minimal pure-AR order is 2, roots
+                          # {1, 1/gamma}; the search preferred 4).
+  reward_lags: True       # ARX: also learn d_k on the r preceding rewards
+                          # (exact Bellman representable already at order 1).
+  warmup_grad_steps: 1250 # hard warm-up K0: lambda = 0 for this many gradient
+                          # steps, then full fhr_weight in one step (no ramp) —
+                          # early Q is low-rank-but-wrong, so regularising it
+                          # from step 0 consolidates bad structure. Cadence here
+                          # is 40 grad steps per train() call (one call per
+                          # episode), so 1250 is ~ep 30.
+  c_learning_rate: 0.0149 # lr of the c/d param group: weight_decay 0 (AdamW's
+                          # default decay would drag the coefficients toward 0),
+                          # excluded from grad clipping and the target network.
+  # --- automatic lambda ramp-down (armed only when the reward threshold is set) ---
+  # After warm-up, once the mean episode reward over the last
+  # rampdown_patience_eps episodes reaches rampdown_reward_threshold while every
+  # one of them kept a mean recurrence residual (penalty_raw) >=
+  # rampdown_penalty_threshold, the penalty is judged to be fighting an
+  # already-good policy: lambda anneals linearly to 0 over rampdown_episodes
+  # episodes (0 = switch off immediately). One-way; needs dqn_training_loop's
+  # notify_episode_end hook. rampdown_scale lands in train_diagnostics.csv.
+  rampdown_reward_threshold: null   # e.g. 400; null disables the feature
+  rampdown_penalty_threshold: null  # absolute number, or a string like "40%" =
+                                    # that fraction of the mean of the topk
+                                    # largest per-episode residuals seen so far
+                                    # (post-warm-up); null = reward alone gates
+  rampdown_penalty_topk: 20         # history size for the "NN%" relative bar
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  no_episodes: 1500
+  target_network_update_steps: 100
+  train_frequency_steps: 50
+  use_episode_training: True   # one train() call per episode -> one diagnostics row per episode
+  solved_reward: 475           # CartPole-v1 solved at >= 475 avg reward
+  warmup_steps: 1500
+  early_stopping_patience_eps: 50   # solve-ep = first episode whose rolling-50 mean crosses 475
+  no_eps_to_avg: 10
+
+analysis:
+  # Low-rank Hankel + Q-function diagnostics — ON by default so every
+  # comparison run records the mechanism plots (spectra figures show
+  # log10(sigma + machine-eps) of the raw value-sequence Hankel; see
+  # plot_matrix_spectra in src/analysis/low_rank/rank.py). Set methods: []
+  # and hankel_sweep.enabled: false for a faster reward-only run.
+  ep_freq: 50
+  methods:                         # Q-matrix rank tracking over a state grid
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true                  # greedy-rollout Hankel spectra +
+                                   # effective-rank evolution in the viewer
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]   # vanilla net => advantage trace is trivial
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false                 # <- true for held-out AR-fit quality of the
+                                   #    frozen greedy policy's value sequences
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

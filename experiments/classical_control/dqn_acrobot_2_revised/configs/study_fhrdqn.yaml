@@ -1,0 +1,28 @@
+# FHR Optuna study settings for Acrobot-v1, consumed by ../../src/run_fhrdqn_optuna.py
+# (run from the experiment directory). Search stage fixes the Q-net at [16, 16] and tunes
+# the five FHR params; transfer stage checks the winner vs lambda=0 across net
+# sizes on a seed set that includes held-out seed 54.
+
+study:
+  name: acrobot_fhr_16x16
+  hidden_sizes: [16, 16]        # fixed for the search stage
+  seeds: [52, 53]               # common random numbers across trials
+  n_trials: 48
+  n_jobs: 3                     # parallel trials x len(seeds) = 6 trainings
+  n_startup_trials: 10          # random exploration before TPE kicks in
+  episodes: null                # null = training.no_episodes (500)
+  enqueue:                      # known points evaluated first on a fresh study
+    - {fhr_weight: 0.5, fhr_order: 2, reward_lags: false,
+       warmup_grad_steps: 500, c_learning_rate: 0.05}
+
+search_space:                   # list = categorical; {low, high, [step], [log]}
+  fhr_weight: {low: 0.01, high: 2.0, log: true}
+  fhr_order: {low: 1, high: 4}
+  reward_lags: [false, true]
+  warmup_grad_steps: {low: 0, high: 5000, step: 250}
+  c_learning_rate: {low: 0.001, high: 0.2, log: true}
+
+transfer:
+  sizes: [[8], [16], [16, 16], [32, 32], [64, 64]]
+  seeds: [52, 53, 54]           # 54 held out from the search
+  max_workers: 6

@@ -165,7 +165,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
             action = self.act_greedy(state)
         return action
     
-    def update_buffer_atari(self, state, action, reward, next_state, terminated):
+    def update_buffer_atari(self, state, action, reward, next_state, terminated, truncated=False):
         """_summary_
 
         Args:
@@ -182,7 +182,7 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         
         self.replay_buffer.push(state,action,next_state,reward) 
     
-    def update_buffer(self, state, action, reward, next_state, terminated):
+    def update_buffer(self, state, action, reward, next_state, terminated, truncated=False):
         """_summary_
 
         Args:

@@ -1,0 +1,100 @@
+# Baseline DQN on Acrobot with the autoregressive value-recurrence probe.
+#
+# Deliberately a PLAIN DQN run: no Hankel-rank regularisation term anywhere in
+# the loss. The question this experiment asks is how predictable the value
+# signal of an ordinary agent becomes over training, so nothing may push the
+# agent towards low-rank values.
+#
+# Agent and training settings are copied verbatim from config.yaml so that this
+# is the same baseline run, only with different analysis attached. The Hankel
+# spectrum analysis is off because it rolls the environment ten extra times per
+# checkpoint and this experiment does not use it.
+experiment:
+  name: dqn_acrobot_2_autoregressive_recurrence
+  seed: 52
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: Acrobot-v1
+  render_mode: null
+  discrete_config: null
+  normalise:
+    action: {}
+    state: {}
+  clip:
+    action: False
+    state: []
+
+network:
+  hidden_sizes: [128, 128]
+
+agent:
+  replay_buffer_capacity: 10000
+  batch_size: 128
+  nn_learning_rate: 0.0003
+  eps_start: 1.0
+  eps_min: 0.05
+  decay_rate: 0.99995
+  discount_factor: 0.99
+  TD_LR: 0.005
+  buffer_util: 1
+  gd_steps_ceil: 1
+  grad_clip_norm: 20.0
+
+training:
+  no_episodes: 500
+  target_network_update_steps: 2
+  train_frequency_steps: 2
+  use_episode_training: False
+  solved_reward: -80
+  warmup_steps: 5000
+  # No early stop: the probe is about how predictability EVOLVES, so the run
+  # should cover the whole budget rather than stopping once the task is solved.
+  early_stopping_patience_eps: 1000000
+  no_eps_to_avg: 10
+
+analysis:
+  # How often every analysis below runs, in episodes. This is also the
+  # checkpoint cadence at which the value-recurrence probe fires.
+  ep_freq: 10
+  methods: []
+  hankel_sweep:
+    enabled: false
+
+  # Freeze the policy, roll greedy trajectories, and fit one linear recurrence
+  # of each order to their value sequences. See
+  # src/analysis/low_rank/autoregressive_value_probe.py for what each split and
+  # each error measure means.
+  autoregressive_value_probe:
+    enabled: true
+    # Recurrence orders to fit. 2 is the order the low-rank work centres on;
+    # 8 is included so that over-parameterisation shows up as free-running
+    # divergence rather than as a quietly better fit.
+    orders: [2, 4]
+    # Trajectories rolled per checkpoint. training_fraction of them are fitted
+    # on and the rest are held out, so this must be comfortably above 2.
+    n_trajectories: 50
+    training_fraction: 0.5
+    # Fixed probe seeds, offset well clear of the training seed so the probe
+    # trajectories are a consistent, reproducible evaluation set at every
+    # checkpoint rather than a moving target.
+    base_seed: 20000
+    ridge_penalty: 1.0e-7
+    # Value sequences sit at a non-zero level, so without an intercept the
+    # recurrence would spend its coefficients representing that offset.
+    fit_intercept: False
+    # Rolling-horizon forecast windows. At each horizon tau the recurrence
+    # predicts tau steps from the true history, is then re-anchored on the
+    # values that actually occurred, and predicts the next tau -- which is how
+    # such a model would really be used. The sweep contains the other two
+    # regimes as its endpoints: horizon 1 is exactly one-step-ahead, and a
+    # horizon longer than the trajectory is exactly free running, so this
+    # measures how far ahead the recurrence stays useful.
+    forecast_horizons: [1, 2, 4, 8, 16, 32, 64]
+    # How many example trajectories per subset get their actual-vs-predicted
+    # arrays saved for plotting.
+    n_example_rollouts: 2
+    # Acrobot episodes are capped at 500 steps by the environment itself, so
+    # this only guards against a pathological non-terminating rollout.
+    max_steps: 10000

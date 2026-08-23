@@ -53,3 +53,6 @@ claude
 results_viewer_app/
 # PPO benchmark caches (reproducible from config_ppo.yaml)
 experiments/*/results_ppo/
+# HR-DQN benchmark caches (reproducible via exp1_hankel.ipynb)
+results_hankel/
+results_recurrence/
