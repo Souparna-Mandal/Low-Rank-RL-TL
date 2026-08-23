@@ -6,24 +6,20 @@
 # The old effrainbow runs trained under the pre-2026-08-21 game-restart
 # protocol and live in the archived manifest family — never pool with these.
 experiment:
-  name: dqn_krull_effrainbow100k
+  name: dqn_bank_heist_effrainbow100k
   seed: 0
-  seeds: [0, 1]
+  seeds: [0]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
   # augmentation over NatureCNNEncoder (src/agents/efficient_rainbow_agent.py).
   agent_class: efficient_rainbow
-  include_in_aggregate: true
+  include_in_aggregate: false
   fhr_experiments:
     3: {fhr_weight: 2, fhr_order: 8}   # same arm as the BBF comparison
-    # ARX: reward lags absorb the score-event kinks the pure-AR penalty taxes
-    # (see cached/kink_diagnostic.png). Paired 1:1 against exp2 (λ0.5, r2):
-    # the ONLY difference is reward_lags.
-    # 4: {fhr_weight: 0.5, fhr_order: 2, reward_lags: True}
 
 environment:
-  name: ALE/Krull-v5
+  name: ALE/BankHeist-v5
   render_mode: null
   discrete_config: null
   normalise: {action: {}, state: {}}
