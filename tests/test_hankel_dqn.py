@@ -75,21 +75,71 @@ def test_penalty_minimizable_and_finite_grads():
     assert float(p) == 0.0 and torch.isfinite(c.grad).all()
 
 
-def test_log_transform_penalty():
-    # Windows whose signed log sign(v)*log1p(|v|) is an exact rank-2 sequence:
-    # low tail after the transform, high tail on the raw values.
-    y = _rank2_batch(6, 16)
-    v = torch.sign(y) * torch.expm1(y.abs())  # symlog^{-1}(y)
-    p_log, d_log = HankelRankPenalty(order=2, log_transform=True)(v)
-    p_raw, _ = HankelRankPenalty(order=2)(v)
-    assert float(p_log) < 1e-5, f"log-domain penalty {float(p_log)}"
-    assert d_log["converged_frac"] == 1.0
-    assert float(p_raw) > 1e-3, f"raw penalty should see high rank: {float(p_raw)}"
-    # Gradients stay finite through the transform, including at negative values.
-    x = (v + 0.1 * torch.randn(6, 16)).requires_grad_(True)
-    p, _ = HankelRankPenalty(order=2, log_transform=True)(x)
+def test_log_sigma_false_matches_raw_formula():
+    # log_sigma=False must reproduce the linear tail formula exactly:
+    # mean over kept windows of sum_{i>=order} sigma_i / sg(sum_j sigma_j),
+    # computed on the float64 Hankel spectrum of each window.
+    torch.manual_seed(9)
+    x = torch.randn(6, 16)
+    p, d = HankelRankPenalty(order=2, log_sigma=False)(x)
+    L = (16 + 1) // 2
+    svals = torch.linalg.svdvals(x.unfold(1, L, 1).double())
+    tail = svals[:, 2:].sum(dim=1)
+    total = svals.sum(dim=1).clamp_min(1e-12)
+    rel = tail / total
+    keep = (rel > 1e-6).double()  # no gate_threshold; converged windows drop
+    ref = ((svals[:, 2:] * keep.unsqueeze(1)).sum(dim=1) / total).sum() / keep.sum().clamp_min(1.0)
+    assert float(p) == float(ref.float()), f"{float(p)} != {float(ref)}"
+    assert d["rel_tail"] == float(rel.mean())
+
+
+def test_log_sigma_penalty_decreases_with_tail():
+    # With log_sigma=True the tail is sum_i log1p(sigma_hat_i / eps_log):
+    # smaller normalised tail singular values -> smaller penalty.
+    torch.manual_seed(10)
+    base = _rank2_batch(6, 16)
+    noise = torch.randn(6, 16)
+    pen = HankelRankPenalty(order=2, log_sigma=True)
+    p_far, _ = pen(base + 0.5 * noise)
+    p_near, _ = pen(base + 0.01 * noise)
+    assert 0 < float(p_near) < float(p_far), f"{float(p_near)} !< {float(p_far)}"
+    # Gradients are finite and non-trivial in log-sigma mode.
+    x = (base + 0.05 * noise).requires_grad_(True)
+    p, _ = pen(x)
     p.backward()
-    assert float(p) > 0 and torch.isfinite(x.grad).all()
+    assert torch.isfinite(x.grad).all() and float(x.grad.abs().sum()) > 0
+
+
+def test_log_sigma_finite_on_degenerate():
+    pen = HankelRankPenalty(order=2, log_sigma=True)
+    # Constant sequence: rank-1 Hankel, zero tail spectrum. Converged gate
+    # drops it, but penalty and backward() must stay finite regardless.
+    c = torch.ones(4, 16, requires_grad=True)
+    p, _ = pen(c)
+    assert np.isfinite(float(p))
+    p.backward()
+    assert torch.isfinite(c.grad).all()
+    # Exact order-3 sequence, order=2: the kept tail mixes a genuine sigma_3
+    # with (near-)zero sigma_4.. — log1p must give finite value and gradients.
+    t = torch.arange(16, dtype=torch.float32)
+    x = (0.9 ** t + 0.5 * 0.7 ** t + 0.25 * 0.5 ** t).repeat(4, 1).requires_grad_(True)
+    p, d = pen(x)
+    assert np.isfinite(float(p)) and float(p) > 0 and d["converged_frac"] == 0.0
+    p.backward()
+    assert torch.isfinite(x.grad).all()
+
+
+def test_removed_log_transform_kwarg_raises():
+    try:
+        HankelRankPenalty(order=2, log_transform=True)
+        raise AssertionError("expected TypeError from removed log_transform kwarg")
+    except TypeError:
+        pass
+    try:
+        _make_agent(0.01, hankel_log=True)
+        raise AssertionError("expected TypeError from removed hankel_log kwarg")
+    except TypeError:
+        pass
 
 
 def test_gate_excludes_offmanifold_windows():
