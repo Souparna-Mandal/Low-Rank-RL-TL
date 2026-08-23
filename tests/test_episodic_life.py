@@ -134,3 +134,107 @@ def test_build_env_wires_episodic_life_and_eval_override():
                                      "terminal_on_life_loss": True}}}
     with pytest.raises(ValueError, match="mutually exclusive"):
         build_env(bad)
+
+
+# --------------------------------------------------------------------------
+# force_full_reset: the escape hatch the training loop needs after an analysis
+# rollout hijacks the training env (see training.reset_after_analysis).
+# --------------------------------------------------------------------------
+
+def test_force_full_reset_restarts_after_a_life_loss():
+    """Without it, a reset() following a life-loss termination continues the
+    same game — which would hand the next training episode the game state the
+    ANALYSIS policy reached."""
+    env = EpisodicLifeWrapper(FakeLivesEnv(life_len=4))
+    env.reset()
+    for _ in range(4):                      # burn one life -> terminated
+        _, _, terminated, _, _ = env.step(0)
+    assert terminated and env.unwrapped.lives_left == 2
+
+    before = env.unwrapped.full_resets
+    env.force_full_reset()
+    env.reset()
+    assert env.unwrapped.full_resets == before + 1, "should truly restart"
+    assert env.unwrapped.lives_left == 3
+    assert env.unwrapped.t == 0
+
+
+def test_plain_reset_after_life_loss_still_continues_the_game():
+    """The default protocol is unchanged — force_full_reset is opt-in."""
+    env = EpisodicLifeWrapper(FakeLivesEnv(life_len=4))
+    env.reset()
+    for _ in range(4):
+        env.step(0)
+    before = env.unwrapped.full_resets
+    env.reset()
+    assert env.unwrapped.full_resets == before, "must NOT restart the game"
+    assert env.unwrapped.lives_left == 2
+
+
+def test_force_full_reset_survives_nested_wrappers_via_get_wrapper_attr():
+    """The wrapper sits BELOW frame-stack/reward wrappers in build_env, and
+    Gymnasium 1.x does not forward attributes through them — plain getattr
+    silently misses it, which is why training.reset_after_analysis uses
+    get_wrapper_attr."""
+    inner = EpisodicLifeWrapper(FakeLivesEnv(life_len=4))
+    env = gym.Wrapper(gym.Wrapper(inner))
+    env.reset()
+    for _ in range(4):
+        env.step(0)
+    assert getattr(env, "force_full_reset", None) is None, "getattr must not find it"
+
+    before = inner.unwrapped.full_resets
+    env.get_wrapper_attr("force_full_reset")()
+    env.reset()
+    assert inner.unwrapped.full_resets == before + 1
+
+
+def test_reset_after_analysis_restarts_only_when_something_rolled_out():
+    from training import reset_after_analysis
+
+    env = gym.Wrapper(EpisodicLifeWrapper(FakeLivesEnv(life_len=4)))
+    env.reset()
+    for _ in range(4):
+        env.step(0)
+    before = env.unwrapped.full_resets
+    reset_after_analysis(env, rolled_out=True)
+    assert env.unwrapped.full_resets == before + 1
+
+
+def test_reset_after_analysis_without_a_rollout_keeps_the_life_protocol():
+    """A tick that never touched `env` leaves it where the ordinary
+    end-of-episode reset put it — forcing a restart there would throw away the
+    remaining lives and change the training protocol."""
+    from training import reset_after_analysis
+
+    env = gym.Wrapper(EpisodicLifeWrapper(FakeLivesEnv(life_len=4)))
+    env.reset()
+    for _ in range(4):
+        env.step(0)
+    before = env.unwrapped.full_resets
+    reset_after_analysis(env, rolled_out=False)
+    assert env.unwrapped.full_resets == before, "must NOT restart the game"
+    assert env.unwrapped.lives_left == 2
+
+
+def test_reset_after_analysis_is_a_noop_for_envs_without_the_wrapper():
+    from training import reset_after_analysis
+
+    plain = gym.make("CartPole-v1")
+    plain.reset()
+    obs, _ = reset_after_analysis(plain, rolled_out=True)
+    assert obs is not None
+    plain.close()
+
+
+def test_run_analysis_tick_reports_whether_it_touched_the_env():
+    """The flag reset_after_analysis keys off: no rollout blocks configured =>
+    False, an enabled hankel_sweep => True."""
+    from training import run_analysis_tick
+
+    env = gym.Wrapper(EpisodicLifeWrapper(FakeLivesEnv(life_len=4)))
+    env.reset()
+    assert run_analysis_tick(agent=None, env=env, analysis_config={}) is False
+    assert run_analysis_tick(agent=None, env=env,
+                             analysis_config={"methods": [],
+                                              "hankel_sweep": {"enabled": False}}) is False

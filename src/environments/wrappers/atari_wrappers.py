@@ -40,6 +40,18 @@ class EpisodicLifeWrapper(gym.Wrapper):
         self.lives = lives
         return obs, reward, terminated, truncated, info
 
+    def force_full_reset(self):
+        """Make the NEXT ``reset()`` a true game restart even though the last
+        termination was only a life loss.
+
+        Callers that roll this env out for their own purposes — the periodic
+        analysis tick rolls it to termination, which under this protocol is
+        usually a life loss — must call this before handing the env back to
+        training. Without it the plain unseeded ``reset()`` takes the
+        continuation branch and the next training episode resumes from the
+        game state the OTHER policy left behind."""
+        self.was_real_done = True
+
     def reset(self, *, seed=None, options=None):
         if self.was_real_done or seed is not None:
             obs, info = self.env.reset(seed=seed, options=options)
