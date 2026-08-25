@@ -41,7 +41,13 @@ algo:
   train_freq: 1           # 1 gradient step per env step (replay ratio 1)
   gradient_steps: 1
   ent_coef: auto
-  target_entropy_scale: 0.98   # H_target = 0.98 * log|A| (Christodoulou 2019)
+  # H_target = scale * log|A|. Christodoulou's 0.98 is degenerate at |A|=2:
+  # it demands H >= 0.679 vs uniform 0.693 (0.014 nats of slack), so any
+  # usefully-committed policy sits under target forever, alpha ratchets up
+  # without bound (measured: 4.6e7 by 50k steps), the entropy bonus inflates
+  # Q and every arm — baseline included — collapses after solving. The
+  # scale-0.98 family is archived as sb3_runs_manifest_sacd.scale098.json.
+  target_entropy_scale: 0.6    # H_target 0.416: commitment allowed
   net_arch: [256, 256]
 
 agent:

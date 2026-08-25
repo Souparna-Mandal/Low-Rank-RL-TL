@@ -33,7 +33,10 @@ algo:
   train_freq: 1
   gradient_steps: 1
   ent_coef: auto
-  target_entropy_scale: 0.98
+  # 0.98 * log(3) = 1.077 vs uniform 1.099 — the same near-zero-slack trap
+  # that made alpha diverge on CartPole (see that config); the scale-0.98
+  # partial family is archived as sb3_runs_manifest_sacd.scale098.json.
+  target_entropy_scale: 0.6    # H_target 0.659: commitment allowed
   net_arch: [256, 256]
 
 agent:
