@@ -53,6 +53,7 @@ import torch.nn.functional as F
 from stable_baselines3 import DQN
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.policies import ContinuousCritic
 
 try:
     from sb3_contrib import QRDQN
@@ -159,22 +160,40 @@ def _bellman_init(order: int, gamma: float, reward_lags: bool):
     return c0, d0
 
 
-def penultimate_features(qnet, obs: torch.Tensor) -> torch.Tensor:
-    """Activations feeding the FINAL linear layer of an SB3 QNetwork /
-    QuantileNetwork: features_extractor output pushed through every head
-    module except the last. Gradients flow into the shared trunk."""
+def _head_sequential(qnet):
+    """The head Sequential whose last layer defines the penultimate space:
+    q_net/quantile_net for the DQN family, q_networks[0] for multi-critic
+    modules (SAC's ContinuousCritic, SACD's DiscreteCritic)."""
     seq = getattr(qnet, "q_net", None) or getattr(qnet, "quantile_net", None)
+    if seq is None and hasattr(qnet, "q_networks"):
+        seq = qnet.q_networks[0]
     if seq is None:
         raise TypeError(f"cannot find the head Sequential on {type(qnet).__name__}")
+    return seq
+
+
+def penultimate_features(qnet, obs: torch.Tensor,
+                         actions: torch.Tensor | None = None) -> torch.Tensor:
+    """Activations feeding the FINAL linear layer of an SB3 value network:
+    features_extractor output pushed through every head module except the
+    last. Gradients flow into the shared trunk. For SAC's ContinuousCritic
+    the head input is cat(features, actions) — pass the anchor actions; this
+    deliberately does NOT go through q1_forward, whose no_grad feature
+    extraction would cut the shared-trunk gradient path."""
+    seq = _head_sequential(qnet)
     x = qnet.extract_features(obs, qnet.features_extractor)
+    if isinstance(qnet, ContinuousCritic):
+        if actions is None:
+            raise ValueError("ContinuousCritic penultimate features need the "
+                             "anchor actions (head input is cat(features, a))")
+        x = torch.cat([x, actions], dim=1)
     for module in list(seq)[:-1]:
         x = module(x)
     return x
 
 
 def penultimate_dim(qnet) -> int:
-    seq = getattr(qnet, "q_net", None) or getattr(qnet, "quantile_net", None)
-    return int(list(seq)[-1].in_features)
+    return int(list(_head_sequential(qnet))[-1].in_features)
 
 
 class FHRCoefficientPredictor(nn.Module):
@@ -204,14 +223,19 @@ class FHRCoefficientPredictor(nn.Module):
     """
 
     def __init__(self, order: int, gamma: float, reward_lags: bool,
-                 mode: str, in_dim: int, n_actions: int, hidden: int = 64):
+                 mode: str, in_dim: int, n_actions: int, hidden: int = 64,
+                 action_encoding: str = "onehot"):
         super().__init__()
         if mode not in ("shared", "separate"):
             raise ValueError(f"c_predictor mode must be shared|separate, got {mode!r}")
+        if action_encoding not in ("onehot", "raw"):
+            raise ValueError("action_encoding must be onehot|raw, "
+                             f"got {action_encoding!r}")
         self.order = order
         self.reward_lags = reward_lags
         self.mode = mode
-        self.n_actions = n_actions
+        self.n_actions = n_actions        # action dim when encoding is "raw"
+        self.action_encoding = action_encoding
         out_dim = order * (2 if reward_lags else 1)
         if mode == "separate":
             self.net = nn.Sequential(
@@ -228,10 +252,14 @@ class FHRCoefficientPredictor(nn.Module):
 
     def forward(self, features: torch.Tensor, actions: torch.Tensor):
         """features: (n, in_dim) — flattened obs (separate) or penultimate
-        activations (shared); actions: (n,) int64. Returns (c (n, r),
-        d (n, r) or None)."""
-        onehot = F.one_hot(actions.long().reshape(-1), self.n_actions).float()
-        out = self.net(torch.cat([features, onehot], dim=1))
+        activations (shared); actions: (n,) int64 for "onehot" or
+        (n, act_dim) float for "raw". Returns (c (n, r), d (n, r) or None)."""
+        if self.action_encoding == "raw":
+            act_repr = actions.float().reshape(-1, self.n_actions)
+        else:
+            act_repr = F.one_hot(actions.long().reshape(-1),
+                                 self.n_actions).float()
+        out = self.net(torch.cat([features, act_repr], dim=1))
         if self.reward_lags:
             return out[:, :self.order], out[:, self.order:]
         return out, None
@@ -241,6 +269,7 @@ class FHRCoefficientPredictor(nn.Module):
 # run_fhrdqn_seeds.FHR_PARAMS so launchers/notebooks can validate identically.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
               "rampdown_episodes")
@@ -252,17 +281,26 @@ class _FHRMixin:
     FHREpisodicReplayBuffer. Config knobs and semantics are 1:1 with
     FHRDQNAgent (see that class's docstring)."""
 
+    # whether this algorithm's train() implements the PER weighting/priority
+    # feedback; the DQN family does not (prioritized_replay is rejected there)
+    _fhr_supports_per = False
+
     def _set_fhr_config(self, fhr_weight, fhr_order, reward_lags,
                         warmup_grad_steps, c_learning_rate,
                         rampdown_reward_threshold, rampdown_penalty_threshold,
                         rampdown_penalty_topk, rampdown_patience_eps,
-                        rampdown_episodes, c_predictor="none"):
+                        rampdown_episodes, c_predictor="none",
+                        prioritized_replay=False, per_alpha=0.6,
+                        per_beta0=0.4):
         self.fhr_weight = fhr_weight
         self.fhr_order = fhr_order
         self.reward_lags = reward_lags
         self.warmup_grad_steps = warmup_grad_steps
         self.c_learning_rate = c_learning_rate
         self.c_predictor = c_predictor
+        self.prioritized_replay = prioritized_replay
+        self.per_alpha = per_alpha
+        self.per_beta0 = per_beta0
         self.rampdown_reward_threshold = rampdown_reward_threshold
         self.rampdown_penalty_threshold = rampdown_penalty_threshold
         self.rampdown_penalty_topk = rampdown_penalty_topk
@@ -272,6 +310,10 @@ class _FHRMixin:
     def _validate_fhr_config(self):
         if self.fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {self.fhr_order}")
+        if self.prioritized_replay and not self._fhr_supports_per:
+            raise ValueError(
+                "prioritized_replay is only supported by the SAC-family FHR "
+                f"algorithms, not {type(self).__name__}")
         if self.c_predictor not in ("none", "shared", "separate"):
             raise ValueError("c_predictor must be one of none|shared|separate, "
                              f"got {self.c_predictor!r}")
@@ -312,10 +354,7 @@ class _FHRMixin:
                 in_dim = penultimate_dim(online)
             else:
                 in_dim = int(np.prod(self.observation_space.shape))
-            self.fhr_predictor = FHRCoefficientPredictor(
-                self.fhr_order, self.gamma, self.reward_lags,
-                self.c_predictor, in_dim, int(self.action_space.n)
-            ).to(self.device)
+            self.fhr_predictor = self._fhr_build_predictor(in_dim)
             coeffs = list(self.fhr_predictor.parameters())
         else:
             coeffs = [self.fhr_head.c]
@@ -327,9 +366,9 @@ class _FHRMixin:
         # predictor: only the coefficient HEAD lives in this group — the
         # trunk it reads penultimate features from is already in group 0 and
         # receives the penalty gradient at the ordinary learning rate.
-        self.policy.optimizer.add_param_group(
+        self._fhr_coeff_optimizer().add_param_group(
             {"params": coeffs, "lr": self.c_learning_rate, "weight_decay": 0.0})
-        self._fhr_group_index = len(self.policy.optimizer.param_groups) - 1
+        self._fhr_group_index = len(self._fhr_coeff_optimizer().param_groups) - 1
 
         # "NN%" relative penalty bar parsed once, as in FHRDQNAgent
         self._rd_pen_abs = None
@@ -363,6 +402,40 @@ class _FHRMixin:
         """The online value network the shared predictor reads features from."""
         return getattr(self, "q_net", None) or self.quantile_net
 
+    # -- hooks whose defaults reproduce the DQN-family behavior exactly; the
+    # -- SAC-family subclasses override them (see agents/sb3_sac_fhr.py) -----
+    def _fhr_coeff_optimizer(self):
+        """The optimizer that hosts the c/d (or predictor) param group."""
+        return self.policy.optimizer
+
+    def _fhr_predictor_action_repr(self):
+        """(dim, encoding) the coefficient predictor uses for actions."""
+        return int(self.action_space.n), "onehot"
+
+    def _fhr_build_predictor(self, in_dim: int) -> "FHRCoefficientPredictor":
+        n_act, encoding = self._fhr_predictor_action_repr()
+        return FHRCoefficientPredictor(
+            self.fhr_order, self.gamma, self.reward_lags,
+            self.c_predictor, in_dim, n_act,
+            action_encoding=encoding).to(self.device)
+
+    def _fhr_lag_actions(self, raw_actions: np.ndarray, n: int, r: int):
+        """Buffer actions of the flattened predecessor batch, shaped for
+        lag_q_fn: an int64 index column for discrete gathers (default)."""
+        return self.replay_buffer.to_torch(
+            raw_actions).long().reshape(n * r, -1)[:, :1]
+
+    def _fhr_anchor_actions(self, raw_actions: np.ndarray, n: int):
+        """Buffer actions of the anchor rows, shaped for the coefficient
+        predictor: (n,) int64 for one-hot encoding (default)."""
+        return self.replay_buffer.to_torch(
+            raw_actions).long().reshape(n, -1)[:, 0]
+
+    def _fhr_shared_features(self, anchor_obs: torch.Tensor,
+                             anchor_acts: torch.Tensor) -> torch.Tensor:
+        """Online-network penultimate features for the shared predictor."""
+        return penultimate_features(self._fhr_online_qnet(), anchor_obs)
+
     def _get_torch_save_params(self):
         state_dicts, tensors = super()._get_torch_save_params()
         state_dicts = state_dicts + ["fhr_head"]
@@ -374,7 +447,7 @@ class _FHRMixin:
         # SB3's schedule update overwrites every param group's lr — restore
         # the coefficients' independent learning rate afterwards
         super()._update_learning_rate(optimizers)
-        self.policy.optimizer.param_groups[self._fhr_group_index]["lr"] = \
+        self._fhr_coeff_optimizer().param_groups[self._fhr_group_index]["lr"] = \
             self.c_learning_rate
 
     # -- penalty schedule: hard warm-up, optional triggered ramp-down -------
@@ -484,6 +557,16 @@ class _FHRMixin:
         Returns the Huber penalty (in the graph iff lam > 0) or None when no
         batch sample has r valid predecessors; fills diag in place.
         """
+        return self._fhr_penalty_multi([anchor_q_sa], [lag_q_fn], lam, diag)
+
+    def _fhr_penalty_multi(self, anchor_q_sas: list, lag_q_fns: list,
+                           lam: float, diag: dict) -> torch.Tensor | None:
+        """_fhr_penalty over N online critics sharing ONE c (or one predictor):
+        penalty = sum_i Huber(anchor_i, prediction_i) / N — for twin critics
+        exactly 0.5 * (Huber_1 + Huber_2), keeping penalty_raw on the
+        single-critic scale so lambda values transfer between recipes. The
+        single-critic path is bit-identical to the pre-refactor _fhr_penalty.
+        """
         buf = self.replay_buffer
         inds = buf.last_batch_inds
         keep, pred = buf.predecessors(inds, self.fhr_order)
@@ -497,27 +580,22 @@ class _FHRMixin:
         n = pred_k.shape[0]
         flat = pred_k.reshape(-1)
         obs = buf.to_torch(buf.observations[flat, 0]).float()
-        acts = buf.to_torch(buf.actions[flat, 0]).long().reshape(n * r, -1)[:, :1]
+        acts = self._fhr_lag_actions(buf.actions[flat, 0], n, r)
         keep_t = torch.as_tensor(np.flatnonzero(keep), device=self.device)
         # lambda = 0 (warm-up / baseline diagnostics): keep the penalty out of
         # the graph, exactly as FHRDQNAgent does
         with torch.enable_grad() if lam > 0 else torch.no_grad():
-            q_lags = lag_q_fn(obs, acts).view(n, r)
+            c_pred = d_pred = None
             if self.fhr_predictor is not None:
                 anchor_inds = inds[keep]
                 anchor_obs = buf.to_torch(buf.observations[anchor_inds, 0]).float()
-                anchor_acts = buf.to_torch(
-                    buf.actions[anchor_inds, 0]).long().reshape(n, -1)[:, 0]
+                anchor_acts = self._fhr_anchor_actions(
+                    buf.actions[anchor_inds, 0], n)
                 if self.c_predictor == "shared":
-                    feats = penultimate_features(self._fhr_online_qnet(),
-                                                 anchor_obs)
+                    feats = self._fhr_shared_features(anchor_obs, anchor_acts)
                 else:
                     feats = anchor_obs.reshape(n, -1)
                 c_pred, d_pred = self.fhr_predictor(feats, anchor_acts)
-                prediction = (q_lags * c_pred).sum(dim=1)
-                if self.reward_lags:
-                    rews = buf.to_torch(buf.rewards[pred_k, 0]).float()  # (n, r)
-                    prediction = prediction + (rews * d_pred).sum(dim=1)
                 c_mean = c_pred.detach().mean(dim=0)
                 diag["sum_c"] = float(c_mean.sum())
                 diag["c_spread"] = float(c_pred.detach().std(dim=0).mean())
@@ -528,20 +606,33 @@ class _FHRMixin:
                 roots = np.roots(np.concatenate(([1.0], -c_mean.cpu().numpy())))
                 diag["companion_radius"] = (float(np.abs(roots).max())
                                             if roots.size else 0.0)
-            else:
-                prediction = q_lags @ self.fhr_head.c
-                if self.reward_lags:
-                    rews = buf.to_torch(buf.rewards[pred_k, 0]).float()  # (n, r)
-                    prediction = prediction + rews @ self.fhr_head.d
-            anchor = anchor_q_sa[keep_t]
-            penalty = F.huber_loss(anchor, prediction)
+            rews = None
+            if self.reward_lags:
+                rews = buf.to_torch(buf.rewards[pred_k, 0]).float()  # (n, r)
+            hubers, sq_residuals = [], []
+            for anchor_q_sa, lag_q_fn in zip(anchor_q_sas, lag_q_fns):
+                q_lags = lag_q_fn(obs, acts).view(n, r)
+                if c_pred is not None:
+                    prediction = (q_lags * c_pred).sum(dim=1)
+                    if self.reward_lags:
+                        prediction = prediction + (rews * d_pred).sum(dim=1)
+                else:
+                    prediction = q_lags @ self.fhr_head.c
+                    if self.reward_lags:
+                        prediction = prediction + rews @ self.fhr_head.d
+                anchor = anchor_q_sa[keep_t]
+                hubers.append(F.huber_loss(anchor, prediction))
+                sq_residuals.append(
+                    (anchor.detach() - prediction.detach()).pow(2))
+            penalty = (hubers[0] if len(hubers) == 1
+                       else sum(hubers) / len(hubers))
         diag["penalty_raw"] = float(penalty.detach())
         diag["penalty_weighted"] = lam * diag["penalty_raw"]
         if lam > 0:
             self._ep_penalty_buckets.setdefault(
                 self._fhr_episode_hint, []).append(diag["penalty_raw"])
         diag["residual_rms"] = float(
-            (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
+            torch.cat(sq_residuals).mean().sqrt())
         return penalty
 
     def _fhr_aggregate_pending(self, step_diags: list[dict]) -> None:
@@ -575,13 +666,16 @@ class FHRDQN(_FHRMixin, DQN):
                  rampdown_penalty_topk: int = 20,
                  rampdown_patience_eps: int = 10,
                  rampdown_episodes: int = 0, c_predictor: str = "none",
-                 **kwargs):
+                 prioritized_replay: bool = False, per_alpha: float = 0.6,
+                 per_beta0: float = 0.4, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
                              rampdown_penalty_threshold,
                              rampdown_penalty_topk, rampdown_patience_eps,
-                             rampdown_episodes, c_predictor=c_predictor)
+                             rampdown_episodes, c_predictor=c_predictor,
+                             prioritized_replay=prioritized_replay,
+                             per_alpha=per_alpha, per_beta0=per_beta0)
         kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
         super().__init__(*args, **kwargs)
 
@@ -660,13 +754,16 @@ if QRDQN is not None:
                      rampdown_penalty_topk: int = 20,
                      rampdown_patience_eps: int = 10,
                      rampdown_episodes: int = 0, c_predictor: str = "none",
-                     **kwargs):
+                     prioritized_replay: bool = False, per_alpha: float = 0.6,
+                     per_beta0: float = 0.4, **kwargs):
             self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                                  warmup_grad_steps, c_learning_rate,
                                  rampdown_reward_threshold,
                                  rampdown_penalty_threshold,
                                  rampdown_penalty_topk, rampdown_patience_eps,
-                                 rampdown_episodes, c_predictor=c_predictor)
+                                 rampdown_episodes, c_predictor=c_predictor,
+                                 prioritized_replay=prioritized_replay,
+                                 per_alpha=per_alpha, per_beta0=per_beta0)
             kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
             super().__init__(*args, **kwargs)
 
@@ -836,7 +933,9 @@ class GreedyEvalCallback(BaseCallback):
             total, steps, done = 0.0, 0, False
             while not done and steps < self.max_episode_steps:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, r, term, trunc, _ = self.eval_env.step(int(action))
+                if isinstance(self.eval_env.action_space, gym.spaces.Discrete):
+                    action = int(action)
+                obs, r, term, trunc, _ = self.eval_env.step(action)
                 total += float(r)
                 steps += 1
                 done = term or trunc
@@ -895,7 +994,10 @@ class FHRSB3Callback(BaseCallback):
         self._stop = False
 
     def _adapter(self):
-        return SB3QAgentAdapter(self.model)
+        # models that define their own analysis adapter (the SAC family)
+        # provide qagent_adapter(); the DQN family uses the default
+        make = getattr(self.model, "qagent_adapter", None)
+        return make() if make is not None else SB3QAgentAdapter(self.model)
 
     def _log_rewards(self):
         if self.run_logger is not None and self.episode_rewards:
