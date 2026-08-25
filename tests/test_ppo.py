@@ -185,7 +185,8 @@ def test_update_moves_actor():
 
 
 def test_config_flow_end_to_end():
-    cfg = load_config(REPO / "experiments" / "dqn_cartpole" / "config_ppo.yaml")
+    cfg = load_config(REPO / "experiments" / "classical_control" /
+                      "dqn_cartpole" / "configs" / "config_ppo.yaml")
     cfg["agent"].update(rollout_steps=128, minibatch_size=64, update_epochs=2)
     cfg["training"].update(no_episodes=3, no_eps_to_avg=2, solved_reward=1e9)
     env = build_env(cfg)

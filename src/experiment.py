@@ -67,7 +67,7 @@ def build_agent(cfg: dict, env, q_network=None, nn_extra_kwargs: dict = None,
 
 def build_ppo_agent(cfg: dict, env):
     """PPOAgent from cfg["agent"] and cfg["network"]["hidden_sizes"];
-    see experiments/*/config_ppo.yaml."""
+    see experiments/classical_control/*/configs/config_ppo.yaml."""
     from agents.ppo_agent import PPOAgent
     return PPOAgent(
         **cfg["agent"],
