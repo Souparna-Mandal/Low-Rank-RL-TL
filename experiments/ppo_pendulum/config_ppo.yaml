@@ -1,0 +1,39 @@
+experiment:
+  name: ppo_pendulum_continuous
+  seed: 52
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: Pendulum-v1
+  render_mode: null
+  discrete_config: null
+  # Continuous actions: the Gaussian policy is unbounded and ClipAction absorbs
+  # the tails at the env boundary, which is how SB3 and CleanRL bound PPO.
+  # Leave normalise.action empty -- gymnasium 1.3's ClipAction advertises
+  # Box(-inf, inf), and RescaleAction cannot rescale from an infinite range.
+  normalise: {action: {}, state: {}}
+  clip: {action: true, state: []}
+
+network:
+  hidden_sizes: [64, 64]
+
+agent:
+  nn_learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 2048
+  minibatch_size: 64
+  update_epochs: 10
+  clip_eps: 0.2
+  vf_coef: 0.5
+  ent_coef: 0.0
+  max_grad_norm: 0.5
+  # Initial policy spread, std = exp(0.0) = 1.0, matching SB3's log_std_init.
+  log_std_init: 0.0
+
+training:
+  no_episodes: 600
+  solved_reward: -200
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10

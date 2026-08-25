@@ -1,0 +1,33 @@
+experiment:
+  name: ppo_cartpole
+  seed: 52
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: False, state: []}
+
+network:
+  hidden_sizes: [64, 64]
+
+agent:
+  nn_learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  rollout_steps: 2048
+  minibatch_size: 256
+  update_epochs: 10
+  clip_eps: 0.2
+  vf_coef: 0.5
+  ent_coef: 0.0
+  max_grad_norm: 0.5
+
+training:
+  no_episodes: 600
+  solved_reward: 475
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
