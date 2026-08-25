@@ -138,6 +138,7 @@ def _run_recorded(exp_dir, manifest, arm, seed):
 # an exp<N>-vs-baseline gap is attributable to the FHR block alone.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "warmup_grad_steps", "c_learning_rate",
+              "c_predictor", "prioritized_replay",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
               "rampdown_episodes")
