@@ -119,16 +119,28 @@ def _build_model(cfg, env, seed):
 
 
 def _make_env(cfg, render_mode=None):
-    """gym.make + the config's static observation rescale, when present.
+    """gym.make + the config's static observation wrappers, when present.
 
-    environment.normalise.state {min, max} applies gymnasium's
+    environment.flatten_obs flattens a Dict observation space (the
+    goal-conditioned robotics envs: {observation, achieved_goal,
+    desired_goal} -> one Box) so MlpPolicy and the FHR episodic buffer work
+    unchanged. environment.normalise.state {min, max} applies gymnasium's
     RescaleObservation (the same wrapper the classic base_env stack uses) — a
     fixed affine map, so unlike VecNormalize it is identical for the TD batch
     and the FHR lag observations. Must wrap every env a run touches (training,
     eval, analysis, videos) so the policy always sees one observation space.
+    Robotics env ids (Fetch*, ...) register lazily on first use.
     """
     import gymnasium as gym
-    env = gym.make(cfg["environment"]["name"], render_mode=render_mode)
+    name = cfg["environment"]["name"]
+    try:
+        env = gym.make(name, render_mode=render_mode)
+    except (gym.error.NameNotFound, gym.error.NamespaceNotFound):
+        import gymnasium_robotics                  # optional extra
+        gym.register_envs(gymnasium_robotics)
+        env = gym.make(name, render_mode=render_mode)
+    if cfg["environment"].get("flatten_obs"):
+        env = gym.wrappers.FlattenObservation(env)
     state = ((cfg["environment"].get("normalise") or {}).get("state") or {})
     if state:
         env = gym.wrappers.RescaleObservation(
