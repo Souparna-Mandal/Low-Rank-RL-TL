@@ -1,6 +1,6 @@
 """Sample-efficiency summary across tuning variants.
 
-    cd stable_baselines_3/mountaincar_tuning
+    cd experiments/stable_baselines_3/mountaincar_tuning
     python summarize.py                      # all variants with results
     python summarize.py cad2_1 cad16_8
 

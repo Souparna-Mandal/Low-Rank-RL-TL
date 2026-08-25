@@ -17,7 +17,7 @@ attributable to the FHR penalty alone.
 The shared SB3 runners plus one experiment dir per env, each with the
 standard repo structure:
 
-    stable_baselines_3/
+    experiments/stable_baselines_3/
       src/
         run_sb3_seeds.py      multi-seed launcher (launch_all/load_runs/videos)
         run_sb3_analysis.py   post-hoc run-every-analysis-framework CLI
@@ -25,9 +25,11 @@ standard repo structure:
       mountaincar/   MountainCar-v0  "
       acrobot/       Acrobot-v1      "
 
-The result viewer scans `experiments/` only, so `experiments/stable_baselines_3`
-is a symlink to this folder — the SB3 runs appear in the app (exp keys
-`stable_baselines_3/<env>`) with zero viewer changes.
+The result viewer scans `experiments/` only, and this suite sits directly
+under it, so the SB3 runs appear in the app under the exp keys
+`stable_baselines_3/<env>` with zero viewer configuration. (Until 2026-08-25
+the tree lived at the repo root and `experiments/stable_baselines_3` was a
+symlink to it; the move left those exp keys unchanged.)
 
 Per experiment dir:
 
@@ -53,7 +55,7 @@ Per experiment dir:
 
 ## Running
 
-    cd stable_baselines_3/cartpole
+    cd experiments/stable_baselines_3/cartpole
     python ../src/run_sb3_seeds.py --experiment 1 2   # baseline + exp1 + exp2, all seeds
     python ../src/run_sb3_analysis.py --all           # re-run every analysis framework
                                                       # post-hoc on the final checkpoints

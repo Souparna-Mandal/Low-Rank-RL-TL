@@ -4,7 +4,7 @@ The SB3 twin of run_fhrdqn_seeds.py: one (arm, seed) training per subprocess,
 run with the experiment directory as cwd (config paths and cached/ resolved
 against cwd):
 
-    cd stable_baselines_3/cartpole
+    cd experiments/stable_baselines_3/cartpole
     python ../src/run_sb3_seeds.py                    # baseline + fhr arms
     python ../src/run_sb3_seeds.py --experiment 1 2   # baseline + exp1 + exp2
     python ../src/run_sb3_seeds.py --max-workers 3 --force
@@ -45,8 +45,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import yaml
 
-SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent   # stable_baselines_3/src
-SRC = SCRIPTS_DIR.parents[1] / "src"                     # repo library code
+SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent   # experiments/stable_baselines_3/src
+SRC = SCRIPTS_DIR.parents[2] / "src"                     # repo library code
 CONFIG = "configs/config_sb3.yaml"
 MANIFEST = "cached/sb3_runs_manifest.json"
 LOGS = "cached/logs"

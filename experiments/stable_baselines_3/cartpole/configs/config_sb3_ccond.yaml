@@ -1,6 +1,6 @@
 # SB3 FHR comparison — CartPole-v1, TUNED recipe (fresh-target port).
 #
-# The MountainCar tuning study (stable_baselines_3/mountaincar_tuning/
+# The MountainCar tuning study (experiments/stable_baselines_3/mountaincar_tuning/
 # TUNING_LOG.md) found the FHR edge needs continuously fresh bootstrap
 # targets: Polyak soft updates keep the recurrence penalty supplying a
 # persistent gradient, where hard frozen targets put it to sleep between

@@ -6,7 +6,7 @@
 # result: -100.85 +/- 9.9 (deterministic eval). This is the standard-SB3
 # baseline reference; the tuned recipe the FHR experiments use is
 # configs/config_sb3.yaml (Polyak targets + lr 1e-3 — see
-# stable_baselines_3/mountaincar_tuning/TUNING_LOG.md for why the FHR edge
+# experiments/stable_baselines_3/mountaincar_tuning/TUNING_LOG.md for why the FHR edge
 # needs fresh targets).
 #
 # run_sb3_seeds.py reads configs/config_sb3.yaml; to launch THIS reference,

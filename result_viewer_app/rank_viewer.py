@@ -532,10 +532,11 @@ def make_handler(root: pathlib.Path):
             """Resolve a run directory, refusing anything that escapes root.
 
             An experiment tree may legitimately BE a symlink pointing
-            outside root (experiments/stable_baselines_3 ->
-            ../stable_baselines_3 keeps the SB3 suite at the repo root while
-            staying visible here), so containment cannot simply be
-            "resolves under root" — that 404s every run behind such a link.
+            outside root — experiments/stable_baselines_3 was one until the
+            SB3 suite moved under experiments/ on 2026-08-25, and a scratch
+            or HPC tree can still be linked in the same way — so containment
+            cannot simply be "resolves under root": that 404s every run
+            behind such a link.
             Two guards replace it:
 
             1. exp/run come from the URL and never legitimately contain

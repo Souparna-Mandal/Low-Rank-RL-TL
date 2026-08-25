@@ -1,6 +1,6 @@
 """Launch every (or the named) tuning variant's runs, one variant at a time.
 
-    cd stable_baselines_3/mountaincar_tuning
+    cd experiments/stable_baselines_3/mountaincar_tuning
     python launch_variants.py                    # all variants in VARIANTS
     python launch_variants.py cad2_1 cad4_2      # just these
     python launch_variants.py --max-workers 6

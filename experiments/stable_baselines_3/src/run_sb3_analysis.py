@@ -13,7 +13,7 @@ mean +/- std printed) and, unless --skip-video, one greedy rollout mp4 under
 Run with the experiment directory as cwd (all paths, like run_sb3_seeds.py,
 resolve against cwd):
 
-    cd stable_baselines_3/cartpole
+    cd experiments/stable_baselines_3/cartpole
     python ../src/run_sb3_analysis.py --run-dir cached/runs/<name>
     python ../src/run_sb3_analysis.py --arm baseline           # every seed
     python ../src/run_sb3_analysis.py --arm exp1 --seed 44
@@ -45,8 +45,8 @@ os.environ.setdefault("MPLBACKEND", "Agg")   # post-hoc CLI: never open a GUI
 import numpy as np
 import yaml
 
-SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent   # stable_baselines_3/src
-SRC = SCRIPTS_DIR.parents[1] / "src"                     # repo library code
+SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent   # experiments/stable_baselines_3/src
+SRC = SCRIPTS_DIR.parents[2] / "src"                     # repo library code
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 

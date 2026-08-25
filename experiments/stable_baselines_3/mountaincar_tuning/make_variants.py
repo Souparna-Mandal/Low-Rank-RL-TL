@@ -5,7 +5,7 @@ mountaincar/configs/config_sb3.yaml with COMMON + the variant's overrides
 deep-merged on top — plus an empty cached/. Every variant dir is a normal
 run_sb3_seeds.py experiment dir:
 
-    cd stable_baselines_3/mountaincar_tuning/<variant>
+    cd experiments/stable_baselines_3/mountaincar_tuning/<variant>
     python ../../src/run_sb3_seeds.py --experiment 1 2
 
 or launch the whole phase with launch_variants.py. Regenerating a config is

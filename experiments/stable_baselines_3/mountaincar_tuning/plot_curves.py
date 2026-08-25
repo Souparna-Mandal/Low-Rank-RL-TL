@@ -1,6 +1,6 @@
 """Greedy-eval learning curves per tuning variant.
 
-    cd stable_baselines_3/mountaincar_tuning
+    cd experiments/stable_baselines_3/mountaincar_tuning
     python plot_curves.py                    # every variant with results
     python plot_curves.py cad2_1 cad16_8
 

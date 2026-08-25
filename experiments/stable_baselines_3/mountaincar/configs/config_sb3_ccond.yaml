@@ -1,6 +1,6 @@
 # SB3 FHR comparison — MountainCar-v0, TUNED recipe (tuning-mountaincar study).
 #
-# The headline configuration from stable_baselines_3/mountaincar_tuning/
+# The headline configuration from experiments/stable_baselines_3/mountaincar_tuning/
 # TUNING_LOG.md: the RL-Zoo DQN recipe with two changes — Polyak soft targets
 # (tau 0.005, synced every step) and learning_rate 1e-3 — plus the FHR block
 # lambda 0.5, r=2. Measured there on greedy eval (5 seeds): FHR onset 45-50k
@@ -17,17 +17,29 @@
 # cached/sb3_runs_manifest.zoo-hard600.json archives the runs recorded under
 # the old zoo-recipe config (arm keys exp1-9 refer to that config's sweep).
 experiment:
-  name: sb3_mountaincar
+  name: sb3_mountaincar_ccond
   seed: 44
   seeds: [44, 66]
   # Numbering starts at 10 so keys never collide with the archived zoo-recipe
   # manifest. exp10 = the headline FHR block; 11/12 = the robust-lambda
   # neighbours from the tuning study (lambda .1 onsets fastest but 3/5 seeds
   # collapsed late — kept out).
+  # State-conditioned recurrence coefficients c(s, a) (branch
+  # fhr/state-conditioned-c): "shared" reads the online q_net's penultimate
+  # features (penalty gradient shapes the trunk), "separate" is an own MLP on
+  # [obs, one-hot action]. 1-4: pure AR; 5-8: their ARX twins (reward lags).
   fhr_experiments:
-    1: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
-    2: {fhr_weight: 1.0, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
-    3: {fhr_weight: 0.25, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    1: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    2: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    3: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    5: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    6: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    8: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    # 9: standard FHR — ONE global c optimised by autodiff over the whole run,
+    # at this env's best recorded lambda (manifest exp2, final -134 mean).
+    9: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
   device: auto
   save_artifacts: true
 
