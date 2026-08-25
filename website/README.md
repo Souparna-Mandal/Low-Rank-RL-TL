@@ -1,6 +1,6 @@
 # flame-rl.com
 
-Static holding page for the FLAME RL project. No build step, no dependencies —
+Static holding page for the FLARE RL project. No build step, no dependencies —
 `public/index.html` + `public/styles.css`, deployed as a Cloudflare **Worker
 with static assets** (`wrangler.jsonc`).
 
