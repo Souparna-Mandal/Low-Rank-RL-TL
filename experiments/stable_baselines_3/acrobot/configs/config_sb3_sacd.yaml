@@ -1,0 +1,92 @@
+# SB3 FHR comparison — Acrobot-v1, SAC-Discrete (agents/sb3_sac_fhr.SACD:
+# categorical actor, twin Q(s, .) critics, exact expectations, auto-tuned
+# temperature). The lambda-0 baseline arm is the SACD reference (no stock-SB3
+# counterpart exists — asserted bit-exact against plain SACD by
+# tests/test_sb3_sac_fhr.py). Networks are the standard SAC 2x256 (Haarnoja
+# 2018 / SB3 Zoo); cadence 1 gradient step per env step with tau-0.005 Polyak.
+experiment:
+  name: sb3_acrobot_sacd
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    1: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    5: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, prioritized_replay: true}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: Acrobot-v1
+
+algo:
+  type: sacd
+  n_timesteps: 100000
+  learning_rate: 1.0e-3
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  target_entropy_scale: 0.98
+  net_arch: [256, 256]
+
+agent:
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 2000
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -80      # Acrobot-v1: tighter bar kept for parity with the
+  early_stopping_patience_eps: 50   # classic and ccond configs
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 4000      # fixed reset seeds; training stream untouched
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  # Acrobot's raw observation space is bounded — no state_bounds needed
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8, 8, 8]
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 3, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2
