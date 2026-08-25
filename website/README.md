@@ -1,54 +1,63 @@
 # flame-rl.com
 
 Static holding page for the FLAME RL project. No build step, no dependencies —
-`index.html` + `styles.css`, deployed as-is.
+`public/index.html` + `public/styles.css`, deployed as a Cloudflare **Worker
+with static assets** (`wrangler.jsonc`).
 
 ## Local preview
 
 ```bash
-python -m http.server 8000 --directory website
+python -m http.server 8000 --directory website/public
 # open http://localhost:8000
 ```
 
-## Hosting on Cloudflare Pages
-
-The domain is registered with Cloudflare, so Pages is the least-friction option:
-DNS is created for you and the apex domain works without any A-record juggling.
-
-### Option A — connect the Git repo (auto-deploy on push)
-
-1. Push this branch:
-   ```bash
-   git push -u origin website/flame-rl-coming-soon
-   ```
-2. Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** →
-   **Connect to Git** → authorise GitHub → pick `Low-Rank-RL-TL`.
-3. Build settings:
-   - Framework preset: **None**
-   - Build command: *(leave empty)*
-   - Build output directory: **`website`**
-   - Production branch: **`website/flame-rl-coming-soon`** (switch to `main`
-     once this is merged)
-4. **Save and Deploy** → you get `flame-rl.pages.dev` in ~30 s.
-5. Project → **Custom domains** → **Set up a custom domain** → `flame-rl.com`.
-   Cloudflare adds the DNS record itself (CNAME flattening handles the apex).
-   Repeat for `www.flame-rl.com`.
-6. Optional: **Rules → Redirect Rules** → redirect `www.flame-rl.com/*` to
-   `https://flame-rl.com/$1` (301) so there is one canonical host.
-
-### Option B — direct upload from the CLI
+Or with Wrangler, which serves it exactly as Cloudflare will:
 
 ```bash
-npx wrangler login
-npx wrangler pages deploy website --project-name flame-rl
+cd website && npx wrangler dev
 ```
 
-Then attach the custom domain as in step 5 above. Re-run the deploy command to
-publish updates.
+## Deploying
 
-### Notes
+The Cloudflare dashboard now routes new projects through **Create a Worker**
+rather than Pages, which is why there is no "build output directory" or
+"production branch" field in the wizard — a Worker reads that from
+`wrangler.jsonc` instead.
 
-- HTTPS certificates are issued automatically; allow a few minutes after the
-  domain is attached.
-- Every push to a non-production branch gets its own preview URL, so content
-  changes can be eyeballed before they go live.
+### Option A — deploy from your machine (fastest)
+
+```bash
+cd website
+npx wrangler login     # opens a browser, once
+npx wrangler deploy
+```
+
+Live on `flame-rl.<your-subdomain>.workers.dev` in about 30 seconds. Re-run
+`npx wrangler deploy` to publish changes.
+
+### Option B — connect the Git repo (auto-deploy on push)
+
+In the **Create a Worker** wizard:
+
+| Field                     | Value               |
+| ------------------------- | ------------------- |
+| Project name              | `flame-rl`          |
+| Build command             | *(leave empty)*     |
+| Deploy command            | `npx wrangler deploy` |
+| Path (Advanced settings)  | `/website`          |
+
+The project name must match `name` in `wrangler.jsonc`, and `Path` must point
+at `/website` so Wrangler finds the config.
+
+Builds listen to the repo's **default branch** (`main`). Until this branch is
+merged there is nothing on `main` to deploy, so either merge first, or after
+the project exists change the branch under **Settings → Build**.
+
+## Custom domain
+
+Worker → **Settings** → **Domains & Routes** → **Add** → **Custom domain** →
+`flame-rl.com`. Cloudflare creates the DNS record and issues the certificate
+itself, since the domain is already on your account. Add `www.flame-rl.com`
+the same way, then optionally add a **Redirect Rule** sending
+`www.flame-rl.com/*` to `https://flame-rl.com/$1` (301) so there is one
+canonical host.
