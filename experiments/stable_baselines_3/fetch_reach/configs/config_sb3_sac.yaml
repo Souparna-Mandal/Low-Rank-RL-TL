@@ -22,7 +22,18 @@ experiment:
   seed: 44
   seeds: [44, 66]
   fhr_experiments:
-    # phase-B arms are appended here by the calibration step
+    # Phase-B arms, CALIBRATED from the exp9 probe (calibrate_fhr.py,
+    # tail medians over the last 50% of training, seeds 44/66):
+    #   td_loss 3.4e-4, penalty_raw 1.6e-3 -> td/pen ratio 0.217
+    #   lambda(rho=0.5) = 0.108, lambda(rho=2) = 0.434
+    #   converged Q(s, pi(s)) rollout-Hankel rank = 1 -> fhr_order 2 (floor);
+    #   pi-trace ranks 3-5 -> the order-5 ablation arm
+    1: {fhr_weight: 0.11, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 0.43, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 0.11, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 0.11, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    5: {fhr_weight: 0.11, fhr_order: 2, c_learning_rate: 0.03, prioritized_replay: true}
+    6: {fhr_weight: 0.11, fhr_order: 5, c_learning_rate: 0.03}   # order from pi-trace rank
     9: {fhr_weight: 1.0, warmup_grad_steps: 999999999}   # magnitude probe
   device: auto
   save_artifacts: true

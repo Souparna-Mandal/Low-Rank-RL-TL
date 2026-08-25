@@ -1,0 +1,25 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_fetch_reach_sac_baseline_seed44_20260825-221521",
+      "66": "cached/runs/sb3_fetch_reach_sac_baseline_seed66_20260825-221521"
+    },
+    "exp9": {
+      "66": "cached/runs/sb3_fetch_reach_sac_exp9_seed66_20260825-221521",
+      "44": "cached/runs/sb3_fetch_reach_sac_exp9_seed44_20260825-221521"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp9": {
+      "fhr_weight": 1.0,
+      "warmup_grad_steps": 999999999
+    }
+  }
+}
