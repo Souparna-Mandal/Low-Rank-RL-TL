@@ -10,7 +10,6 @@ import numpy as np
 
 from .wrappers.atari_wrappers import EpisodicLifeWrapper
 from .wrappers.action_wrappers import DiscretiseActionWrapper
-from .wrappers.discrete_wrappers import DiscreteActionWrapper, DiscreteStateWrapper
 from .wrappers.observation_wrappers import OneHotObservationWrapper
 from .wrappers.discrete_wrappers import DiscreteStateWrapper
 from .wrappers.generative_wrappers import GenerativeStateWrapper
@@ -117,12 +116,6 @@ def make_environment(env_name: str, render_mode = None,
                 "cannot be combined with clip.action or normalise.action")
         env = DiscretiseActionWrapper(env, env_kwargs['discrete_action_bins'])
 
-    # Discretise the State Action Space
-    if discrete_config is not None:
-        if discrete_config['no_action_bins'] > 0:
-            env = DiscreteActionWrapper(env, n_actions=discrete_config['no_action_bins'])
-        if discrete_config['no_state_bins'] > 0:
-            env = DiscreteStateWrapper(env, n_states=discrete_config['no_state_bins'])  
     # Generative-model access (teleport to arbitrary states). Innermost so
     # teleport's reset clears the TimeLimit/termination bookkeeping.
     if env_kwargs.get('generative'):
