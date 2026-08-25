@@ -24,6 +24,14 @@ class EpisodicReplayBuffer:
         self._open_states, self._open_actions, self._open_rewards = [], [], []
         self._pending_next = None
 
+    def _pop_oldest(self) -> dict:
+        """Evict and return the oldest closed episode (the single hook both
+        eviction loops go through, so subclasses can observe evictions —
+        PrioritizedEpisodicReplayBuffer zeroes the evicted leaf range here)."""
+        ep = self._episodes.pop(0)
+        self._closed_len -= len(ep["states"])
+        return ep
+
     def append(self, state, action, reward, next_state) -> None:
         """Add one transition to the in-progress episode. next_state is None on
         termination (QAgent convention)."""
@@ -32,7 +40,7 @@ class EpisodicReplayBuffer:
         self._open_rewards.append(reward)
         self._pending_next = next_state
         while self._closed_len + len(self._open_states) > self.capacity and self._episodes:
-            self._closed_len -= len(self._episodes.pop(0)["states"])
+            self._pop_oldest()
 
     def close(self, terminated: bool) -> None:
         """Seal the in-progress episode (call on terminated OR truncated)."""
@@ -49,7 +57,7 @@ class EpisodicReplayBuffer:
         self._open_states, self._open_actions, self._open_rewards = [], [], []
         self._pending_next = None
         while self._closed_len > self.capacity and len(self._episodes) > 1:
-            self._closed_len -= len(self._episodes.pop(0)["states"])
+            self._pop_oldest()
 
     def __len__(self) -> int:
         return self._closed_len + len(self._open_states)
