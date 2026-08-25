@@ -1,4 +1,4 @@
-# flame-rl.com
+# flare-rl.com
 
 Static holding page for the FLARE RL project. No build step, no dependencies —
 `public/index.html` + `public/styles.css`, deployed as a Cloudflare **Worker
@@ -32,7 +32,7 @@ npx wrangler login     # opens a browser, once
 npx wrangler deploy
 ```
 
-Live on `flame-rl.<your-subdomain>.workers.dev` in about 30 seconds. Re-run
+Live on `flare-rl.<your-subdomain>.workers.dev` in about 30 seconds. Re-run
 `npx wrangler deploy` to publish changes.
 
 ### Option B — connect the Git repo (auto-deploy on push)
@@ -41,7 +41,7 @@ In the **Create a Worker** wizard:
 
 | Field                     | Value               |
 | ------------------------- | ------------------- |
-| Project name              | `flame-rl`          |
+| Project name              | `flare-rl`          |
 | Build command             | *(leave empty)*     |
 | Deploy command            | `npx wrangler deploy` |
 | Path (Advanced settings)  | `/website`          |
@@ -56,8 +56,8 @@ the project exists change the branch under **Settings → Build**.
 ## Custom domain
 
 Worker → **Settings** → **Domains & Routes** → **Add** → **Custom domain** →
-`flame-rl.com`. Cloudflare creates the DNS record and issues the certificate
-itself, since the domain is already on your account. Add `www.flame-rl.com`
+`flare-rl.com`. Cloudflare creates the DNS record and issues the certificate
+itself, since the domain is already on your account. Add `www.flare-rl.com`
 the same way, then optionally add a **Redirect Rule** sending
-`www.flame-rl.com/*` to `https://flame-rl.com/$1` (301) so there is one
+`www.flare-rl.com/*` to `https://flare-rl.com/$1` (301) so there is one
 canonical host.

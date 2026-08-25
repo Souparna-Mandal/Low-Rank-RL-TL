@@ -1,5 +1,5 @@
 {
-  "name": "flame-rl",
+  "name": "flare-rl",
   "compatibility_date": "2026-08-25",
   "assets": {
     // Static-assets-only Worker: no "main" entry point, so everything in
