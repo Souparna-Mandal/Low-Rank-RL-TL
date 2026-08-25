@@ -157,13 +157,6 @@ def make_environment(env_name: str, render_mode = None,
         
     # Normalise the State Observations (fixed linear rescale to a known range;
     # see normalise.running.obs below for the running-statistics version)
-    # Normalise the Actions  
-    if len(env_kwargs['normalise']['action']) > 0:
-        env = RescaleAction(env, 
-                            min_action = env_kwargs['normalise']['action']['min'],
-                            max_action = env_kwargs['normalise']['action']['max'])
-        
-    # Normalise the State Observations
     if len(env_kwargs['normalise']['state']) > 0:
         env = RescaleObservation(env,
                             np.array(env_kwargs['normalise']['state']['min'], dtype=np.float32),
