@@ -5,30 +5,40 @@
   ],
   "runs": {
     "baseline": {
-      "66": "cached/runs/sb3_cartpole_baseline_seed66_20260819-213152",
-      "44": "cached/runs/sb3_cartpole_baseline_seed44_20260819-213152"
+      "66": "cached/runs/sb3_cartpole_baseline_seed66_20260821-134631",
+      "44": "cached/runs/sb3_cartpole_baseline_seed44_20260821-134631"
     },
-    "exp2": {
-      "44": "cached/runs/sb3_cartpole_exp2_seed44_20260819-213152",
-      "66": "cached/runs/sb3_cartpole_exp2_seed66_20260819-213152"
+    "exp11": {
+      "44": "cached/runs/sb3_cartpole_exp11_seed44_20260821-134631",
+      "66": "cached/runs/sb3_cartpole_exp11_seed66_20260821-134631"
     },
-    "exp1": {
-      "44": "cached/runs/sb3_cartpole_exp1_seed44_20260819-213152",
-      "66": "cached/runs/sb3_cartpole_exp1_seed66_20260819-213152"
+    "exp10": {
+      "44": "cached/runs/sb3_cartpole_exp10_seed44_20260821-134631",
+      "66": "cached/runs/sb3_cartpole_exp10_seed66_20260821-134631"
+    },
+    "exp12": {
+      "66": "cached/runs/sb3_cartpole_exp12_seed66_20260821-135308",
+      "44": "cached/runs/sb3_cartpole_exp12_seed44_20260821-135300"
     }
   },
   "overrides": {
     "baseline": {
       "fhr_weight": 0.0
     },
-    "exp1": {
-      "fhr_weight": 0.1,
+    "exp10": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp11": {
+      "fhr_weight": 1,
       "fhr_order": 2,
       "reward_lags": false,
       "c_learning_rate": 0.015
     },
-    "exp2": {
-      "fhr_weight": 1,
+    "exp12": {
+      "fhr_weight": 0.1,
       "fhr_order": 2,
       "reward_lags": false,
       "c_learning_rate": 0.015

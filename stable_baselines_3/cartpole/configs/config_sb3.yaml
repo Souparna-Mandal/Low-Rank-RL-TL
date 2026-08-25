@@ -1,42 +1,53 @@
-# SB3 (Stable-Baselines3) FHR comparison — CartPole-v1.
+# SB3 FHR comparison — CartPole-v1, TUNED recipe (fresh-target port).
 #
-# The trained method is stock SB3 with the RL-Zoo tuned hyperparameters
-# (https://github.com/DLR-RM/rl-baselines3-zoo, hyperparams/qrdqn.yml) —
-# SB3's best published sample-efficient DQN-family setting for this env.
-# Every arm runs FHRQRDQN from src/agents/sb3_fhr.py; the baseline arm forces
-# fhr_weight 0.0, which is bit-for-bit the stock SB3 algorithm (asserted in
-# tests/test_sb3_fhr.py), so an exp<N>-vs-baseline gap is attributable to the
-# FHR recurrence penalty alone. Launch with stable_baselines_3/src/run_sb3_seeds.py
-# (cwd = this experiment dir); results land in cached/runs/ + the manifest
-# cached/sb3_runs_manifest.json, both read by the result viewer app.
+# The MountainCar tuning study (stable_baselines_3/mountaincar_tuning/
+# TUNING_LOG.md) found the FHR edge needs continuously fresh bootstrap
+# targets: Polyak soft updates keep the recurrence penalty supplying a
+# persistent gradient, where hard frozen targets put it to sleep between
+# syncs. This config ports that recipe here: Polyak tau 0.005 synced every
+# step + a MORE AGGRESSIVE learning rate than the zoo entry (2.3e-3 -> 4e-3;
+# the penalty is the stabiliser that licenses the hotter setting). These
+# values are the mechanism-guided starting point, not yet tuned on CartPole.
+#
+# CartPole freshness caveat: the zoo entry already syncs HARD every 10 env
+# steps — an ultra-fresh target. The Polyak port (timescale ~ 1/tau = 200
+# updates) makes target motion smooth rather than strictly fresher, so
+# CartPole is the test of smoothness-vs-freshness, not staleness.
+#
+# The stock RL-Zoo recipe lives in config_sb3_zoo.yaml (standard-SB3
+# reference; published zoo QR-DQN: 500.0 +/- 0.0). run_sb3_seeds.py reads
+# this file by default; pass config="configs/config_sb3_zoo.yaml" (own
+# manifest cached/sb3_runs_manifest_zoo.json) for the reference. Runs
+# recorded under the old zoo-recipe config are archived in
+# cached/sb3_runs_manifest.zoo-recipe.json (arm keys exp1-2 = that sweep).
 experiment:
   name: sb3_cartpole
-  seed: 44                # fallback when `seeds` is absent or empty
-  seeds: [44, 66]         # one run per (arm, seed)
-  # Numbered variants: each entry = ONE full FHR parameter set applied on top
-  # of the agent block (allowed keys = FHR_PARAMS in run_sb3_seeds.py;
-  # fhr_weight 0 is rejected — the baseline arm covers it). Lambda values
-  # bracket the classic-control tuning (dqn_cartpole exp22/exp23).
+  seed: 44
+  seeds: [44, 66]
+  # Numbering starts at 10 so keys never collide with the archived zoo-recipe
+  # manifest. exp10 = the cross-env headline block (MountainCar winner);
+  # 11/12 = this env's earlier bracketing lambdas under the new regime.
   fhr_experiments:
-    1: {fhr_weight: 0.1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
-    2: {fhr_weight: 1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
+    10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+    11: {fhr_weight: 1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
+    12: {fhr_weight: 0.1, fhr_order: 2, reward_lags: False, c_learning_rate: 0.015}
   device: auto
   save_artifacts: true
 
 environment:
-  name: CartPole-v1       # raw env, no normalise/clip wrappers — the zoo
-                          # setting trains on raw observations
+  name: CartPole-v1       # raw env, as the zoo trains it
 
-algo:                     # RL-Zoo tuned QR-DQN (sb3_contrib), CartPole-v1
-  type: qrdqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
+algo:                     # RL-Zoo QR-DQN, CartPole-v1, tuned deltas marked
+  type: dqn             # 'dqn' switches to stable_baselines3.DQN — the zoo
                           # tuning is identical apart from n_quantiles
   n_timesteps: 50000
-  learning_rate: 2.3e-3
+  learning_rate: 2.3e-3   # TUNED (zoo: 2.3e-3) — aggressive, FHR-stabilised
   batch_size: 64
   buffer_size: 100000
   learning_starts: 1000
   gamma: 0.99
-  target_update_interval: 10
+  tau: 0.005              # TUNED (zoo: hard sync every 10 steps) — Polyak,
+  target_update_interval: 1   # synced every env step
   train_freq: 256         # the zoo burst schedule: 128 gradient steps every
   gradient_steps: 128     # 256 env steps (replay ratio 0.5)
   exploration_fraction: 0.16
@@ -44,33 +55,28 @@ algo:                     # RL-Zoo tuned QR-DQN (sb3_contrib), CartPole-v1
   net_arch: [256, 256]
   n_quantiles: 10
 
-agent:                    # FHR penalty defaults (semantics identical to the
-                          # classic FHRDQNAgent; see src/agents/sb3_fhr.py)
-  fhr_weight: 0.147       # lambda on the recurrence residual (Q units)
-  fhr_order: 2            # r: number of Q-value lags = target Hankel rank
-  reward_lags: False      # True = ARX: also learn d_k on the r preceding rewards
-  warmup_grad_steps: 256  # hard warm-up K0: lambda = 0 for the first two
-                          # 128-step gradient bursts (~1.5k env steps)
-  c_learning_rate: 0.03   # lr of the c/d param group (weight_decay 0,
-                          # excluded from grad clipping and target sync)
-  rampdown_reward_threshold: null   # non-null arms the one-way lambda ramp-down
+agent:                    # shared FHR block; exp<N> arms override on top
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 256  # hard warm-up: the first two 128-step bursts
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
   rampdown_penalty_threshold: null
   rampdown_penalty_topk: 20
   rampdown_patience_eps: 10
   rampdown_episodes: 0
 
-training:                 # early-stop / checkpoint protocol (FHRSB3Callback),
-                          # mirroring the classic dqn_training_loop
-  solved_reward: 475      # rolling-patience mean >= this stops training;
-                          # null disables early stopping
+training:
+  solved_reward: 475      # CartPole-v1 standard bar
   early_stopping_patience_eps: 50
-  no_eps_to_avg: 10       # window for the `best` checkpoint gate
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 2000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
 
 analysis:
-  # Same low-rank diagnostics as the classic runs: Q-matrix rank over a state
-  # grid -> rank_stats.csv, greedy-rollout Hankel spectra -> hankel_sweep.csv,
-  # AR value probe -> autoregressive_*.csv. Dispatched through
-  # training.run_analysis_tick every ep_freq episodes on a dedicated env.
   ep_freq: 50
   state_bounds:           # finite obs bounds for q_matrix_dqn's grid (raw
                           # CartPole velocity dims are unbounded); same ranges

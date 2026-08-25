@@ -1,0 +1,75 @@
+{
+  "seeds": [
+    44,
+    66,
+    52,
+    21,
+    56
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_mc_polyak_baseline_seed66_20260820-182332",
+      "52": "cached/runs/sb3_mc_polyak_baseline_seed52_20260820-182332",
+      "44": "cached/runs/sb3_mc_polyak_baseline_seed44_20260820-182332",
+      "56": "cached/runs/sb3_mc_polyak_baseline_seed56_20260821-082359",
+      "21": "cached/runs/sb3_mc_polyak_baseline_seed21_20260821-082359"
+    },
+    "exp2": {
+      "66": "cached/runs/sb3_mc_polyak_exp2_seed66_20260820-182332",
+      "52": "cached/runs/sb3_mc_polyak_exp2_seed52_20260820-182332",
+      "44": "cached/runs/sb3_mc_polyak_exp2_seed44_20260820-182332",
+      "56": "cached/runs/sb3_mc_polyak_exp2_seed56_20260821-082359",
+      "21": "cached/runs/sb3_mc_polyak_exp2_seed21_20260821-082359"
+    },
+    "exp1": {
+      "66": "cached/runs/sb3_mc_polyak_exp1_seed66_20260820-182332",
+      "52": "cached/runs/sb3_mc_polyak_exp1_seed52_20260820-182332",
+      "44": "cached/runs/sb3_mc_polyak_exp1_seed44_20260820-182332",
+      "21": "cached/runs/sb3_mc_polyak_exp1_seed21_20260821-082359",
+      "56": "cached/runs/sb3_mc_polyak_exp1_seed56_20260821-082359"
+    },
+    "exp3": {
+      "66": "cached/runs/sb3_mc_polyak_exp3_seed66_20260821-082359",
+      "44": "cached/runs/sb3_mc_polyak_exp3_seed44_20260821-082359",
+      "52": "cached/runs/sb3_mc_polyak_exp3_seed52_20260821-082359",
+      "56": "cached/runs/sb3_mc_polyak_exp3_seed56_20260821-084302",
+      "21": "cached/runs/sb3_mc_polyak_exp3_seed21_20260821-084301"
+    },
+    "exp4": {
+      "52": "cached/runs/sb3_mc_polyak_exp4_seed52_20260821-085027",
+      "44": "cached/runs/sb3_mc_polyak_exp4_seed44_20260821-085022",
+      "56": "cached/runs/sb3_mc_polyak_exp4_seed56_20260821-085030",
+      "66": "cached/runs/sb3_mc_polyak_exp4_seed66_20260821-085024",
+      "21": "cached/runs/sb3_mc_polyak_exp4_seed21_20260821-085028"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    },
+    "exp4": {
+      "fhr_weight": 0.05,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03
+    }
+  }
+}

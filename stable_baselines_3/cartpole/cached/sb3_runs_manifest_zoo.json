@@ -1,0 +1,17 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_cartpole_zoo_baseline_seed66_20260821-135708",
+      "44": "cached/runs/sb3_cartpole_zoo_baseline_seed44_20260821-135708"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    }
+  }
+}

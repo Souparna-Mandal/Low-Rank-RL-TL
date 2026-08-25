@@ -1,0 +1,284 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline_old": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed44_20260819-151142",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed66_20260819-151142"
+    },
+    "exp2": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp2_seed66_20260819-151142",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp2_seed44_20260819-151142"
+    },
+    "exp1": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp1_seed44_20260819-151142",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp1_seed66_20260819-151142"
+    },
+    "exp3": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp3_seed66_20260819-152024",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp3_seed44_20260819-151916"
+    },
+    "exp4": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp4_seed44_20260819-152054",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp4_seed66_20260819-152126"
+    },
+    "exp5": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp5_seed44_20260819-152255",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp5_seed66_20260819-153047"
+    },
+    "exp6": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp6_seed66_20260819-153222",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp6_seed44_20260819-153118"
+    },
+    "exp7": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp7_seed66_20260819-153706",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp7_seed44_20260819-153607"
+    },
+    "exp11": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp11_seed66_20260819-160530",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp11_seed44_20260819-160530"
+    },
+    "exp12": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp12_seed66_20260819-160530",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp12_seed44_20260819-160530"
+    },
+    "exp10": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp10_seed44_20260819-160530",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp10_seed66_20260819-160530"
+    },
+    "exp14": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp14_seed44_20260819-164048",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp14_seed66_20260819-164048"
+    },
+    "exp15": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp15_seed66_20260819-164048",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp15_seed44_20260819-164048"
+    },
+    "exp13": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp13_seed66_20260819-164048",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp13_seed44_20260819-164048"
+    },
+    "exp17": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp17_seed66_20260819-172217",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp17_seed44_20260819-172217"
+    },
+    "exp16": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp16_seed44_20260819-172217",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp16_seed66_20260819-172217"
+    },
+    "exp18": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp18_seed66_20260819-172217",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp18_seed44_20260819-172217"
+    },
+    "exp20": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp20_seed44_20260819-194709",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp20_seed66_20260819-194709"
+    },
+    "exp21": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp21_seed44_20260819-200330",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp21_seed66_20260819-200858"
+    },
+    "exp19": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp19_seed66_20260819-194709",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp19_seed44_20260819-194709"
+    },
+    "baseline_old1": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed44_20260819-194709",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed66_20260819-194709"
+    },
+    "baseline_diverged": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed44_20260819-204453",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed66_20260819-204453"
+    },
+    "baseline_lr1e-3": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed44_20260819-210716",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed66_20260819-210716"
+    },
+    "exp22_lr1e-3": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp22_seed44_20260819-205315",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp22_seed66_20260819-205316"
+    },
+    "exp23_lr1e-3": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp23_seed44_20260819-205315",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp23_seed66_20260819-205316"
+    },
+    "baseline": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed44_20260819-212227",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_baseline_seed66_20260819-212227"
+    },
+    "exp22": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp22_seed44_20260819-212227",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp22_seed66_20260819-212227"
+    },
+    "exp23": {
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp23_seed66_20260819-212227",
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp23_seed44_20260819-212227"
+    },
+    "exp24": {
+      "44": "cached/runs/dqn_cartpole_fhrdqn_exp24_seed44_20260819-223836",
+      "66": "cached/runs/dqn_cartpole_fhrdqn_exp24_seed66_20260819-223836"
+    }
+  },
+  "overrides": {
+    "baseline_old": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp2": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp3": {
+      "fhr_weight": 0.5,
+      "fhr_order": 4,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp4": {
+      "fhr_weight": 0.1,
+      "fhr_order": 4,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp5": {
+      "fhr_weight": 0.1,
+      "fhr_order": 4,
+      "reward_lags": false,
+      "c_learning_rate": 0.015,
+      "rampdown_reward_threshold": 450,
+      "rampdown_penalty_threshold": "40%"
+    },
+    "exp6": {
+      "fhr_weight": 0.01,
+      "fhr_order": 4,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp7": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": true,
+      "c_learning_rate": 0.015
+    },
+    "exp10": {
+      "fhr_weight": 0.1,
+      "fhr_order": 1,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp11": {
+      "fhr_weight": 0.01,
+      "fhr_order": 1,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp12": {
+      "fhr_weight": 1,
+      "fhr_order": 1,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp13": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp14": {
+      "fhr_weight": 0.01,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp15": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.0015
+    },
+    "exp16": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.15
+    },
+    "exp17": {
+      "fhr_weight": 0.01,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.15
+    },
+    "exp18": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.15
+    },
+    "exp19": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp20": {
+      "fhr_weight": 0.01,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp21": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp22": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp23": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "baseline_diverged": {
+      "fhr_weight": 0.0
+    },
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "baseline_lr1e-3": {
+      "fhr_weight": 0.0
+    },
+    "exp22_lr1e-3": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp23_lr1e-3": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp24": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    }
+  }
+}

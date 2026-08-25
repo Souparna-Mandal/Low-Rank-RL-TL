@@ -9,7 +9,12 @@
       "0": "cached/runs/dqn_krull_fhrdqn100k_baseline_seed0_20260815-002825"
     },
     "exp1": {
-      "0": "cached/runs/dqn_krull_fhrdqn100k_exp1_seed0_20260815-002824"
+      "0": "cached/runs/dqn_krull_fhrdqn100k_exp1_seed0_20260815-002824",
+      "1": "cached/runs/dqn_krull_fhrdqn100k_exp1_seed1_20260815-004449"
+    },
+    "exp2": {
+      "0": "cached/runs/dqn_krull_fhrdqn100k_exp2_seed0_20260815-004457",
+      "1": "cached/runs/dqn_krull_fhrdqn100k_exp2_seed1_20260815-005333"
     }
   },
   "overrides": {

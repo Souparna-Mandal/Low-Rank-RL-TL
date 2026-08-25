@@ -1,0 +1,50 @@
+{
+  "seeds": [
+    0,
+    1
+  ],
+  "runs": {
+    "baseline": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_baseline_seed0_20260822-132028",
+      "1": "cached/runs/dqn_krull_effrainbow100k_baseline_seed1_20260822-134602"
+    },
+    "exp1": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp1_seed0_20260822-141024",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp1_seed1_20260822-145357"
+    },
+    "exp2": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp2_seed0_20260822-162333",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp2_seed1_20260822-170158"
+    },
+    "exp3": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp3_seed0_20260822-204825",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp3_seed1_20260822-214414"
+    },
+    "exp4": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp4_seed0_20260822-225123",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp4_seed1_20260822-234736"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2
+    },
+    "exp2": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    },
+    "exp4": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": true
+    }
+  }
+}

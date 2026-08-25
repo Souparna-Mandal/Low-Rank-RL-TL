@@ -1,0 +1,29 @@
+{
+  "seeds": [
+    0,
+    1
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_krull_fhrdqn100k_baseline_seed1_20260815-115808",
+      "0": "cached/runs/dqn_krull_fhrdqn100k_baseline_seed0_20260815-115808"
+    },
+    "exp1": {
+      "0": "cached/runs/dqn_krull_fhrdqn100k_exp1_seed0_20260815-115808"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 4
+    },
+    "exp2": {
+      "fhr_weight": 0.05,
+      "fhr_order": 4,
+      "reward_lags": true
+    }
+  }
+}

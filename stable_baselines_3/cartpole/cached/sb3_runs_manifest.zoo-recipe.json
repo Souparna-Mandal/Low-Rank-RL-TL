@@ -1,0 +1,37 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_cartpole_baseline_seed66_20260819-213152",
+      "44": "cached/runs/sb3_cartpole_baseline_seed44_20260819-213152"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_cartpole_exp2_seed44_20260819-213152",
+      "66": "cached/runs/sb3_cartpole_exp2_seed66_20260819-213152"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_cartpole_exp1_seed44_20260819-213152",
+      "66": "cached/runs/sb3_cartpole_exp1_seed66_20260819-213152"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    },
+    "exp2": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.015
+    }
+  }
+}

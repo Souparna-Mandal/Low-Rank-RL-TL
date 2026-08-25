@@ -27,6 +27,7 @@ import csv
 import gzip
 import json
 import math
+import os
 import pathlib
 import re
 import struct
@@ -92,6 +93,16 @@ def _safe_text(path: pathlib.Path) -> str | None:
 # copy, which does NOT reflect it). A run dir listed here is the arm's CURRENT
 # run for that seed — same-named dirs on disk that the manifest does not list
 # are stale/foreign and must not be averaged into the arm.
+def _within_lexically(root: pathlib.Path, path: pathlib.Path) -> bool:
+    """True when `path` stays strictly under `root` once "../" segments are
+    collapsed textually. os.path.normpath never touches the filesystem, so
+    this rejects URL path traversal without following symlinks — a
+    symlinked experiment directory is judged by where it is mounted, not by
+    where it points."""
+    return os.path.normpath(str(path)).startswith(
+        os.path.normpath(str(root)) + os.sep)
+
+
 def scan_manifests(root: pathlib.Path) -> dict[str, dict]:
     """exp (relative dir, str) ->
         {"families": {family: {"arms": {arm: {seed: run_dir_name}},
@@ -518,10 +529,35 @@ def make_handler(root: pathlib.Path):
             self._send(code, json.dumps(obj).encode(), "application/json")
 
         def _run_dir(self, exp: str, run: str) -> pathlib.Path | None:
-            """Resolve a run directory, refusing anything that escapes root."""
+            """Resolve a run directory, refusing anything that escapes root.
+
+            An experiment tree may legitimately BE a symlink pointing
+            outside root (experiments/stable_baselines_3 ->
+            ../stable_baselines_3 keeps the SB3 suite at the repo root while
+            staying visible here), so containment cannot simply be
+            "resolves under root" — that 404s every run behind such a link.
+            Two guards replace it:
+
+            1. exp/run come from the URL and never legitimately contain
+               "." or ".." — reject those components outright. Filtering
+               them lexically is not enough on its own: the filesystem
+               applies ".." AFTER following symlinks, so ".." landing on a
+               symlinked experiment dir escapes somewhere os.path.normpath
+               never predicted.
+            2. The run must then physically live inside its own
+               experiment's (resolved) runs directory — which follows the
+               experiment symlink exactly once, deliberately, and pins
+               everything below it."""
+            exp_path = pathlib.PurePosixPath(exp)
+            if exp_path.is_absolute() or any(
+                    p in (".", "..") for p in (*exp_path.parts, run)):
+                return None
             for base in ("cached/runs", "runs"):
-                d = (root / exp / base / run).resolve()
-                if d.is_dir() and d.is_relative_to(root):
+                if not _within_lexically(root, root / exp / base / run):
+                    continue
+                base_dir = (root / exp / base).resolve()
+                d = (base_dir / run).resolve()
+                if d.is_dir() and d.is_relative_to(base_dir):
                     return d
             return None
 
@@ -562,9 +598,12 @@ def make_handler(root: pathlib.Path):
                         self._json({"sig": run_sig(d)})
                 elif len(parts) >= 5 and parts[:2] == ["api", "traj"]:
                     d = self._run_dir("/".join(parts[2:-2]), parts[-2])
+                    # containment is anchored to the resolved run dir, not
+                    # root: the run may sit behind a symlinked experiment
+                    # tree, and a filename must not climb out of its run
                     npz = (d / "trajectories" / parts[-1]).resolve() if d else None
                     if npz and npz.is_file() and npz.suffix == ".npz" \
-                            and npz.is_relative_to(root):
+                            and npz.is_relative_to(d):
                         self._json(load_npz_1d(npz))
                     else:
                         self._json({"error": "trajectory not found"}, 404)
@@ -576,7 +615,7 @@ def make_handler(root: pathlib.Path):
                     npz = ((d / "autoregressive_rollouts" / parts[-1]).resolve()
                            if d else None)
                     if npz and npz.is_file() and npz.suffix == ".npz" \
-                            and npz.is_relative_to(root):
+                            and npz.is_relative_to(d):
                         self._json(load_npz_1d(npz))
                     else:
                         self._json({"error": "rollout not found"}, 404)
@@ -584,7 +623,7 @@ def make_handler(root: pathlib.Path):
                     d = self._run_dir("/".join(parts[1:-2]), parts[-2])
                     f = (d / parts[-1]).resolve() if d else None
                     if f and f.is_file() and f.suffix == ".csv" \
-                            and f.is_relative_to(root):
+                            and f.is_relative_to(d):
                         self._send(200, f.read_bytes(), "text/csv; charset=utf-8")
                     else:
                         self._send(404, b"not found", "text/plain")
@@ -592,7 +631,7 @@ def make_handler(root: pathlib.Path):
                     d = self._run_dir("/".join(parts[1:-2]), parts[-2])
                     fig = (d / "figures" / parts[-1]).resolve() if d else None
                     if fig and fig.is_file() and fig.suffix == ".png" \
-                            and fig.is_relative_to(root):
+                            and fig.is_relative_to(d):
                         self._send(200, fig.read_bytes(), "image/png")
                     else:
                         self._send(404, b"not found", "text/plain")

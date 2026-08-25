@@ -8,6 +8,7 @@ import yaml
 import pathlib
 import numpy as np
 
+from .wrappers.atari_wrappers import EpisodicLifeWrapper
 from .wrappers.action_wrappers import DiscretiseActionWrapper
 from .wrappers.discrete_wrappers import DiscreteActionWrapper, DiscreteStateWrapper
 from .wrappers.observation_wrappers import OneHotObservationWrapper
@@ -63,6 +64,13 @@ def make_environment(env_name: str, render_mode = None,
             ale_kwargs['repeat_action_probability'] = atari_cfg['repeat_action_probability']
         if atari_cfg.get('full_action_space') is not None:
             ale_kwargs['full_action_space'] = atari_cfg['full_action_space']
+        episodic_life = bool(atari_cfg.get('episodic_life'))
+        if episodic_life and atari_cfg['terminal_on_life_loss']:
+            raise ValueError(
+                "episodic_life and terminal_on_life_loss are mutually "
+                "exclusive: episodic_life ends the AGENT episode on life loss "
+                "while the game continues (the published training protocol); "
+                "terminal_on_life_loss makes gymnasium restart the whole game")
         env = gym.make(env_name, render_mode=render_mode, frameskip=1, **ale_kwargs)
         env = AtariPreprocessing(
             env,
@@ -74,6 +82,8 @@ def make_environment(env_name: str, render_mode = None,
             grayscale_newaxis=atari_cfg['grayscale_newaxis'],
             scale_obs=atari_cfg['scale_obs'],
         )
+        if episodic_life:
+            env = EpisodicLifeWrapper(env)
         if atari_cfg['frame_stack'] > 1:
             env = FrameStackObservation(env, stack_size=atari_cfg['frame_stack'])
         # One reward wrapper at a time (both stash raw_reward in info; stacking

@@ -1,3 +1,5 @@
+import time
+
 from agents import q_agent
 from analysis.low_rank import (rank, tabular_q_matrix, hankel_policy,
                                autoregressive_value_probe)
@@ -7,10 +9,41 @@ import numpy as np
 from tqdm import tqdm
 
 
+def reset_after_analysis(env, rolled_out: bool):
+    """The reset the training loop owes `env` after an analysis tick.
+
+    When the tick rolled `env` out (`rolled_out`), the reset must truly restart
+    the game. Under EpisodicLifeWrapper a rollout's termination is usually a
+    LIFE loss, not game over, so a plain unseeded reset() takes the wrapper's
+    continuation branch — one no-op step — and the next TRAINING episode would
+    resume from the game state the ANALYSIS policy reached. Ask the wrapper for
+    a real restart; a no-op for every env without it.
+
+    When nothing rolled out, `env` is still sitting where the ordinary
+    end-of-episode reset left it, so this is the plain reset it always was —
+    forcing a restart there would throw away the remaining lives and change the
+    training protocol.
+
+    get_wrapper_attr rather than getattr: build_env puts EpisodicLifeWrapper
+    BELOW the frame-stack/reward wrappers and Gymnasium 1.x does not forward
+    attribute access through them, so getattr would silently miss it."""
+    if rolled_out:
+        try:
+            env.get_wrapper_attr("force_full_reset")()
+        except AttributeError:
+            pass
+    return env.reset()
+
+
 def run_analysis_tick(agent, env, analysis_config: dict, run_logger=None, episode=None):
     """Rank + Hankel analysis dispatched every ep_freq episodes/iterations.
-    The Hankel sweep rolls `env` out to termination — callers must reset it after."""
+    The Hankel sweep rolls `env` out to termination — callers must reset it
+    after. Returns True iff some dispatched analysis was handed `env` and may
+    have rolled it out, i.e. iff the caller owes it a real restart (see
+    reset_after_analysis); False means `env` was never touched."""
+    rolled_out = False
     for method, names in resolve_methods(analysis_config.get("methods")):
+        rolled_out = True          # receives env; free to roll it out
         results = method(agent=agent, env=env)
         if not isinstance(results, tuple): # Deals with functions returning multiple matrices for analysis
             results = (results,)
@@ -35,6 +68,7 @@ def run_analysis_tick(agent, env, analysis_config: dict, run_logger=None, episod
     # the analysis.hankel_sweep config block (absent => skipped entirely).
     hk_cfg = analysis_config.get("hankel_sweep")
     if hk_cfg and hk_cfg.get("enabled", True):
+        rolled_out = True
         hankel_policy.hankel_sweep_analysis(agent, env, hk_cfg,
                                             run_logger=run_logger, episode=episode)
     # Autoregressive value-recurrence probe: freeze the policy, roll greedy
@@ -45,12 +79,14 @@ def run_analysis_tick(agent, env, analysis_config: dict, run_logger=None, episod
     # caller-resets-afterwards contract applies.
     ar_cfg = analysis_config.get("autoregressive_value_probe")
     if ar_cfg and ar_cfg.get("enabled", True):
+        rolled_out = True
         probe_kwargs = {k: v for k, v in ar_cfg.items() if k != "enabled"}
         if "orders" in probe_kwargs:
             probe_kwargs["orders"] = tuple(probe_kwargs["orders"])
         summary = autoregressive_value_probe.autoregressive_value_probe(
             agent, env, run_logger=run_logger, episode=episode, **probe_kwargs)
         _print_autoregressive_summary(summary)
+    return rolled_out
 
 
 def _print_autoregressive_summary(summary):
@@ -121,6 +157,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
     analysis_config = analysis_config or {}
     state, info = env.reset(seed = np_seed)
     s_tn_upd, s_train, step_count = 0,0,0
+    last_rewards_write = time.monotonic()
     episode_rewards_training = []
     episode_steps_training = []  # env steps per episode -> rewards.csv steps column
     best_window_avg = float("-inf")
@@ -170,6 +207,15 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         episode_rewards_training.append(epsiode_total_reward)
         episode_steps_training.append(episode_steps)
 
+        # Live learning curve for the result viewer: rewrite rewards.csv at
+        # most every few seconds (analysis ticks alone update it far too
+        # rarely to follow a run in flight; the throttle keeps long classical
+        # runs with thousands of short episodes from rewriting per episode).
+        if run_logger is not None and time.monotonic() - last_rewards_write > 5.0:
+            run_logger.log_rewards(episode_rewards_training,
+                                   steps=episode_steps_training)
+            last_rewards_write = time.monotonic()
+
         # We will do the training only when the episode had ended... and ensure that at least train_frequency_steps have passed since the last training
         # This is mainly relevant only when use_episode_training is True
         if s_train >= train_frequency_steps:
@@ -215,14 +261,15 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             
         # Analysis prints during training
         if episode % analysis_config.get("ep_freq", 1) == 0:
-            run_analysis_tick(agent, env, analysis_config, run_logger, episode)
+            rolled_out = run_analysis_tick(agent, env, analysis_config,
+                                           run_logger, episode)
             if run_logger is not None:
                 run_logger.log_rewards(episode_rewards_training,
                                        steps=episode_steps_training)
                 run_logger.checkpoint(agent, "latest")
             # The Hankel analysis above rolls out `env` to termination, leaving it in a stale/terminated
             # state. Reset before the next training episode so we don't resume from a hijacked env.
-            state, _ = env.reset()
+            state, _ = reset_after_analysis(env, rolled_out)
             
         # Check for early stopping 
         if episode > early_stopping_patience_eps:
@@ -319,11 +366,12 @@ def policy_iteration_loop(agent, env, no_iterations: int, solved_reward: int,
             run_logger.checkpoint(agent, "best")
 
         if iteration % analysis_config.get("ep_freq", 1) == 0:
-            run_analysis_tick(agent, env, analysis_config, run_logger, episode=iteration)
+            rolled_out = run_analysis_tick(agent, env, analysis_config,
+                                           run_logger, episode=iteration)
             if run_logger is not None:
                 run_logger.log_rewards(iteration_rewards)
                 run_logger.checkpoint(agent, "latest")
-            env.reset()
+            reset_after_analysis(env, rolled_out)
 
         if n_changed == 0:
             print("Policy stable — policy iteration converged.")

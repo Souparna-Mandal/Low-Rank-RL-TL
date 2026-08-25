@@ -1,0 +1,93 @@
+# SB3 FHR comparison — MountainCar-v0, STOCK RL-Zoo recipe (reference).
+#
+# The published rl-baselines3-zoo hyperparams/dqn.yml MountainCar-v0 entry,
+# verbatim, except n_timesteps 150k (zoo: 120k; note exploration_fraction is
+# relative, so this stretches the eps decay 24k -> 30k steps). Published zoo
+# result: -100.85 +/- 9.9 (deterministic eval). This is the standard-SB3
+# baseline reference; the tuned recipe the FHR experiments use is
+# configs/config_sb3.yaml (Polyak targets + lr 1e-3 — see
+# stable_baselines_3/mountaincar_tuning/TUNING_LOG.md for why the FHR edge
+# needs fresh targets).
+#
+# run_sb3_seeds.py reads configs/config_sb3.yaml; to launch THIS reference,
+# copy it over that path first. Runs recorded under this recipe are archived
+# in cached/sb3_runs_manifest.zoo-hard600.json (arm keys exp1-9 = the old
+# zoo-config lambda/order sweep).
+experiment:
+  name: sb3_mountaincar_zoo
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    10: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False, c_learning_rate: 0.03}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: MountainCar-v0
+
+algo:                     # RL-Zoo tuned DQN, MountainCar-v0 (hard target sync)
+  type: dqn
+  n_timesteps: 120000
+  learning_rate: 4.0e-3
+  batch_size: 128
+  buffer_size: 10000
+  learning_starts: 1000
+  gamma: 0.98
+  target_update_interval: 600
+  train_freq: 16
+  gradient_steps: 8
+  exploration_fraction: 0.2
+  exploration_final_eps: 0.07
+  net_arch: [256, 256]
+  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it)
+
+agent:
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 500
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -110
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 25
+  eval:
+    freq_steps: 5000
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [32, 32]
+        batch_size: 128
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

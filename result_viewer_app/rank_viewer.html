@@ -65,6 +65,7 @@ select,button,.btn{
   border:1px solid var(--border);border-radius:8px;padding:7px 11px;cursor:pointer;
 }
 select{padding-right:26px}
+#envsel,#runsel{max-width:330px}
 button:hover,.btn:hover,select:hover{border-color:var(--axis)}
 button:disabled{opacity:.4;cursor:default}
 .live{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);
@@ -209,7 +210,10 @@ details.tbl td:first-child,details.tbl th:first-child{text-align:left}
       <div class="sub">RunLogger spectra, Hankel sweep &amp; rank metrics over training</div>
     </div>
     <div class="controls">
-      <select id="runsel" aria-label="Run"></select>
+      <select id="envsel" aria-label="Environment"
+        title="Environment (experiment directory) — the run list next to it shows only its runs"></select>
+      <select id="runsel" aria-label="Run"
+        title="This environment's runs, newest first"></select>
       <label class="live" id="livewrap" title="Auto-refresh while a run is still training">
         <input type="checkbox" id="livechk" checked>
         <span class="dot"></span><span id="livestat">Live</span>
@@ -446,7 +450,7 @@ function seqColor(t){
   };
 })();
 
-const STATE={runs:[],runsKey:"",manifests:{},cur:null,data:null,colors:{},hidden:new Set(),
+const STATE={runs:[],runsKey:"",manifests:{},env:null,cur:null,data:null,colors:{},hidden:new Set(),
   ep:null,tauIdx:null,playing:null,live:true,followLast:false,dragging:false,
   sig:null,pending:null,metric:"eff_rank",sweepRows:null,trajEp:undefined,trajCache:{},
   persistEp:null,
@@ -564,6 +568,14 @@ function cmpArr(a,b){
   return 0;
 }
 const runStamp=run=>(run.match(/_(\d{8}-\d{6})$/)||[])[1]||null;
+// a run's launch time (epoch seconds): the run-dir name stamp (creation time),
+// falling back to the artifact mtime for unstamped dirs — the run selector
+// orders each environment's runs on this, newest first
+function runTime(r){
+  const m=/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(runStamp(r.run)||"");
+  return m?new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime()/1000
+          :(r.mtime||0);
+}
 function runOptionText(r,currentFamily){
   if(r.arm!=null){
     const st=runStamp(r.run);
@@ -582,32 +594,42 @@ const runsKeyOf=runs=>runs.map(r=>r.exp+"/"+r.run
   +"@"+(r.arm||"")+"."+(r.family||"")+"."+(r.tracked===false?0:1)).join(",");
 function updateRunOptions(runs){
   STATE.runs=runs; STATE.runsKey=runsKeyOf(runs);
-  const sel=$("#runsel"), cur=sel.value;
-  sel.disabled=!runs.length; sel.innerHTML="";
-  if(!runs.length){sel.append(el("option",{text:"(no runs)"}));return;}
-  // most recently updated family per exp — its options need no family tag
-  const curFam={};
-  for(const r of runs)if(r.family){
-    const b=curFam[r.exp];
-    if(!b||(r.mtime||0)>b.m)curFam[r.exp]={f:r.family,m:r.mtime||0};
+  const esel=$("#envsel"), sel=$("#runsel");
+  esel.disabled=sel.disabled=!runs.length;
+  esel.innerHTML=""; sel.innerHTML="";
+  if(!runs.length){
+    STATE.env=null;
+    esel.append(el("option",{text:"(no environments)"}));
+    sel.append(el("option",{text:"(no runs)"}));
+    return;
   }
-  const byExp=new Map();          // insertion order = most recent exp first
-  for(const r of runs){
-    if(!byExp.has(r.exp))byExp.set(r.exp,[]);
-    byExp.get(r.exp).push(r);
+  // environment dropdown: one entry per experiment dir, most recently active
+  // first (runs arrive globally mtime-sorted). Keep the user's pick while it
+  // still exists; otherwise follow the run being viewed.
+  const envs=[...new Set(runs.map(r=>r.exp))];
+  if(!envs.includes(STATE.env))
+    STATE.env=(STATE.cur&&envs.includes(STATE.cur.exp))?STATE.cur.exp:envs[0];
+  for(const x of envs)esel.append(el("option",{value:x,text:x}));
+  esel.value=STATE.env;
+  // most recently updated family in this env — its options need no family tag
+  let curFam=null;
+  for(const r of runs)
+    if(r.exp===STATE.env&&r.family&&(!curFam||(r.mtime||0)>curFam.m))
+      curFam={f:r.family,m:r.mtime||0};
+  // the selected environment's runs, newest first by launch time (name stamp,
+  // artifact mtime for unstamped dirs); arm order / seed only break ties from
+  // a same-second fan-out launch
+  const rs=runs.filter(r=>r.exp===STATE.env)
+    .sort((a,b)=>(runTime(b)-runTime(a))
+      ||cmpArr(armOrder(a.arm),armOrder(b.arm))
+      ||((+a.seed||0)-(+b.seed||0))||a.run.localeCompare(b.run));
+  for(const r of rs){
+    const o=el("option",{value:r.exp+" "+r.run});
+    o.textContent=runOptionText(r,curFam&&curFam.f);
+    sel.append(o);
   }
-  for(const [exp,rs] of byExp){
-    rs.sort((a,b)=>cmpArr(armOrder(a.arm),armOrder(b.arm))
-      ||((+a.seed||0)-(+b.seed||0))||((b.mtime||0)-(a.mtime||0)));
-    const og=el("optgroup",{label:exp});
-    for(const r of rs){
-      const o=el("option",{value:r.exp+" "+r.run});
-      o.textContent=runOptionText(r,(curFam[exp]||{}).f);
-      og.append(o);
-    }
-    sel.append(og);
-  }
-  if([...sel.options].some(o=>o.value===cur))sel.value=cur;
+  const cur=STATE.cur?STATE.cur.exp+" "+STATE.cur.run:null;
+  if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;
 }
 let TICKING=false;
 async function tick(force){
@@ -674,6 +696,13 @@ function setUpdated(){
 
 async function boot(){
   $("#runsel").onchange=e=>{exitCompare();loadRun(...e.target.value.split(" "));};
+  $("#envsel").onchange=e=>{
+    STATE.env=e.target.value;
+    updateRunOptions(STATE.runs);      // refill the run list for this env
+    // jump straight to its newest run (the list's first entry)
+    const first=STATE.runs.some(r=>r.exp===STATE.env)&&$("#runsel").value;
+    if(first){exitCompare();loadRun(...first.split(" "));}
+  };
   $("#refreshbtn").onclick=()=>{
     if(STATE.compare){STATE.cmpCache={};cmpLoad();}
     else tick(true);
@@ -730,6 +759,9 @@ let LOADSEQ=0;
 async function loadRun(exp,run){
   const seq=++LOADSEQ;  // a newer loadRun (run switch) makes this one stale
   STATE.cur={exp,run};
+  // keep the environment + run dropdowns pointing at what's being viewed,
+  // whichever code path navigated here
+  if(STATE.runs.length){STATE.env=exp;updateRunOptions(STATE.runs);}
   STATE.hidden=new Set(); STATE.ep=null; STATE.tauIdx=null; STATE.followLast=false;
   STATE.pending=null; STATE.trajEp=undefined; STATE.trajCache={}; STATE.persistEp=null;
   STATE.rwX=null;   // re-pick the learning-curve x-axis for the new run

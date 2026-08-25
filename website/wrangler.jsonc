@@ -1,0 +1,11 @@
+{
+  "name": "flame-rl",
+  "compatibility_date": "2026-08-25",
+  "assets": {
+    // Static-assets-only Worker: no "main" entry point, so everything in
+    // public/ is served directly from Cloudflare's edge.
+    "directory": "./public",
+    // Holding page: any path falls back to index.html rather than 404ing.
+    "not_found_handling": "single-page-application"
+  }
+}

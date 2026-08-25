@@ -56,3 +56,8 @@ experiments/*/results_ppo/
 # HR-DQN benchmark caches (reproducible via exp1_hankel.ipynb)
 results_hankel/
 results_recurrence/
+
+# Vendored world-model repos cloned for the Krull comparison (see
+# experiments/atari/dqn_krull/exp_worldmodel_krull_comparison.ipynb for the
+# clone commands + pinned commits) — third-party trees with their own .git
+**/cached/external/

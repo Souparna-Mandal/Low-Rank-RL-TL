@@ -1,0 +1,134 @@
+"""Generate the MountainCar tuning-variant experiment dirs.
+
+Each VARIANTS entry becomes <variant>/configs/config_sb3.yaml — the base
+mountaincar/configs/config_sb3.yaml with COMMON + the variant's overrides
+deep-merged on top — plus an empty cached/. Every variant dir is a normal
+run_sb3_seeds.py experiment dir:
+
+    cd stable_baselines_3/mountaincar_tuning/<variant>
+    python ../../src/run_sb3_seeds.py --experiment 1 2
+
+or launch the whole phase with launch_variants.py. Regenerating a config is
+idempotent; run artifacts under cached/ are never touched.
+
+Tuning protocol (see TUNING_LOG.md for results):
+  * one factor changes per variant, everything else stays the RL-Zoo recipe;
+  * arms per variant: baseline (fhr_weight 0) + exp1 (lambda 0.5, r=2 — the
+    classic MountainCar 3/3 winner block) + exp2 (lambda 0.1, r=2);
+  * 3 seeds, analysis ticks off (reward-only runs), greedy eval every 5k steps
+    (10 fixed-seed episodes -> eval.csv) as the sample-efficiency measure.
+"""
+import copy
+import pathlib
+
+import yaml
+
+HERE = pathlib.Path(__file__).resolve().parent
+BASE = HERE.parent / "mountaincar" / "configs" / "config_sb3.yaml"
+
+# Applied to every variant, on top of the base config.
+COMMON = {
+    "experiment": {
+        "seeds": [44, 66, 52],
+        # exp1 = the classic dqn_mountaincar 3/3-seed winner FHR block;
+        # exp2 = the milder lambda that looked best under the zoo recipe.
+        "fhr_experiments": {
+            1: {"fhr_weight": 0.5, "fhr_order": 2, "reward_lags": False,
+                "c_learning_rate": 0.03},
+            2: {"fhr_weight": 0.1, "fhr_order": 2, "reward_lags": False,
+                "c_learning_rate": 0.03},
+        },
+    },
+    "training": {
+        "eval": {"freq_steps": 5000, "n_episodes": 10, "seed": 9000},
+    },
+    # reward-only runs: rank/Hankel/AR ticks cost ~40 min per run and are not
+    # needed to measure sample efficiency
+    "analysis": {
+        "ep_freq": 50,
+        "methods": [],
+        "hankel_sweep": {"enabled": False},
+        "autoregressive_value_probe": {"enabled": False},
+    },
+}
+
+# Phase A — the update-cadence hypothesis: same 0.5 gradient-steps-per-env-step
+# ratio as the zoo recipe (16, 8), finer or coarser burst granularity.
+PHASE_A = {
+    "cad16_8": {},                                             # zoo reference
+    "cad64_32": {"algo": {"train_freq": 64, "gradient_steps": 32}},
+    "cad4_2": {"algo": {"train_freq": 4, "gradient_steps": 2}},
+    "cad2_1": {"algo": {"train_freq": 2, "gradient_steps": 1}},
+}
+
+# Phase B — single-factor ports of the classic dqn_mountaincar recipe (the
+# regime where FHR won 3/3 seeds) onto the zoo reference. One factor per
+# variant; cadence stays the zoo (16, 8) so A and B remain orthogonal.
+PHASE_B = {
+    "gamma99": {"algo": {"gamma": 0.99}},
+    "buf100k": {"algo": {"buffer_size": 100000}},
+    # classic soft target updates: Polyak tau 0.005 (SB3 syncs on the
+    # target_update_interval cadence; 1 env step = every _on_step).
+    # Phase C extends it: 5 seeds + lambda-robustness arms under soft targets.
+    "polyak": {"algo": {"tau": 0.005, "target_update_interval": 1},
+               "experiment": {"seeds": [44, 66, 52, 21, 56],
+                              "fhr_experiments": {
+                                  3: {"fhr_weight": 1.0, "fhr_order": 2,
+                                      "reward_lags": False, "c_learning_rate": 0.03},
+                                  4: {"fhr_weight": 0.05, "fhr_order": 2,
+                                      "reward_lags": False, "c_learning_rate": 0.03}}}},
+    "lr1e3": {"algo": {"learning_rate": 1.0e-3}},
+    "net128": {"algo": {"net_arch": [128, 128]}},
+    # classic exploration reached eps_min ~2/3 into the run and floored at .05
+    "slow_eps": {"algo": {"exploration_fraction": 0.5,
+                          "exploration_final_eps": 0.05}},
+    "ls10k": {"algo": {"learning_starts": 10000}},
+    # classic found obs normalisation load-bearing: pos/vel spans differ 14x
+    "normobs": {"environment": {"normalise": {"state": {"min": [-1, -1],
+                                                        "max": [1, 1]}}}},
+}
+
+# Phase C — Phase B follow-ups: the winning-factor combination on 5 seeds and
+# the target-staleness mechanism probe (hard sync at 150/2400 vs the zoo 600).
+PHASE_C = {
+    "polyak_lr1e3": {"algo": {"tau": 0.005, "target_update_interval": 1,
+                              "learning_rate": 1.0e-3},
+                     "experiment": {"seeds": [44, 66, 52, 21, 56]}},
+    "hard150": {"algo": {"target_update_interval": 150}},
+    "hard2400": {"algo": {"target_update_interval": 2400}},
+}
+
+VARIANTS = {**PHASE_A, **PHASE_B, **PHASE_C}
+
+
+def _deep_merge(dst: dict, src: dict) -> dict:
+    for key, val in src.items():
+        if isinstance(val, dict) and isinstance(dst.get(key), dict):
+            _deep_merge(dst[key], val)
+        else:
+            dst[key] = copy.deepcopy(val)
+    return dst
+
+
+def main():
+    base = yaml.safe_load(BASE.read_text())
+    for variant, overrides in VARIANTS.items():
+        cfg = copy.deepcopy(base)
+        # the arm sweep is replaced wholesale, never merged with the base's
+        cfg["experiment"].pop("fhr_experiments", None)
+        _deep_merge(cfg, COMMON)
+        _deep_merge(cfg, overrides)
+        cfg["experiment"]["name"] = f"sb3_mc_{variant}"
+        vdir = HERE / variant
+        (vdir / "configs").mkdir(parents=True, exist_ok=True)
+        (vdir / "cached").mkdir(exist_ok=True)
+        out = vdir / "configs" / "config_sb3.yaml"
+        header = ("# GENERATED by mountaincar_tuning/make_variants.py — edit "
+                  "that script, not this file.\n"
+                  f"# variant: {variant}   overrides: {overrides or 'none (reference)'}\n")
+        out.write_text(header + yaml.safe_dump(cfg, sort_keys=False))
+        print(f"wrote {out.relative_to(HERE.parent)}")
+
+
+if __name__ == "__main__":
+    main()
