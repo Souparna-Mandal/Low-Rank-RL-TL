@@ -48,7 +48,8 @@ algo:                     # RL-Zoo SAC, Pendulum-v1
   train_freq: 1           # SAC cadence: one gradient step per env step
   gradient_steps: 1
   ent_coef: auto
-  net_arch: [256, 256]    # standard SAC size (Haarnoja 2018 / zoo)
+  net_arch: [8, 8]    # capacity probe; the 2x256 family is archived as
+                      # cached/sb3_runs_manifest_sac_big_network.json
 
 agent:
   fhr_weight: 0.1
