@@ -342,16 +342,27 @@ class IQNTDMixin:
         tau_p = self.policy_net._sample_taus(B, self.n_quantiles_target, self.device)
         next_theta_a = torch.zeros(B, self.n_quantiles_target, device=self.device)
         if non_final_mask.any():
+            # A caller running under torch.compile pads the bootstrap batch to
+            # the full B (CUDA graphs need one static input shape), so every
+            # row is scored and the terminal rows fall out under the non_final
+            # mask below. Otherwise the batch arrives compacted to the variable
+            # non-final count and only those rows are written. The two agree
+            # row-for-row: taus are indexed by the same mask either way.
+            static = next_states.shape[0] == B
+            taus_next = tau_p if static else tau_p[non_final_mask]
             if self.double:
                 next_actions = self.policy_net(
                     next_states, n_taus=self.n_quantiles_select).argmax(1)
             else:
                 next_actions = self.target_net(
                     next_states, n_taus=self.n_quantiles_select).argmax(1)
-            nf_q = self.target_net.quantiles(next_states, tau_p[non_final_mask])  # (nf,N',A)
+            nf_q = self.target_net.quantiles(next_states, taus_next)  # (nf,N',A)
             gathered = nf_q.gather(
                 2, next_actions.view(-1, 1, 1).expand(-1, self.n_quantiles_target, 1)).squeeze(2)
-            next_theta_a[non_final_mask] = gathered  # (nf, N')
+            if static:
+                next_theta_a = gathered                 # (B, N')
+            else:
+                next_theta_a[non_final_mask] = gathered  # (nf, N')
         # terminal rows keep next_theta_a = 0 (masked by non_final below)
         nf = non_final_mask.float().unsqueeze(1)
         return rewards.unsqueeze(1) + nf * discounts.unsqueeze(1) * next_theta_a
@@ -549,8 +560,23 @@ class RainbowDQNAgent(IQNTDMixin, QAgent):
                                           device=self.device)
 
             with torch.no_grad():
-                next_states = (torch.cat([s for s in tb.next_state if s is not None]).to(self.device)
-                               if non_final_mask.any() else None)
+                next_states = None
+                if non_final_mask.any():
+                    if self.compile_net:
+                        # Static (B, ...) bootstrap batch so CUDA graphs see one
+                        # shape; terminal rows are zero-filled and masked out in
+                        # _target_quantiles.
+                        present = [i for i, s in enumerate(tb.next_state)
+                                   if s is not None]
+                        ref = tb.next_state[present[0]]
+                        next_states = torch.zeros(
+                            (len(tb.next_state), *ref.shape[1:]), dtype=ref.dtype)
+                        next_states[present] = torch.cat(
+                            [tb.next_state[i] for i in present])
+                        next_states = next_states.to(self.device)
+                    else:
+                        next_states = torch.cat(
+                            [s for s in tb.next_state if s is not None]).to(self.device)
                 target_theta = self._target_quantiles(
                     rewards, discounts, non_final_mask, next_states)   # (B, N')
 

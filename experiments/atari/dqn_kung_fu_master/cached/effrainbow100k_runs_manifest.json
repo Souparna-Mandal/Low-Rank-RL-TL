@@ -1,0 +1,22 @@
+{
+  "seeds": [
+    0
+  ],
+  "runs": {
+    "baseline": {
+      "0": "cached/runs/dqn_kung_fu_master_effrainbow100k_baseline_seed0_20260823-222121"
+    },
+    "exp3": {
+      "0": "cached/runs/dqn_kung_fu_master_effrainbow100k_exp3_seed0_20260823-230906"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

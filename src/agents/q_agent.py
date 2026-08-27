@@ -1,4 +1,5 @@
 from .base_agent import BaseAgent, EpsilonGreedyExplorer
+from .perf import prepare_network
 from utils.device import resolve_device
 
 import gymnasium as gym
@@ -86,7 +87,8 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         discount_factor: float, base_loss = nn.HuberLoss,
         device="auto", TD_LR = 0.1, buffer_util=1, gd_steps_ceil = 100,
         grad_clip_norm = 10.0, double=False,
-        weight_decay=0.01, adam_eps=1e-8, amsgrad=True):
+        weight_decay=0.01, adam_eps=1e-8, amsgrad=True,
+        compile_net=False, amp_dtype=None, compile_mode="reduce-overhead"):
         
         """Constructor for the DQN agent which considers exploration strategy, Neural Network Parameters for estimating the Q
         function along with the replay buffer for sampling from prior experiences. 
@@ -129,6 +131,16 @@ class QAgent(BaseAgent, EpsilonGreedyExplorer):
         self.target_net = q_network(**nn_extra_kwargs).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
+
+        # Opt-in torch.compile / autocast (both default off -> untouched eager
+        # path). Applied after the state_dict copy so both nets wrap identical
+        # weights. compile_net also switches the IQN target backup to a static
+        # bootstrap batch, which CUDA graphs require — see perf.prepare_network.
+        self.compile_net = bool(compile_net)
+        self.amp_dtype = amp_dtype
+        for _net in (self.policy_net, self.target_net):
+            prepare_network(_net, compile_net=self.compile_net,
+                            amp_dtype=amp_dtype, compile_mode=compile_mode)
         
         self.optimiser = optim.AdamW(self.policy_net.parameters(), lr=nn_learning_rate,
                                      amsgrad=amsgrad, weight_decay=weight_decay,

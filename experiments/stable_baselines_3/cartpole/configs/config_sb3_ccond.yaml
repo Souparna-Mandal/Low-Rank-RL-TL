@@ -29,10 +29,10 @@ experiment:
     2: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
     3: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
     4: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
-    5: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
-    6: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
-    7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
-    8: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    # 5: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    # 6: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
+    # 7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared, reward_lags: True}
+    # 8: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate, reward_lags: True}
     # 9: standard FHR — ONE global c optimised by autodiff over the whole run,
     # at this env's best recorded lambda (see the notebook's variant table).
     9: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03}

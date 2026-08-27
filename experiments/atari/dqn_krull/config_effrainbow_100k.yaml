@@ -17,9 +17,11 @@ experiment:
   include_in_aggregate: true
   fhr_experiments:
     3: {fhr_weight: 2, fhr_order: 8}   # same arm as the BBF comparison
-    # ARX: reward lags absorb the score-event kinks the pure-AR penalty taxes
-    # (see cached/kink_diagnostic.png). Paired 1:1 against exp2 (λ0.5, r2):
-    # the ONLY difference is reward_lags.
+    # 5: {fhr_weight: 2, fhr_order: 2}
+    # 6: {fhr_weight: 0.5, fhr_order: 8}
+    7: {fhr_weight: 10, fhr_order: 22}
+    8: {fhr_weight: 10, fhr_order: 22, c_learning_rate: 0.001}
+    # ARX: reward lags absorb the score-event kinks the pure-AR penalty taxes (see cached/kink_diagnostic.png). Paired 1:1 against exp2 (λ0.5, r2): the ONLY difference is reward_lags.
     # 4: {fhr_weight: 0.5, fhr_order: 2, reward_lags: True}
 
 environment:
@@ -107,7 +109,7 @@ evaluation:
   base_seed: 1000
 
 analysis:
-  ep_freq: 200                      # a few Hankel ticks across the run
+  ep_freq: 40                      # a few Hankel ticks across the run
   methods: []                       # pixel inputs -> no state-grid Q matrix
   hankel_sweep:
     enabled: true
@@ -116,7 +118,7 @@ analysis:
     functions: [Hankel Q, Hankel V]
     save_trajectories: false
     sub_trajectory:
-      enabled: false
+      enabled: true
       min_len: 8
       stride: 16
       n_figures: 5

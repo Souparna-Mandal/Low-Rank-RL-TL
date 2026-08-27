@@ -23,6 +23,22 @@
     "exp4": {
       "0": "cached/runs/dqn_krull_effrainbow100k_exp4_seed0_20260822-225123",
       "1": "cached/runs/dqn_krull_effrainbow100k_exp4_seed1_20260822-234736"
+    },
+    "exp5": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp5_seed0_20260824-185202",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp5_seed1_20260824-192929"
+    },
+    "exp6": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp6_seed0_20260824-200834",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp6_seed1_20260824-211848"
+    },
+    "exp7": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp7_seed0_20260824-234229",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp7_seed1_20260825-082537"
+    },
+    "exp8": {
+      "0": "cached/runs/dqn_krull_effrainbow100k_exp8_seed0_20260825-103550",
+      "1": "cached/runs/dqn_krull_effrainbow100k_exp8_seed1_20260825-122015"
     }
   },
   "overrides": {
@@ -45,6 +61,23 @@
       "fhr_weight": 0.5,
       "fhr_order": 2,
       "reward_lags": true
+    },
+    "exp5": {
+      "fhr_weight": 2,
+      "fhr_order": 2
+    },
+    "exp6": {
+      "fhr_weight": 0.5,
+      "fhr_order": 8
+    },
+    "exp7": {
+      "fhr_weight": 10,
+      "fhr_order": 22
+    },
+    "exp8": {
+      "fhr_weight": 10,
+      "fhr_order": 22,
+      "c_learning_rate": 0.001
     }
   }
 }
