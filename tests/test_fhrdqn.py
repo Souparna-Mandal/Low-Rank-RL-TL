@@ -466,3 +466,58 @@ if __name__ == "__main__":
         fn()
         print(f"{name} OK")
     print(f"all {len(fns)} tests passed")
+
+
+def test_window_rank_probe_classic():
+    """The penalised-window rank probe on the classic agent: rows/arrays with
+    the padded schema, probe active on the lambda=0 arm, and probe-enabled
+    lambda=0 still bit-for-bit matches plain QAgent (no RNG consumed)."""
+    def _mk(cls, **extra):
+        torch.manual_seed(0); np.random.seed(0); random.seed(0)
+        return cls(replay_buffer_capacity=1000, q_network=TinyQNet, batch_size=16,
+                   nn_learning_rate=1e-3, nn_extra_kwargs={}, env=gym.make("CartPole-v1"),
+                   eps_start=1.0, eps_min=0.05, decay_rate=0.999, discount_factor=0.99,
+                   device="cpu", TD_LR=0.05, buffer_util=1, gd_steps_ceil=2, double=True,
+                   **extra)
+    q = _mk(QAgent)
+    f = _mk(FHRDQNAgent, fhr_weight=0.0, window_rank_every=2, window_rank_lags=6)
+    _fill_agent(q), _fill_agent(f)
+    for _ in range(3):
+        random.seed(123), torch.manual_seed(123)
+        q.train()
+        random.seed(123), torch.manual_seed(123)
+        f.train()
+    for k, v in q.policy_net.state_dict().items():
+        assert torch.equal(v, f.policy_net.state_dict()[k]), f"params diverge at {k}"
+
+    rows, arrays = f.drain_window_rank()
+    assert rows, "probe produced no rows"
+    keys = list(rows[0])
+    assert all(list(r) == keys for r in rows)         # one padded schema
+    assert {"sv_01", "sv_07", "pen_sv_01", "pen_sv_03"} <= set(keys)
+    assert "sv_08" not in keys                        # L=6 -> window_len 7
+    populated = [r for r in rows if r["n_windows"] > 0]
+    assert populated
+    r0 = populated[-1]
+    assert r0["sv_01"] >= r0["sv_02"] >= 0.0
+    assert r0["window_len"] == 7 and r0["penalty_len"] == 3
+    W = next(iter(arrays.values()))
+    assert W.shape[1] == 7 and np.isfinite(W).all()
+    assert f.drain_window_rank() == ([], {})          # handed over, not copied
+
+    # the training-loop flush writes window_hankel.csv + window_matrices/
+    import csv as _csv
+    from training import _flush_window_rank
+    with tempfile.TemporaryDirectory() as tmp:
+        logger = RunLogger(tmp, run_id="probe")
+        f2 = _mk(FHRDQNAgent, fhr_weight=0.5, warmup_grad_steps=0,
+                 window_rank_every=1, window_rank_lags=4)
+        _fill_agent(f2)
+        f2.train()
+        _flush_window_rank(f2, logger)
+        csv_path = logger.dir / "window_hankel.csv"
+        assert csv_path.exists()
+        got = list(_csv.DictReader(open(csv_path)))
+        assert got and set(got[0]) == set(
+            f2._pending_window_rank[0] if f2._pending_window_rank else got[0])
+        assert any((logger.dir / "window_matrices").iterdir())
