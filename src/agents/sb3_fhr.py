@@ -272,7 +272,7 @@ FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags")
 
 
 class _FHRMixin:
@@ -291,7 +291,8 @@ class _FHRMixin:
                         rampdown_penalty_topk, rampdown_patience_eps,
                         rampdown_episodes, c_predictor="none",
                         prioritized_replay=False, per_alpha=0.6,
-                        per_beta0=0.4):
+                        per_beta0=0.4, window_rank_every=0,
+                        window_rank_lags=16):
         self.fhr_weight = fhr_weight
         self.fhr_order = fhr_order
         self.reward_lags = reward_lags
@@ -306,10 +307,18 @@ class _FHRMixin:
         self.rampdown_penalty_topk = rampdown_penalty_topk
         self.rampdown_patience_eps = rampdown_patience_eps
         self.rampdown_episodes = rampdown_episodes
+        self.window_rank_every = window_rank_every
+        self.window_rank_lags = window_rank_lags
 
     def _validate_fhr_config(self):
         if self.fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {self.fhr_order}")
+        if self.window_rank_every < 0:
+            raise ValueError(
+                f"window_rank_every must be >= 0, got {self.window_rank_every}")
+        if self.window_rank_lags < 1:
+            raise ValueError(
+                f"window_rank_lags must be >= 1, got {self.window_rank_lags}")
         if self.prioritized_replay and not self._fhr_supports_per:
             raise ValueError(
                 "prioritized_replay is only supported by the SAC-family FHR "
@@ -397,6 +406,8 @@ class _FHRMixin:
             self._pen_top: list[float] = []
             self._rd_k = None
             self._pending_diags: list[dict] = []
+            self._pending_window_rank: list[dict] = []
+            self._pending_window_arrays: dict[str, np.ndarray] = {}
 
     def _fhr_online_qnet(self):
         """The online value network the shared predictor reads features from."""
@@ -635,6 +646,80 @@ class _FHRMixin:
             torch.cat(sq_residuals).mean().sqrt())
         return penalty
 
+    # -- penalised-window spectrum probe ------------------------------------
+    def _fhr_window_rank_due(self) -> bool:
+        """Whether the current gradient step is a probe tick. Deliberately NOT
+        gated on fhr_weight: the lambda=0 baseline measures the same windows,
+        so its spectrum is the control the FHR arms compare against."""
+        return (self.window_rank_every > 0
+                and self._fhr_grad_steps % self.window_rank_every == 0)
+
+    def _fhr_window_rank_probe(self, lag_q_fns) -> None:
+        """Singular-value spectrum of the replay windows the penalty acts on.
+
+        Uses the CURRENT TD batch's sampled slots (buf.last_batch_inds — no new
+        randomness) and the same predecessor machinery as the penalty, but
+        fetches window_rank_lags predecessors so the window is long enough for
+        a meaningful spectrum. For each online critic it builds the stacked
+        window matrix W (n_windows x (L+1)) of Q(s, a) along buffer
+        transitions in time order [t-L, ..., t] and records the singular
+        values of W and of its trailing (fhr_order+1)-column block — the
+        EXACT sub-window the penalty residual is formed on. All rows share one
+        padded schema (nan-filled) so the CSV columns are stable.
+
+        Everything runs under no_grad and consumes no torch/np RNG, so a
+        lambda=0 run with the probe enabled stays bit-for-bit stock.
+        """
+        buf = self.replay_buffer
+        inds = buf.last_batch_inds
+        L = max(self.window_rank_lags, self.fhr_order)
+        keep, pred = buf.predecessors(inds, L)
+        pen_cols = self.fhr_order + 1
+        base = {"grad_step": int(self._fhr_grad_steps),
+                "env_steps": int(self.num_timesteps),
+                "window_len": L + 1, "penalty_len": pen_cols,
+                "n_windows": int(keep.sum()),
+                "unique_eps": (int(np.unique(buf.episode_ids[inds[keep]]).size)
+                               if keep.any() else 0)}
+
+        def padded_row(critic_idx, sv_full=None, sv_pen=None):
+            row = {**base, "critic": critic_idx}
+            for j in range(L + 1):
+                row[f"sv_{j + 1:02d}"] = (float(sv_full[j]) if sv_full is not None
+                                          and j < len(sv_full) else float("nan"))
+            for j in range(pen_cols):
+                row[f"pen_sv_{j + 1:02d}"] = (float(sv_pen[j]) if sv_pen is not None
+                                              and j < len(sv_pen) else float("nan"))
+            return row
+
+        if not keep.any():
+            for i in range(len(lag_q_fns)):
+                self._pending_window_rank.append(padded_row(i))
+            return
+        # window slots in time order [t-L, ..., t-1, t]: pred columns are
+        # most-recent-first (t-1 ... t-L), so reverse and append the anchor
+        win = np.concatenate([pred[keep][:, ::-1], inds[keep][:, None]], axis=1)
+        n = win.shape[0]
+        flat = win.reshape(-1)
+        obs = buf.to_torch(buf.observations[flat, 0]).float()
+        acts = self._fhr_lag_actions(buf.actions[flat, 0], n, L + 1)
+        with torch.no_grad():
+            for i, lag_q in enumerate(lag_q_fns):
+                W = lag_q(obs, acts).view(n, L + 1).detach().cpu().numpy()
+                sv_full = np.linalg.svd(W, compute_uv=False)
+                sv_pen = np.linalg.svd(W[:, -pen_cols:], compute_uv=False)
+                self._pending_window_rank.append(padded_row(i, sv_full, sv_pen))
+                key = (f"gs{base['grad_step']:08d}_"
+                       f"ws{base['env_steps']:08d}_c{i}")
+                self._pending_window_arrays[key] = W
+
+    def drain_window_rank(self):
+        """(rows, arrays) accumulated since the last drain — the callback
+        flushes rows to window_hankel.csv and arrays to window_matrices/."""
+        rows, self._pending_window_rank = self._pending_window_rank, []
+        arrays, self._pending_window_arrays = self._pending_window_arrays, {}
+        return rows, arrays
+
     def _fhr_aggregate_pending(self, step_diags: list[dict]) -> None:
         """nanmean-aggregate one train() call's per-step diagnostics into a
         single row (the FHRDQNAgent.train contract) and queue it for the
@@ -667,7 +752,8 @@ class FHRDQN(_FHRMixin, DQN):
                  rampdown_patience_eps: int = 10,
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
-                 per_beta0: float = 0.4, **kwargs):
+                 per_beta0: float = 0.4, window_rank_every: int = 0,
+                 window_rank_lags: int = 16, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -675,9 +761,16 @@ class FHRDQN(_FHRMixin, DQN):
                              rampdown_penalty_topk, rampdown_patience_eps,
                              rampdown_episodes, c_predictor=c_predictor,
                              prioritized_replay=prioritized_replay,
-                             per_alpha=per_alpha, per_beta0=per_beta0)
+                             per_alpha=per_alpha, per_beta0=per_beta0,
+                             window_rank_every=window_rank_every,
+                             window_rank_lags=window_rank_lags)
         kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
         super().__init__(*args, **kwargs)
+
+    def _lag_q_fns(self):
+        def lag_q(obs, acts):
+            return self.q_net(obs).gather(1, acts).squeeze(1)
+        return [lag_q]
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # DQN.train (sb3 2.9.0) verbatim, with the FHR penalty riding the
@@ -715,6 +808,8 @@ class FHRDQN(_FHRMixin, DQN):
                     current_q_values.squeeze(1), lag_q, lam, diag)
                 if penalty is not None and lam > 0:
                     loss = loss + lam * penalty
+            if self._fhr_window_rank_due():
+                self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)
             self._fhr_grad_steps += 1
 
@@ -755,7 +850,8 @@ if QRDQN is not None:
                      rampdown_patience_eps: int = 10,
                      rampdown_episodes: int = 0, c_predictor: str = "none",
                      prioritized_replay: bool = False, per_alpha: float = 0.6,
-                     per_beta0: float = 0.4, **kwargs):
+                     per_beta0: float = 0.4, window_rank_every: int = 0,
+                     window_rank_lags: int = 16, **kwargs):
             self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                                  warmup_grad_steps, c_learning_rate,
                                  rampdown_reward_threshold,
@@ -763,9 +859,18 @@ if QRDQN is not None:
                                  rampdown_penalty_topk, rampdown_patience_eps,
                                  rampdown_episodes, c_predictor=c_predictor,
                                  prioritized_replay=prioritized_replay,
-                                 per_alpha=per_alpha, per_beta0=per_beta0)
+                                 per_alpha=per_alpha, per_beta0=per_beta0,
+                                 window_rank_every=window_rank_every,
+                                 window_rank_lags=window_rank_lags)
             kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
             super().__init__(*args, **kwargs)
+
+        def _lag_q_fns(self):
+            def lag_q(obs, acts):
+                quantiles = self.quantile_net(obs)
+                idx = acts[..., None].expand(-1, self.n_quantiles, 1)
+                return quantiles.gather(dim=2, index=idx).squeeze(dim=2).mean(dim=1)
+            return [lag_q]
 
         def train(self, gradient_steps: int, batch_size: int = 100) -> None:
             # QRDQN.train (sb3_contrib 2.9.0) verbatim + FHR penalty on the
@@ -807,6 +912,8 @@ if QRDQN is not None:
                         current_quantiles.mean(dim=1), lag_q, lam, diag)
                     if penalty is not None and lam > 0:
                         loss = loss + lam * penalty
+                if self._fhr_window_rank_due():
+                    self._fhr_window_rank_probe(self._lag_q_fns())
                 step_diags.append(diag)
                 self._fhr_grad_steps += 1
 
@@ -1009,6 +1116,16 @@ class FHRSB3Callback(BaseCallback):
             return
         for row in self.model.drain_diagnostics():
             self.run_logger.log_train_diagnostics(episode, **row)
+        self._drain_window_rank()
+
+    def _drain_window_rank(self):
+        if self.run_logger is None or not hasattr(self.model, "drain_window_rank"):
+            return
+        rows, arrays = self.model.drain_window_rank()
+        if rows:
+            self.run_logger.log_window_hankel(rows)
+        if arrays:
+            self.run_logger.save_window_matrices(arrays)
 
     def _analysis_tick(self, episode: int):
         if self.analysis_env is None:

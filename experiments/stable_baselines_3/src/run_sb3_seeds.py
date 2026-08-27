@@ -74,7 +74,7 @@ FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags")
 
 
 def _algo_class(algo_type):

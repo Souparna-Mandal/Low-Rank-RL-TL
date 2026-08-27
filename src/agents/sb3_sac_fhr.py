@@ -211,7 +211,8 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                  rampdown_patience_eps: int = 10,
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
-                 per_beta0: float = 0.4, **kwargs):
+                 per_beta0: float = 0.4, window_rank_every: int = 0,
+                 window_rank_lags: int = 16, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -219,7 +220,9 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                              rampdown_penalty_topk, rampdown_patience_eps,
                              rampdown_episodes, c_predictor=c_predictor,
                              prioritized_replay=prioritized_replay,
-                             per_alpha=per_alpha, per_beta0=per_beta0)
+                             per_alpha=per_alpha, per_beta0=per_beta0,
+                             window_rank_every=window_rank_every,
+                             window_rank_lags=window_rank_lags)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -361,6 +364,8 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                     anchors, self._lag_q_fns(), lam, diag)
                 if penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
+            if self._fhr_window_rank_due():
+                self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)
             self._fhr_grad_steps += 1
 
@@ -788,7 +793,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  rampdown_patience_eps: int = 10,
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
-                 per_beta0: float = 0.4, **kwargs):
+                 per_beta0: float = 0.4, window_rank_every: int = 0,
+                 window_rank_lags: int = 16, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -796,7 +802,9 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              rampdown_penalty_topk, rampdown_patience_eps,
                              rampdown_episodes, c_predictor=c_predictor,
                              prioritized_replay=prioritized_replay,
-                             per_alpha=per_alpha, per_beta0=per_beta0)
+                             per_alpha=per_alpha, per_beta0=per_beta0,
+                             window_rank_every=window_rank_every,
+                             window_rank_lags=window_rank_lags)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -893,6 +901,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                     anchors, self._lag_q_fns(), lam, diag)
                 if penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
+            if self._fhr_window_rank_due():
+                self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)
             self._fhr_grad_steps += 1
 

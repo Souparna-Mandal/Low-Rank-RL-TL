@@ -423,3 +423,68 @@ def test_hankel_rollout_continuous_method():
 def test_fhr_params_include_per_keys():
     for key in ("prioritized_replay", "per_alpha", "per_beta0"):
         assert key in FHR_PARAMS
+
+
+# ------------------------------------------- 8. penalised-window rank probe
+def test_window_rank_probe_lambda0_bit_exact_and_rows():
+    # the probe consumes no RNG and adds no gradients: a lambda=0 run with it
+    # enabled must still match stock SAC bit-for-bit
+    _seed_all(0)
+    stock = SAC("MlpPolicy", gym.make("Pendulum-v1"), **_sac_kwargs())
+    stock.learn(total_timesteps=400)
+    stock_state = _policy_state(stock)
+    stock.env.close()
+
+    _seed_all(0)
+    probed = FHRSAC("MlpPolicy", gym.make("Pendulum-v1"),
+                    **_sac_kwargs(fhr_weight=0.0, window_rank_every=10,
+                                  window_rank_lags=6))
+    probed.learn(total_timesteps=400)
+    probed_state = _policy_state(probed)
+    probed.env.close()
+    assert stock_state.keys() == probed_state.keys()
+    for k in stock_state:
+        assert torch.equal(stock_state[k], probed_state[k]), k
+
+    rows, arrays = probed.drain_window_rank()
+    assert rows and arrays
+    # padded, stable schema across all rows (nan-filled where short)
+    keys = list(rows[0])
+    assert all(list(r) == keys for r in rows)
+    assert {"sv_01", "sv_07", "pen_sv_01", "pen_sv_03"} <= set(keys)
+    assert "sv_08" not in keys and "pen_sv_04" not in keys   # L=6, r=2
+    # both critics probed at each tick
+    assert {r["critic"] for r in rows} == {0, 1}
+    populated = [r for r in rows if r["n_windows"] > 0]
+    assert populated
+    r0 = populated[-1]
+    assert r0["sv_01"] >= r0["sv_02"] >= 0.0                 # sorted spectrum
+    assert r0["pen_sv_01"] >= r0["pen_sv_02"]
+    W = next(iter(arrays.values()))
+    assert W.shape[1] == rows[0]["window_len"] == 7
+    # a second drain is empty (state was handed over, not copied)
+    assert probed.drain_window_rank() == ([], {})
+
+
+def test_window_rank_probe_sacd_and_dqn():
+    _seed_all(5)
+    model = _filled_sacd(fhr_weight=0.0, learning_starts=0,
+                         window_rank_every=3, window_rank_lags=4)
+    model.train(gradient_steps=6, batch_size=32)
+    rows, _ = model.drain_window_rank()
+    assert rows and any(r["n_windows"] > 0 for r in rows)
+    assert {r["critic"] for r in rows} == {0, 1}
+
+    _seed_all(6)
+    dqn = FHRDQN("MlpPolicy", gym.make("CartPole-v1"),
+                 policy_kwargs=dict(net_arch=[32, 32]), buffer_size=1000,
+                 learning_starts=0, batch_size=32, seed=7, device="cpu",
+                 verbose=0, window_rank_every=2, window_rank_lags=4)
+    from stable_baselines3.common.logger import configure as _cfg
+    dqn.set_logger(_cfg(folder=None, format_strings=[]))
+    _fill_buffer(dqn, "CartPole-v1")
+    dqn.train(gradient_steps=4, batch_size=32)
+    rows, arrays = dqn.drain_window_rank()
+    assert rows and any(r["n_windows"] > 0 for r in rows)
+    assert {r["critic"] for r in rows} == {0}                # single critic
+    assert all(k.endswith("_c0") for k in arrays)
