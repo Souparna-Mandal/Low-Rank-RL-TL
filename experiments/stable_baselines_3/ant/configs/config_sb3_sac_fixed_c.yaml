@@ -1,0 +1,113 @@
+# SB3 FHR comparison — Ant-v5, FIXED-c recurrence penalty + the
+# penalised-window rank probe (the fhrdwn family; notebook
+# exp1_sb3_fhrdwn.ipynb, manifest cached/sb3_runs_manifest_sac_fhrdwn.json).
+#
+# The Ant twin of cartpole/configs/config_sb3_fhrdwn_fixed.yaml: same recipe
+# as config_sb3_sac.yaml (RL-Zoo SAC mujoco-defaults, CPU — see that file for
+# the device rationale), same arm numbering as the cartpole family so the
+# fixed-vs-learned comparison reads identically across envs.
+#
+#   1. exp1/exp4 FIX the recurrence constants at the theoretical z-domain
+#      values. Along a trajectory Q_t = r_t + gamma*Q_{t+1}; under CONSTANT
+#      per-step reward the value signal has poles z = 1 (reward mode) and
+#      z = 1/gamma (discount mode), so the order-2 annihilator is
+#          (1 - z^-1)(1 - gamma^-1 z^-1)
+#            = 1 - (1 + 1/gamma) z^-1 + (1/gamma) z^-2,
+#      i.e.  c1 = 1 + 1/gamma = 2.0101...,  c2 = -1/gamma = -1.0101...
+#      (gamma = 0.99; c1 + c2 = 1). CAVEAT vs CartPole: Ant's reward
+#      (velocity + healthy - costs) is NOT constant, so {1, 1/gamma} is the
+#      exact annihilator only where the reward is locally ~constant along
+#      the window — on Ant the fixed arms test the Bellman-informed
+#      REFERENCE constants, not an exact identity. They are exactly the
+#      init of FHRRecurrenceHead, so fixing needs no new code path:
+#      c_learning_rate 0.0 freezes the head (the coefficient param group's
+#      Adam update is identically zero and _update_learning_rate re-asserts
+#      the 0 lr every train() call). exp2/exp3 are the learned-c
+#      counterparts at the same lambdas.
+#
+#   2. window_rank_every/window_rank_lags turn on the penalised-replay-
+#      window spectrum probe for EVERY arm (the lambda=0 baseline included —
+#      its windows are the control): at each probe tick the TD batch's
+#      anchors are extended to 16 same-episode predecessors, both online
+#      critics are evaluated on those windows under no_grad, and the
+#      singular values of the (n x 17) window matrix and of its trailing
+#      (fhr_order+1)-column penalty block land in window_hankel.csv (+ raw
+#      matrices in window_matrices/). No RNG consumed, so the baseline
+#      stays bit-for-bit stock SAC. Ant terminates on unhealthy states, so
+#      early episodes are short and windows sparse — n_windows fills in as
+#      the gait stabilises.
+experiment:
+  name: sb3_ant_sac_fhrdwn
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # numbering mirrors cartpole's fhrdwn_fixed family:
+    # 1: theoretical c FROZEN at (1 + 1/gamma, -1/gamma) — see header
+    1: {fhr_weight: 10, fhr_order: 2, c_learning_rate: 0.0}
+    # 2: learned-c comparator at the same lambda
+    2: {fhr_weight: 10, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 1, fhr_order: 2, c_learning_rate: 0.03}
+    4: {fhr_weight: 1, fhr_order: 2, c_learning_rate: 0.0}
+  device: cpu               # see config_sb3_sac.yaml: 2x256 MLPs, CPU 3x GPU
+  save_artifacts: true
+
+environment:
+  name: Ant-v5
+
+algo:                     # RL-Zoo SAC mujoco-defaults, as config_sb3_sac.yaml
+  type: sac
+  n_timesteps: 1000000
+  learning_rate: 3.0e-4
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99             # the c1/c2 values in the header assume this gamma
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1           # SAC cadence: one gradient step per env step
+  gradient_steps: 1
+  ent_coef: auto
+  net_arch: [256, 256]    # standard SAC size (Haarnoja 2018 / zoo)
+
+agent:                    # shared FHR block; exp<N> arms override on top
+  fhr_weight: 1
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 10000   # absolute-scale warm-up rule, as config_sb3_sac
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 5000  # ~200 probe ticks over the 1e6-grad-step budget
+  window_rank_lags: 16     # window length 17; sparse until episodes lengthen
+
+training:
+  solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 20000     # fixed reset seeds; training stream untouched.
+    n_episodes: 5         # 1000-step episodes: 5 eps = 5k env steps per eval,
+    seed: 9000            # 50 eval points over the 1e6 budget
+
+analysis:
+  ep_freq: 100            # 1000-step episodes -> 1000 episodes / 1e6 steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each of the 8 action dimensions of pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout,
+                Hankel a2 rollout, Hankel a3 rollout, Hankel a4 rollout,
+                Hankel a5 rollout, Hankel a6 rollout, Hankel a7 rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto

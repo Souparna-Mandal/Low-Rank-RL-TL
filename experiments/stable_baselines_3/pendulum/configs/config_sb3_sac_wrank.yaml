@@ -47,7 +47,7 @@ algo:                     # RL-Zoo SAC, Pendulum-v1 (matches config_sb3_sac.yaml
   train_freq: 1           # SAC cadence: one gradient step per env step
   gradient_steps: 1
   ent_coef: auto
-  net_arch: [8, 8]        # capacity-probe family, as in config_sb3_sac.yaml
+  net_arch: [8]        # capacity-probe family, as in config_sb3_sac.yaml
 
 agent:
   fhr_weight: 0.1

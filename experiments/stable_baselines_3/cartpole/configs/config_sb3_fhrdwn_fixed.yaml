@@ -1,0 +1,129 @@
+# SB3 FHR comparison — CartPole-v1, FIXED-c recurrence penalty + the
+# penalised-window rank probe (the fhrdwn family; notebook
+# exp1_sb3_fhrdwn.ipynb, manifest cached/sb3_runs_manifest_fhrdwn.json).
+#
+# Same tuned recipe as config_sb3.yaml (Polyak tau 0.005 every step, zoo
+# burst schedule); two additions:
+#
+#   1. exp1 FIXES the recurrence constants at their theoretical values from
+#      the z-domain analysis. Along a trajectory Q_t = r_t + gamma*Q_{t+1};
+#      with CartPole's constant reward (r == 1 every step) the value signal
+#      has exactly two poles — z = 1 (the constant-reward mode) and
+#      z = 1/gamma (the discount mode) — so the order-2 annihilator is the
+#      product of the two first-order factors
+#          (1 - z^-1)(1 - gamma^-1 z^-1)
+#            = 1 - (1 + 1/gamma) z^-1 + (1/gamma) z^-2,
+#      i.e.  Q_t = c1*Q_{t-1} + c2*Q_{t-2}  with
+#          c1 = 1 + 1/gamma = 2.01010101...   (gamma = 0.99)
+#          c2 =    -1/gamma = -1.01010101...
+#      (check: c1 + c2 = 1, so constant sequences are fixed points).
+#      These are exactly the Bellman init of FHRRecurrenceHead
+#      (agents/sb3_fhr.py), so fixing them needs no new code path:
+#      c_learning_rate 0.0 freezes the head at its init — the Adam update
+#      of the coefficient param group is identically zero, and
+#      _update_learning_rate re-asserts the 0 lr against SB3's schedule
+#      every train() call. exp2 is the learned-c counterpart at the same
+#      lambda, the second factor of the fixed-vs-learned comparison.
+#
+#   2. window_rank_every/window_rank_lags turn on the penalised-replay-
+#      window spectrum probe for EVERY arm (the lambda=0 baseline included —
+#      its windows are the control): every 200 gradient steps the TD batch's
+#      anchors are extended to 16 same-episode predecessors, the online
+#      Q-net is evaluated on those windows under no_grad, and the singular
+#      values of the (n x 17) window matrix and of its trailing
+#      (fhr_order+1)-column penalty block land in window_hankel.csv (+ raw
+#      matrices in window_matrices/). The probe consumes no RNG, so the
+#      baseline stays bit-for-bit stock DQN. NB: windows need 16 same-
+#      episode predecessors, so early short episodes (~10-25 steps) yield
+#      few/no windows — n_windows fills in as episodes lengthen.
+experiment:
+  name: sb3_cartpole_fhrdwn_fixed
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # 1: theoretical c FROZEN at (1 + 1/gamma, -1/gamma) — see header
+    1: {fhr_weight: 10, fhr_order: 2, c_learning_rate: 0.0}
+    # 2: learned-c comparator, identical otherwise (the exp10 headline arm
+    #    of config_sb3.yaml, re-run here so the window probe covers it)
+    2: {fhr_weight: 10, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 1, fhr_order: 2, c_learning_rate: 0.03}
+    4: {fhr_weight: 1, fhr_order: 2, c_learning_rate: 0.0}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1       # raw env, as the zoo trains it
+
+algo:                     # tuned recipe, identical to config_sb3.yaml
+  type: dqn
+  n_timesteps: 50000
+  learning_rate: 2.3e-3
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  gamma: 0.99             # the c1/c2 values in the header assume this gamma
+  tau: 0.005              # Polyak, synced every env step
+  target_update_interval: 1
+  train_freq: 256         # zoo burst schedule: 128 gradient steps every
+  gradient_steps: 128     # 256 env steps (replay ratio 0.5)
+  exploration_fraction: 0.16
+  exploration_final_eps: 0.04
+  net_arch: [256, 256]
+  n_quantiles: 10
+
+agent:                    # shared FHR block; exp<N> arms override on top
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 256  # hard warm-up: the first two 128-step bursts
+  c_learning_rate: 0.03
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 200  # ~125 probe ticks over the 25k-grad-step budget
+  window_rank_lags: 16    # window length 17 << the solved 500-step episodes
+
+training:
+  solved_reward: 475      # CartPole-v1 standard bar
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 2000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  state_bounds:           # finite obs bounds for q_matrix_dqn's grid (raw
+                          # CartPole velocity dims are unbounded)
+    low: [-4.8, -10.0, -0.41887903, -10.0]
+    high: [4.8, 10.0, 0.41887903, 10.0]
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [8, 8, 8, 8]   # one bin-count per obs dim
+        batch_size: 64
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

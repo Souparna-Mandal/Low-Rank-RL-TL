@@ -1,0 +1,53 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_cartpole_fhrdwn_fixed_baseline_seed66_20260827-220528",
+      "44": "cached/runs/sb3_cartpole_fhrdwn_fixed_baseline_seed44_20260827-220528"
+    },
+    "exp1": {
+      "66": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp1_seed66_20260827-220528",
+      "44": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp1_seed44_20260827-220528"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp2_seed44_20260827-220957",
+      "66": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp2_seed66_20260827-221000"
+    },
+    "exp3": {
+      "66": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp3_seed66_20260827-221048",
+      "44": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp3_seed44_20260827-221040"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp4_seed44_20260827-221519",
+      "66": "cached/runs/sb3_cartpole_fhrdwn_fixed_exp4_seed66_20260827-221607"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 10,
+      "fhr_order": 2,
+      "c_learning_rate": 0.0
+    },
+    "exp2": {
+      "fhr_weight": 10,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp4": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.0
+    }
+  }
+}

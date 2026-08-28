@@ -21,10 +21,16 @@
       "66": "cached/runs/sb3_humanoid_standup_sac_exp1_seed66_20260827-042442"
     },
     "exp4": {
-      "44": "cached/runs/sb3_humanoid_standup_sac_exp4_seed44_20260827-042441"
+      "44": "cached/runs/sb3_humanoid_standup_sac_exp4_seed44_20260827-042441",
+      "66": "cached/runs/sb3_humanoid_standup_sac_exp4_seed66_20260827-042442"
     },
     "exp5": {
-      "66": "cached/runs/sb3_humanoid_standup_sac_exp5_seed66_20260827-042442"
+      "66": "cached/runs/sb3_humanoid_standup_sac_exp5_seed66_20260827-042442",
+      "44": "cached/runs/sb3_humanoid_standup_sac_exp5_seed44_20260827-042442"
+    },
+    "exp6": {
+      "66": "cached/runs/sb3_humanoid_standup_sac_exp6_seed66_20260827-104750",
+      "44": "cached/runs/sb3_humanoid_standup_sac_exp6_seed44_20260827-104513"
     }
   },
   "overrides": {
