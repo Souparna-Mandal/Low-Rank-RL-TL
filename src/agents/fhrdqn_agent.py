@@ -84,10 +84,15 @@ class FHRDQNAgent(QAgent):
                  rampdown_penalty_threshold: float | str | None = None,
                  rampdown_penalty_topk: int = 20,
                  rampdown_patience_eps: int = 10,
-                 rampdown_episodes: int = 0, **q_agent_kwargs):
+                 rampdown_episodes: int = 0, window_rank_every: int = 0,
+                 window_rank_lags: int = 16, **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         if fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {fhr_order}")
+        if window_rank_every < 0:
+            raise ValueError(f"window_rank_every must be >= 0, got {window_rank_every}")
+        if window_rank_lags < 1:
+            raise ValueError(f"window_rank_lags must be >= 1, got {window_rank_lags}")
         if rampdown_episodes < 0:
             raise ValueError(f"rampdown_episodes must be >= 0, got {rampdown_episodes}")
         if rampdown_patience_eps < 1:
@@ -133,6 +138,13 @@ class FHRDQNAgent(QAgent):
         self._grad_steps = 0
         self.nan_skips = 0
 
+        # -- penalised-window rank probe state (window_rank_every=0 disables) --
+        self.window_rank_every = window_rank_every
+        self.window_rank_lags = window_rank_lags
+        self._env_steps_seen = 0
+        self._pending_window_rank: list[dict] = []
+        self._pending_window_arrays: dict[str, np.ndarray] = {}
+
         # -- automatic lambda ramp-down state --
         self.rampdown_reward_threshold = rampdown_reward_threshold
         self.rampdown_penalty_threshold = rampdown_penalty_threshold
@@ -166,6 +178,7 @@ class FHRDQNAgent(QAgent):
         next_state = (None if terminated else
                       torch.tensor(next_state, dtype=torch.float32, device=self.device).unsqueeze(0))
         self.replay_buffer.append(state, action, reward, next_state)
+        self._env_steps_seen += 1
         if terminated or truncated:
             self.replay_buffer.close(terminated)
 
@@ -182,6 +195,7 @@ class FHRDQNAgent(QAgent):
         next_state = (None if terminated else
                       torch.as_tensor(np.asarray(next_state), dtype=torch.uint8).unsqueeze(0))
         self.replay_buffer.append(state, action, reward, next_state)
+        self._env_steps_seen += 1
         if terminated or truncated:
             self.replay_buffer.close(terminated)
 
@@ -274,6 +288,67 @@ class FHRDQNAgent(QAgent):
         roots = np.roots(np.concatenate(([1.0], -c)))
         return float(np.abs(roots).max()) if roots.size else 0.0
 
+    # -- penalised-window spectrum probe ------------------------------------
+    def _window_rank_probe(self, states, actions, handles) -> None:
+        """Singular-value spectrum of the replay windows the penalty acts on
+        — the classic twin of _FHRMixin._fhr_window_rank_probe (sb3_fhr.py).
+
+        Reuses the CURRENT TD batch's handles (no new randomness) and the
+        penalty's own gather_predecessors, but with window_rank_lags lags so
+        the window is long enough for a meaningful spectrum. Records the
+        singular values of the stacked (n x (L+1)) online-Q window matrix in
+        time order [t-L, ..., t] and of its trailing (fhr_order+1)-column
+        block — the exact sub-window the penalty residual is formed on. Rows
+        share one padded (nan-filled) schema so CSV columns stay stable.
+        no_grad + no RNG: the fhr_weight=0 arm measures the same windows as a
+        control without perturbing training."""
+        L = max(self.window_rank_lags, self.fhr_order)
+        pen_cols = self.fhr_order + 1
+        keep = [i for i, (_, t) in enumerate(handles) if t >= L]
+        base = {"grad_step": int(self._grad_steps),
+                "env_steps": int(self._env_steps_seen),
+                "window_len": L + 1, "penalty_len": pen_cols,
+                "n_windows": len(keep),
+                "unique_eps": len({handles[i][0] for i in keep})}
+
+        def padded_row(sv_full=None, sv_pen=None):
+            row = {**base, "critic": 0}
+            for j in range(L + 1):
+                row[f"sv_{j + 1:02d}"] = (float(sv_full[j]) if sv_full is not None
+                                          and j < len(sv_full) else float("nan"))
+            for j in range(pen_cols):
+                row[f"pen_sv_{j + 1:02d}"] = (float(sv_pen[j]) if sv_pen is not None
+                                              and j < len(sv_pen) else float("nan"))
+            return row
+
+        if not keep:
+            self._pending_window_rank.append(padded_row())
+            return
+        p_states, p_actions, _ = self.replay_buffer.gather_predecessors(
+            [handles[i] for i in keep], L)
+        p_states = p_states.to(self.device)
+        p_actions = p_actions.to(self.device)
+        n = len(keep)
+        with torch.no_grad():
+            out = self.policy_net(p_states.reshape(n * L, *p_states.shape[2:]))
+            # gather_predecessors is most-recent-lag-first; flip to time order
+            q_lags = out.gather(1, p_actions.reshape(n * L, 1)).view(n, L).flip(1)
+            anchor_q = self.policy_net(states[keep]).gather(
+                1, actions[keep].unsqueeze(1))
+            W = torch.cat([q_lags, anchor_q], dim=1).cpu().numpy()
+        sv_full = np.linalg.svd(W, compute_uv=False)
+        sv_pen = np.linalg.svd(W[:, -pen_cols:], compute_uv=False)
+        self._pending_window_rank.append(padded_row(sv_full, sv_pen))
+        key = f"gs{base['grad_step']:08d}_ws{base['env_steps']:08d}_c0"
+        self._pending_window_arrays[key] = W
+
+    def drain_window_rank(self):
+        """(rows, arrays) accumulated since the last drain — the training loop
+        flushes rows to window_hankel.csv and arrays to window_matrices/."""
+        rows, self._pending_window_rank = self._pending_window_rank, []
+        arrays, self._pending_window_arrays = self._pending_window_arrays, {}
+        return rows, arrays
+
     def _train_step(self):
         states, actions, rewards, next_list, handles = self.replay_buffer.sample_transitions(
             self.batch_size, with_handles=True)
@@ -350,6 +425,10 @@ class FHRDQNAgent(QAgent):
                     (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
                 if lam > 0:
                     loss = loss + lam * penalty
+
+        if (self.window_rank_every > 0
+                and self._grad_steps % self.window_rank_every == 0):
+            self._window_rank_probe(states, actions, handles)
 
         self._grad_steps += 1
         if not torch.isfinite(loss):

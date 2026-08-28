@@ -1,0 +1,65 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "66": "cached/runs/sb3_pendulum_sac_baseline_seed66_20260825-234315",
+      "44": "cached/runs/sb3_pendulum_sac_baseline_seed44_20260825-234315"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_pendulum_sac_exp1_seed44_20260825-234315",
+      "66": "cached/runs/sb3_pendulum_sac_exp1_seed66_20260825-234315"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_pendulum_sac_exp2_seed44_20260825-234922",
+      "66": "cached/runs/sb3_pendulum_sac_exp2_seed66_20260825-234936"
+    },
+    "exp3": {
+      "44": "cached/runs/sb3_pendulum_sac_exp3_seed44_20260825-235111",
+      "66": "cached/runs/sb3_pendulum_sac_exp3_seed66_20260825-235112"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_pendulum_sac_exp4_seed44_20260825-235657",
+      "66": "cached/runs/sb3_pendulum_sac_exp4_seed66_20260825-235710"
+    },
+    "exp5": {
+      "44": "cached/runs/sb3_pendulum_sac_exp5_seed44_20260825-235926",
+      "66": "cached/runs/sb3_pendulum_sac_exp5_seed66_20260825-235943"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared"
+    },
+    "exp4": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate"
+    },
+    "exp5": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "prioritized_replay": true
+    }
+  }
+}

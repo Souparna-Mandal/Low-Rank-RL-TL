@@ -82,7 +82,7 @@ GAME_DIRS = {
 CONFIG = "config_fhrdqn_100k.yaml"
 # manifest/log family per agent recipe (experiment.agent_class config key)
 FAMILIES = {"fhrdqn": "fhrdqn100k", "efficient_rainbow": "effrainbow100k",
-            "bbf": "bbf100k"}
+            "bbf": "bbf100k", "sac_discrete": "sacd100k"}
 LOGS = "cached/logs"
 
 # Same single-source-of-truth FHR override whitelist as the classical launcher.
@@ -125,6 +125,7 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
     from agents.fhrdqn_agent import FHRDQNAgent
     from agents.efficient_rainbow_agent import EfficientRainbowAgent
     from agents.bbf_agent import BBFAgent
+    from agents.sac_discrete_agent import SACDiscreteAgent
     from agents.atari_networks import (NatureCNN, NatureCNNEncoder,
                                        ImpalaCNNEncoder)
     from training import evaluate_policy_atari
@@ -159,6 +160,12 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
         agent = build_agent(cfg, env, NatureCNNEncoder,
                             {"in_channels": obs_shape[0]},
                             agent_cls=EfficientRainbowAgent)
+    elif agent_class == "sac_discrete":
+        # encoder only — the agent builds the categorical actor + twin
+        # critic heads itself (width from agent.head_hidden)
+        agent = build_agent(cfg, env, NatureCNNEncoder,
+                            {"in_channels": obs_shape[0]},
+                            agent_cls=SACDiscreteAgent)
     elif agent_class == "fhrdqn":
         nn_extra_kwargs = {"in_channels": obs_shape[0],
                            "n_actions": env.action_space.n,
@@ -184,6 +191,10 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
     eval_env_cfg["environment"]["atari"]["terminal_on_life_loss"] = False
     eval_env_cfg["environment"]["atari"]["episodic_life"] = False
     eval_env = build_env(eval_env_cfg)
+    if hasattr(agent, "sample_actions"):
+        # SAC-family eval protocol: argmax pi with prob 1 - epsilon (the
+        # stochastic policy is training-time exploration only)
+        agent.sample_actions = False
     scores = evaluate_policy_atari(agent, eval_env, **eval_cfg)
     eval_env.close()
 

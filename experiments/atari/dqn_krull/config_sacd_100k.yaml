@@ -1,0 +1,132 @@
+# Atari-100k config for the SAC-Discrete recipe on Krull under the corrected
+# protocol (episodic-life training, full-game eval). SAC-Discrete
+# (Christodoulou 2019; src/agents/sac_discrete_agent.py): categorical actor +
+# twin expected-Q critics on a shared NatureCNNEncoder (512-hidden heads, the
+# CleanRL sac_atari sizes), exact expectations over actions, auto-tuned
+# temperature toward target_entropy_scale * log|A|, FHR penalty on BOTH
+# critics. Cadence/aug/eval knobs match config_effrainbow_100k.yaml so
+# cross-recipe comparisons isolate the algorithm. Launched via
+#   run_fhrdqn_atari100k.py --config config_sacd_100k.yaml --games krull
+# (baseline arm = fhr_weight forced to 0; exp<N> arms apply fhr_experiments).
+experiment:
+  name: dqn_krull_sacd100k
+  seed: 0
+  seeds: [0, 1]
+  device: auto
+  save_artifacts: true
+  agent_class: sac_discrete
+  include_in_aggregate: true
+  fhr_experiments:
+    1: {fhr_weight: 2, fhr_order: 4}    # the canonical fixed-c arm
+    3: {fhr_weight: 2, fhr_order: 8}    # mirrors effrainbow exp3
+    7: {fhr_weight: 10, fhr_order: 22}  # mirrors effrainbow exp7
+    # state-conditioned c(s, a): zero-init linear head on encoder features
+    # ++ one-hot(a) (shared mode only on pixels)
+    10: {fhr_weight: 2, fhr_order: 4, c_predictor: shared}
+    # prioritized replay (PrioritizedEpisodicReplayBuffer): IS weights on the
+    # TD terms only, priorities = mean twin |TD error|
+    11: {fhr_weight: 2, fhr_order: 4, prioritized_replay: true}
+
+environment:
+  name: ALE/Krull-v5
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: false, state: {}}
+  reward:
+    clip_sign: true
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    # Dopamine episodic-life protocol (what DER/DrQ/SPR/BBF train under):
+    # life loss ends the AGENT episode (bootstrap cut, EpisodicLifeWrapper)
+    # while the GAME continues to real game-over. Final evaluation always
+    # scores FULL games regardless (the launcher overrides both flags).
+    terminal_on_life_loss: false
+    episodic_life: true
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+    repeat_action_probability: 0.0
+    full_action_space: false
+
+network:
+  # sac_discrete builds its heads from agent.head_hidden; unused here.
+  fc_hidden: 512
+
+agent:
+  replay_buffer_capacity: 100000    # holds the entire 100k-step run
+  batch_size: 32
+  nn_learning_rate: 0.0001          # critic (+ shared encoder) lr
+  actor_learning_rate: 0.0001
+  alpha_learning_rate: 0.0003       # 3x on the single log_alpha scalar
+  target_entropy_scale: 0.89        # H_target = 0.89 * log|A| (CleanRL Atari
+                                    # value; 0.98 pins pi near uniform)
+  init_alpha: 1.0
+  # exploration is the stochastic policy itself; the inherited eps machinery
+  # stays inert during training and carries the eval protocol's eps=0.001
+  eps_start: 0.0
+  eps_min: 0.0
+  decay_rate: 1.0
+  discount_factor: 0.99
+  TD_LR: 0.01                       # soft target polyak per update tick
+  buffer_util: 0.1
+  gd_steps_ceil: 64                 # with train_frequency_steps 32 -> replay ratio 2
+  grad_clip_norm: 30.0
+  n_step: 10                        # multi-step soft targets (sample-time aggregation)
+  head_hidden: 512
+  use_augmentation: true            # DrQ random shift + intensity, gradient steps only
+  aug_pad: 4
+  aug_intensity: 0.05
+  c_predictor: none                 # exp10 overrides to shared
+  prioritized_replay: false         # exp11 overrides to true
+  per_alpha: 0.5
+  per_beta_start: 0.4
+  per_beta_increment: 0.000003      # beta -> 1 over ~200k grad steps
+  per_eps: 0.00001
+  # DrQ/Dopamine Adam settings (QAgent defaults keep the legacy wd=0.01):
+  weight_decay: 0.0
+  adam_eps: 0.00015
+  amsgrad: false
+  # FHR block (baseline arm overrides fhr_weight to 0):
+  fhr_weight: 2
+  fhr_order: 4
+  reward_lags: False
+  warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
+  c_learning_rate: 0.01
+
+training:
+  no_episodes: 100000               # upper bound; max_env_steps ends training
+  max_env_steps: 100000             # THE Atari-100k interaction budget
+  target_network_update_steps: 1    # polyak tick every env step (TD_LR above)
+  train_frequency_steps: 32
+  use_episode_training: False
+  solved_reward: 1000000000         # no early stopping under a fixed budget
+  warmup_steps: 1600                # DER's min-replay-history (this recipe's own)
+  early_stopping_patience_eps: 1000000
+  no_eps_to_avg: 20
+
+# Final-policy evaluation (raw FULL-GAME scores; see evaluate_policy_atari):
+# the launcher sets agent.sample_actions = False first, so eval actions are
+# argmax pi with prob 1 - epsilon — the same protocol as the other recipes.
+evaluation:
+  episodes: 32
+  epsilon: 0.001
+  base_seed: 1000
+
+analysis:
+  ep_freq: 40                       # a few Hankel ticks across the run
+  methods: []                       # pixel inputs -> no state-grid Q matrix
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false
+    sub_trajectory:
+      enabled: true
+      min_len: 8
+      stride: 16
+      n_figures: 5

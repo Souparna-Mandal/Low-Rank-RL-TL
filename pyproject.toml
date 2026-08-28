@@ -19,6 +19,10 @@ dependencies = [
     "optuna>=4.9.0",
     "stable-baselines3>=2.9.0",
     "sb3-contrib>=2.9.0",
+    # Gymnasium-Robotics (Fetch) for the FHR-SAC continuous-control suite;
+    # mujoco 3.12 breaks gymnasium-robotics 1.4.2's set_joint_qpos, hence the pin
+    "gymnasium-robotics>=1.4.2",
+    "mujoco>=3.1.6,<3.2",
 ]
 
 [tool.uv]

@@ -329,6 +329,86 @@ def _sig6(x: float) -> float:
     return float(f"{x:.6g}")
 
 
+# train_diagnostics.csv from a MuJoCo SAC run is ~1M rows / ~100MB (one row per
+# gradient step); materialising it with _csv_table costs GBs of transient RAM
+# PER REQUEST, and the compare view requests every selected run at once. Both
+# views only ever plot per-episode column means, so aggregate while streaming
+# and never hold the raw table. Above _DIAG_TARGET_ROWS parsed rows the file is
+# subsampled by a fixed row stride — a per-episode mean over hundreds of
+# train() calls is insensitive to sampling every Nth of them — which keeps the
+# pure-Python float parsing (the GIL-bound cost dominating concurrent summary
+# requests) bounded regardless of run length. The raw CSV stays downloadable
+# via /csv/ for exact numbers.
+_DIAG_TARGET_ROWS = 120_000
+_EVO_CACHE: dict[str, tuple[tuple, dict | None]] = {}
+
+
+def _diag_evo(path: pathlib.Path) -> dict | None:
+    """train_diagnostics.csv -> {"columns": ["episode", ...], "rows": [...]}
+    of per-episode column means, streamed and cached on (size, mtime) — the
+    compare view refetches every selected run's summary on each page load and
+    whenever a live run's sig moves."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key, sig = str(path), (st.st_size, st.st_mtime_ns)
+    hit = _EVO_CACHE.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    table = None
+    try:
+        with open(path, newline="") as f:
+            header = f.readline().rstrip("\r\n").split(",") or None
+            if header and "episode" in header:
+                ei = header.index("episode")
+                cols = [c for c in header if c != "episode"]
+                idx = [header.index(c) for c in cols]
+                first_line = f.readline()
+                stride = 1
+                if first_line:
+                    # estimate total rows from the first row's byte length to
+                    # pick the stride without a counting pre-pass
+                    est_rows = max(1, st.st_size // len(first_line))
+                    stride = max(1, math.ceil(est_rows / _DIAG_TARGET_ROWS))
+                acc: dict[int, list] = {}
+
+                def take(row):
+                    if len(row) != len(header):
+                        return  # torn/ragged line during a live append
+                    e = _num(row[ei])
+                    if e is None:
+                        return
+                    a = acc.setdefault(int(e), [[0.0, 0] for _ in cols])
+                    for j, ci in enumerate(idx):
+                        v = _num(row[ci])
+                        if v is not None:
+                            a[j][0] += v
+                            a[j][1] += 1
+
+                # RunLogger writes plain numeric CSV, so sampled lines are
+                # split on "," directly; a line that does carry quoting falls
+                # into the ragged-length guard in take() and is skipped. This
+                # avoids csv.reader field-parsing the ~9/10 lines the stride
+                # throws away — the dominant cost on a ~1M-row file.
+                if first_line:
+                    take(first_line.rstrip("\r\n").split(","))
+                for i, line in enumerate(f, start=1):
+                    if i % stride == 0:
+                        take(line.rstrip("\r\n").split(","))
+                if acc:
+                    rows = [[e] + [(_sig6(s / n) if n else None)
+                                   for s, n in acc[e]]
+                            for e in sorted(acc)]
+                    table = {"columns": ["episode"] + cols, "rows": rows}
+    except OSError:
+        return None
+    if len(_EVO_CACHE) > 128:  # FIFO bound; insertion order = arrival order
+        _EVO_CACHE.pop(next(iter(_EVO_CACHE)))
+    _EVO_CACHE[key] = (sig, table)
+    return table
+
+
 def load_summary(run_dir: pathlib.Path) -> dict:
     """Compact per-run payload for the compare view: rewards, the (small)
     rank_stats table, the Hankel sweep collapsed to full-rollout-length means
@@ -343,25 +423,7 @@ def load_summary(run_dir: pathlib.Path) -> dict:
            "stats": _csv_table(run_dir / "rank_stats.csv"),
            "sweep_evo": None, "diag": None}
 
-    t = _csv_table(run_dir / "train_diagnostics.csv")
-    if t and "episode" in t["columns"]:
-        cols = [c for c in t["columns"] if c != "episode"]
-        ei = t["columns"].index("episode")
-        idx = [t["columns"].index(c) for c in cols]
-        acc: dict[int, list] = {}
-        for r in t["rows"]:
-            e = _num(r[ei])
-            if e is None:
-                continue
-            a = acc.setdefault(int(e), [[0.0, 0] for _ in cols])
-            for j, ci in enumerate(idx):
-                v = _num(r[ci])
-                if v is not None:
-                    a[j][0] += v
-                    a[j][1] += 1
-        rows = [[e] + [(_sig6(s / n) if n else None) for s, n in acc[e]]
-                for e in sorted(acc)]
-        out["diag"] = {"columns": ["episode"] + cols, "rows": rows}
+    out["diag"] = _diag_evo(run_dir / "train_diagnostics.csv")
 
     sweep = _csv_table(run_dir / "hankel_sweep.csv")
     if sweep:
@@ -411,7 +473,9 @@ def load_run(run_dir: pathlib.Path) -> dict:
 
     # Per-train() diagnostics (td_loss, penalty terms, learned recurrence
     # coefficients, ...) — written by agents whose train() returns a dict.
-    payload["train_diagnostics"] = _csv_table(run_dir / "train_diagnostics.csv")
+    # Shipped pre-collapsed to per-episode means: the frontend card only ever
+    # plots those, and the raw table can be ~1M rows on long MuJoCo runs.
+    payload["train_diagnostics"] = _diag_evo(run_dir / "train_diagnostics.csv")
 
     # Autoregressive value-recurrence probe. Both tables are small (a handful
     # of rows per checkpoint) so they ship whole rather than being projected

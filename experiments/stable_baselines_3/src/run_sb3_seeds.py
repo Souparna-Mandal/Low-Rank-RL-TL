@@ -71,19 +71,23 @@ def _manifest_name(config):
 # penalty alone. Mirrors agents.sb3_fhr.FHR_PARAMS.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags")
 
 
 def _algo_class(algo_type):
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     from agents.sb3_fhr import FHRDQN, FHRQRDQN
+    from agents.sb3_sac_fhr import FHRSAC, FHRSACD
     try:
-        return {"dqn": FHRDQN, "qrdqn": FHRQRDQN}[algo_type]
+        return {"dqn": FHRDQN, "qrdqn": FHRQRDQN,
+                "sac": FHRSAC, "sacd": FHRSACD}[algo_type]
     except KeyError:
-        raise ValueError(f"algo.type must be 'dqn' or 'qrdqn', got {algo_type!r}")
+        raise ValueError("algo.type must be one of dqn|qrdqn|sac|sacd, "
+                         f"got {algo_type!r}")
 
 
 def _build_model(cfg, env, seed):
@@ -100,22 +104,43 @@ def _build_model(cfg, env, seed):
     n_quantiles = algo.pop("n_quantiles", None)
     if algo_type == "qrdqn" and n_quantiles is not None:
         policy_kwargs["n_quantiles"] = n_quantiles
+    # SAC-family-only keys: n_critics shapes the policy; target_entropy_scale
+    # exists on SACD alone. Popped unconditionally so a config switched
+    # between types can keep them around without crashing the constructor.
+    n_critics = algo.pop("n_critics", None)
+    if algo_type in ("sac", "sacd") and n_critics is not None:
+        policy_kwargs["n_critics"] = int(n_critics)
+    tes = algo.pop("target_entropy_scale", None)
+    if algo_type == "sacd" and tes is not None:
+        algo["target_entropy_scale"] = float(tes)
     fhr = {k: cfg["agent"][k] for k in FHR_PARAMS if k in cfg["agent"]}
     return cls("MlpPolicy", env, policy_kwargs=policy_kwargs, seed=seed,
                device=cfg["experiment"]["_device"], verbose=0, **algo, **fhr)
 
 
 def _make_env(cfg, render_mode=None):
-    """gym.make + the config's static observation rescale, when present.
+    """gym.make + the config's static observation wrappers, when present.
 
-    environment.normalise.state {min, max} applies gymnasium's
+    environment.flatten_obs flattens a Dict observation space (the
+    goal-conditioned robotics envs: {observation, achieved_goal,
+    desired_goal} -> one Box) so MlpPolicy and the FHR episodic buffer work
+    unchanged. environment.normalise.state {min, max} applies gymnasium's
     RescaleObservation (the same wrapper the classic base_env stack uses) — a
     fixed affine map, so unlike VecNormalize it is identical for the TD batch
     and the FHR lag observations. Must wrap every env a run touches (training,
     eval, analysis, videos) so the policy always sees one observation space.
+    Robotics env ids (Fetch*, ...) register lazily on first use.
     """
     import gymnasium as gym
-    env = gym.make(cfg["environment"]["name"], render_mode=render_mode)
+    name = cfg["environment"]["name"]
+    try:
+        env = gym.make(name, render_mode=render_mode)
+    except (gym.error.NameNotFound, gym.error.NamespaceNotFound):
+        import gymnasium_robotics                  # optional extra
+        gym.register_envs(gymnasium_robotics)
+        env = gym.make(name, render_mode=render_mode)
+    if cfg["environment"].get("flatten_obs"):
+        env = gym.wrappers.FlattenObservation(env)
     state = ((cfg["environment"].get("normalise") or {}).get("state") or {})
     if state:
         env = gym.wrappers.RescaleObservation(
@@ -383,7 +408,9 @@ def load_run_model(run_dir, device="cpu", checkpoint="final"):
         cfg = yaml.safe_load(f)
     cls = _algo_class(cfg["algo"]["type"])
     model = cls.load(run_dir / "checkpoints" / f"{checkpoint}.pt", device=device)
-    return model, SB3QAgentAdapter(model, epsilon=0.0)
+    make = getattr(model, "qagent_adapter", None)   # SAC family
+    adapter = make(epsilon=0.0) if make else SB3QAgentAdapter(model, epsilon=0.0)
+    return model, adapter
 
 
 def record_final_videos(arm, exp_dir=None, config=CONFIG):

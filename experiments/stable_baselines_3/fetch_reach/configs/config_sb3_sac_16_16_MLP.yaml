@@ -1,0 +1,98 @@
+# SB3 FHR comparison — FetchReachDense-v4 (Gymnasium-Robotics), SAC vs FHRSAC.
+#
+# Goal-conditioned Dict observations are FLATTENED ({observation(10),
+# achieved_goal(3), desired_goal(3)} -> Box(16)) so stock MlpPolicy and the
+# FHR episodic buffer run unchanged; no HER (the standard multi-goal
+# benchmark protocol — Plappert et al. 2018, success-rate with HER — needs a
+# HER-aware FHR buffer and is a follow-up). Dense reward = -|grip - goal|,
+# episodes truncate at 50 steps, gamma 0.95 per the Fetch convention.
+#
+# CALIBRATED-FHR pipeline (this config is edited in two phases):
+#   Phase A — arm 9 is the magnitude PROBE: fhr_weight 1 with an infinite
+#     warm-up trains BIT-IDENTICALLY to the baseline (lambda_eff stays 0, the
+#     penalty is computed under no_grad, no extra RNG) while logging
+#     penalty_raw next to td_loss in train_diagnostics.csv.
+#   Phase B — lambda for the real arms is chosen by magnitude-matching
+#     (lambda ~ rho * median(td_loss) / median(penalty_raw)), and fhr_order
+#     from the CONVERGED probe policy's measured rollout-Hankel rank of
+#     Q(s, pi(s)) (analysis method hankel_rollout_continuous) — the
+#     "recurrence order from the converged rank of a good policy" rule.
+experiment:
+  name: sb3_fetch_reach_sac_16_16
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # Phase-B arms, CALIBRATED from the exp9 probe (calibrate_fhr.py,
+    # tail medians over the last 50% of training, seeds 44/66):
+    #   td_loss 3.4e-4, penalty_raw 1.6e-3 -> td/pen ratio 0.217
+    #   lambda(rho=0.5) = 0.108, lambda(rho=2) = 0.434
+    #   converged Q(s, pi(s)) rollout-Hankel rank = 1 -> fhr_order 2 (floor);
+    #   pi-trace ranks 3-5 -> the order-5 ablation arm
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 10, fhr_order: 2, c_learning_rate: 0.03}
+    4: {fhr_weight: 0.1, fhr_order: 6, c_learning_rate: 0.03}
+    5: {fhr_weight: 1, fhr_order: 6, c_learning_rate: 0.03}
+    6: {fhr_weight: 10, fhr_order: 6, c_learning_rate: 0.03}
+
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: FetchReachDense-v4
+  flatten_obs: true
+
+algo:
+  type: sac
+  n_timesteps: 30000
+  learning_rate: 1.0e-3
+  buffer_size: 1000000
+  learning_starts: 1000
+  batch_size: 256
+  gamma: 0.95             # Fetch convention (50-step horizon)
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  net_arch: [16, 16]    # standard SAC size (Haarnoja 2018 / zoo)
+
+agent:
+  fhr_weight: 0.5         # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 3000  # ~10% of budget at the 1:1 cadence
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: null     # dense-return curves; success-rate protocol = HER follow-up
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 20
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 1000      # fixed reset seeds; training stream untouched
+    n_episodes: 20
+    seed: 1000
+
+analysis:
+  ep_freq: 150            # 50-step episodes -> 600 episodes / 30k steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each of the 4 action dimensions of pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 44
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout,
+                Hankel a2 rollout, Hankel a3 rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto

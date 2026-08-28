@@ -156,8 +156,21 @@ class EfficientRainbowAgent(IQNTDMixin, FHRDQNAgent):
         with torch.no_grad():
             next_states = None
             if non_final_mask.any():
-                next_states = torch.cat(
-                    [s for s in next_list if s is not None]).to(self.device)
+                if self.compile_net:
+                    # Static (B, ...) bootstrap batch: CUDA graphs need one
+                    # input shape, and the non-final count varies with however
+                    # many sampled transitions ended an episode. Terminal rows
+                    # are zero-filled here and masked out in _target_quantiles.
+                    present = [i for i, s in enumerate(next_list) if s is not None]
+                    ref = next_list[present[0]]
+                    next_states = torch.zeros((len(next_list), *ref.shape[1:]),
+                                              dtype=ref.dtype)
+                    next_states[present] = torch.cat(
+                        [next_list[i] for i in present])
+                    next_states = next_states.to(self.device)
+                else:
+                    next_states = torch.cat(
+                        [s for s in next_list if s is not None]).to(self.device)
                 if augment:
                     next_states = self._augment(next_states.float())[0]
             target_theta = self._target_quantiles(

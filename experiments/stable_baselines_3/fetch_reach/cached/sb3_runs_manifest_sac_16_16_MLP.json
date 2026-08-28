@@ -1,0 +1,71 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_baseline_seed44_20260827-152017",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_baseline_seed66_20260827-152018"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp1_seed44_20260827-152018",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp1_seed66_20260827-152017"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp2_seed44_20260827-153023",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp2_seed66_20260827-153028"
+    },
+    "exp3": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp3_seed44_20260827-153239",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp3_seed66_20260827-153247"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp4_seed44_20260827-154251",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp4_seed66_20260827-154252"
+    },
+    "exp5": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp5_seed44_20260827-154508",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp5_seed66_20260827-154514"
+    },
+    "exp6": {
+      "44": "cached/runs/sb3_fetch_reach_sac_16_16_exp6_seed44_20260827-155505",
+      "66": "cached/runs/sb3_fetch_reach_sac_16_16_exp6_seed66_20260827-155512"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 10,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp4": {
+      "fhr_weight": 0.1,
+      "fhr_order": 6,
+      "c_learning_rate": 0.03
+    },
+    "exp5": {
+      "fhr_weight": 1,
+      "fhr_order": 6,
+      "c_learning_rate": 0.03
+    },
+    "exp6": {
+      "fhr_weight": 10,
+      "fhr_order": 6,
+      "c_learning_rate": 0.03
+    }
+  }
+}

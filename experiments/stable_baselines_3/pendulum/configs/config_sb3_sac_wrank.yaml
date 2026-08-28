@@ -1,0 +1,91 @@
+# SB3 FHR comparison — Pendulum-v1, SAC + the penalised-window rank probe.
+# Same recipe and arm family as config_sb3_sac.yaml (RL-Zoo SAC, [8,8] nets,
+# 20k steps); the only addition is window_rank_every/window_rank_lags in the
+# agent block, which turns on the penalised-replay-window spectrum probe for
+# EVERY arm (baseline included — its lambda=0 windows are the control):
+# every 200 gradient steps the current TD batch's anchors are extended to 16
+# same-episode predecessors from the replay buffer (the penalty's own
+# machinery), the online critics are evaluated on those windows under
+# no_grad, and the singular values of the stacked (n x 17) window matrix and
+# of its trailing (fhr_order+1)-column penalty block land in
+# window_hankel.csv (+ raw matrices in window_matrices/). This measures the
+# Hankel rank ON THE DISTRIBUTION THE PENALTY ACTS ON, not on greedy
+# rollouts — the test that decides whether FHR compresses what it penalises.
+# The probe consumes no RNG, so the baseline stays bit-for-bit stock SAC
+# (asserted by tests/test_sb3_sac_fhr.py).
+experiment:
+  name: sb3_pendulum_sac_wrank
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # 1/2: standard FHR, one global c optimised by autodiff
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 0.5, fhr_order: 2, c_learning_rate: 0.03}
+    # 3/4: state-conditioned c(s, a) — "shared" reads the online critic's
+    # penultimate features, "separate" is an own MLP on [obs, raw action]
+    3: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03, c_predictor: separate}
+    # 5: FHR + prioritized replay — the probe then measures the PER-sampled
+    # windows, i.e. exactly what that arm penalises
+    5: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03, prioritized_replay: true}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: Pendulum-v1       # raw env; actions Box(-2, 2), squashed by the policy
+
+algo:                     # RL-Zoo SAC, Pendulum-v1 (matches config_sb3_sac.yaml)
+  type: sac
+  n_timesteps: 20000
+  learning_rate: 1.0e-3   # zoo (SAC default 3e-4)
+  buffer_size: 1000000
+  learning_starts: 100
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1           # SAC cadence: one gradient step per env step
+  gradient_steps: 1
+  ent_coef: auto
+  net_arch: [8]        # capacity-probe family, as in config_sb3_sac.yaml
+
+agent:
+  fhr_weight: 0.1
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 2000  # = 2k env steps at the 1:1 cadence (~10% budget)
+  c_learning_rate: 0.03
+  prioritized_replay: false   # shared baseline stays stock; PER via exp5
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 200   # ~100 probe ticks over the 20k-grad-step budget
+  window_rank_lags: 16     # window length 17 << the 200-step episodes
+
+training:
+  solved_reward: null     # Pendulum has no standard solved bar; no early stop
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 1000      # fixed reset seeds; training stream untouched
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 25             # Pendulum episodes are 200 steps -> ~4 ticks / 20k
+  methods:
+    # continuous-action-only: stacked rollout Hankels of the min-twin critic
+    # trace Q(s_t, pi(s_t)) and of the deterministic action trajectory pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel action rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto

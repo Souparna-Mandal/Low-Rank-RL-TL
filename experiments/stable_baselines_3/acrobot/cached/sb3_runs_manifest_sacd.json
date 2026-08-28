@@ -1,0 +1,60 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_acrobot_sacd_baseline_seed44_20260826-001306",
+      "66": "cached/runs/sb3_acrobot_sacd_baseline_seed66_20260826-001306"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_acrobot_sacd_exp1_seed44_20260826-001306",
+      "66": "cached/runs/sb3_acrobot_sacd_exp1_seed66_20260826-012028"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_acrobot_sacd_exp2_seed44_20260826-012127",
+      "66": "cached/runs/sb3_acrobot_sacd_exp2_seed66_20260826-014229"
+    },
+    "exp3": {
+      "44": "cached/runs/sb3_acrobot_sacd_exp3_seed44_20260826-022442",
+      "66": "cached/runs/sb3_acrobot_sacd_exp3_seed66_20260826-022528"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_acrobot_sacd_exp4_seed44_20260826-023611"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "shared"
+    },
+    "exp4": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "c_predictor": "separate"
+    },
+    "exp5": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03,
+      "prioritized_replay": true
+    }
+  }
+}

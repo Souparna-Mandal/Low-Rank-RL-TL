@@ -1,0 +1,122 @@
+# SB3 FHR comparison - HalfCheetah-v5, COARSE-BURST update cadence.
+#
+# The cadence half of the MountainCar tuning study, ported to SAC. That study
+# found two separable things:
+#
+#   (1) TARGET RULE - fresh Polyak targets (tau .005 every step) are what the
+#       FHR penalty needs to pay off: "FHR is a stabiliser that licenses
+#       aggressively fresh bootstrap targets". SAC already does this natively,
+#       so it is free in every config of this track, including the main one.
+#   (2) BURST SIZE - at a FIXED gradient-steps-per-env-step ratio, coarser
+#       bursts amplified FHR's RELATIVE edge (cad64_32: baseline degraded to
+#       2/3 seeds and -137/-153 finals while the FHR arms held 3/3 onset)
+#       while finer bursts (4,2)/(2,1) killed the env outright, 18/18 runs.
+#       MountainCar's headline config kept the zoo (16, 8) anyway, because the
+#       thesis claim needs FHR to beat the baseline at the BASELINE's own best
+#       setting - not at a setting chosen to handicap it.
+#
+# This config isolates (2) for SAC. train_freq and gradient_steps both go to
+# 64, so the update-to-data RATIO STAYS AT 1.0 - identical to the main family,
+# identical total gradient steps, identical everything else. The only change is
+# that the 64 updates arrive in one burst every 64 env steps instead of one per
+# step, i.e. the behaviour policy is frozen for 64-step stretches and each
+# burst starts from a staler replay distribution. If the MountainCar finding
+# transfers, the baseline should degrade here and the FHR arms should hold.
+#
+# The main family (configs/config_sb3_sac.yaml) remains the headline comparison
+# and runs at the zoo 1:1 cadence. This one gets its own manifest
+# (cached/sb3_runs_manifest_sac_burst.json) so the two never collide.
+#
+# ARM GRID: same lambda x order sweep as the main family so arms are directly
+# comparable; in practice launch the baseline plus whichever arm wins there
+# (--arms baseline exp<N>) rather than the full six.
+experiment:
+  name: sb3_halfcheetah_sac_burst
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # order 2 — the floor
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 10.0, fhr_order: 2, c_learning_rate: 0.03}
+    # order 8 — long recurrence window, same lambda ladder
+    4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
+    5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
+    6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
+  # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too
+  # small to amortise CUDA kernel-launch latency, so a single SAC process
+  # measures ~123 fps on CPU vs ~40 fps on the GB10 GPU, and CPU processes
+  # scale near-linearly across the 20 cores while GPU processes contend for
+  # one device (7 concurrent CUDA runs fell below 8 fps each). Set per-config
+  # rather than repo-wide; the Atari/pixel experiments still want cuda.
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: HalfCheetah-v5    # obs Box(17), actions Box(-1, 1)^6, no termination
+
+algo:                     # RL-Zoo SAC mujoco-defaults
+  type: sac
+  n_timesteps: 1000000
+  learning_rate: 3.0e-4
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 64          # COARSE BURST: 64 updates every 64 env steps
+  gradient_steps: 64      # ratio stays 1.0 - identical UTD to the main family
+  ent_coef: auto
+  net_arch: [256, 256]    # standard SAC size (Haarnoja 2018 / zoo)
+
+agent:
+  fhr_weight: 0.1         # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 10000   # penalty active from env step 20000 = 2% of the
+                             # budget. Sized in ABSOLUTE gradient steps, not as
+                             # a fraction of budget: every prior FHR config in
+                             # this repo switches the penalty on between env
+                             # step 1.5k and 4k (dqn 256-500, sacd 1000-2000,
+                             # pendulum/fetch_reach sac 2000-3000 grad steps) -
+                             # the "10% of budget" reading of the two SAC
+                             # configs is an artifact of their 20k/30k budgets.
+                             # 10% here would mean env step 110000, past the
+                             # steepest part of the curve, which is precisely
+                             # where FHR's sample-efficiency claim lives.
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 20000     # fixed reset seeds; training stream untouched.
+    n_episodes: 5         # 1000-step episodes: 5 eps = 5k env steps per eval,
+    seed: 9000            # 50 eval points over the 1e6 budget
+
+analysis:
+  ep_freq: 100            # 1000-step episodes -> 1000 episodes / 1e6 steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each of the 6 action dimensions of pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout,
+                Hankel a2 rollout, Hankel a3 rollout, Hankel a4 rollout,
+                Hankel a5 rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto

@@ -188,6 +188,34 @@ class RunLogger:
                 writer.writeheader()
             writer.writerows(rows)
 
+    def log_window_hankel(self, rows) -> None:
+        """Append penalised-replay-window spectrum rows to window_hankel.csv.
+
+        One row per (probe tick, critic), as produced by the FHR mixin's
+        window-rank probe: grad_step/env_steps metadata, then sv_NN (stacked
+        window matrix) and pen_sv_NN (the trailing penalty sub-window) padded
+        to a fixed width — so the column set is identical across rows and the
+        header can come from the first row's key order."""
+        if not rows:
+            return
+        path = self.dir / "window_hankel.csv"
+        header_needed = not path.exists()
+        with open(path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]),
+                                    extrasaction="ignore")
+            if header_needed:
+                writer.writeheader()
+            writer.writerows(rows)
+
+    def save_window_matrices(self, arrays: dict) -> None:
+        """Persist the raw penalised-window matrices (n_windows x window_len,
+        keyed gsNNNNNNNN_wsNNNNNNNN_cI) under window_matrices/ so spectra,
+        recurrence fits and AAK truncation errors can be recomputed offline."""
+        out = self.dir / "window_matrices"
+        out.mkdir(exist_ok=True)
+        for key, arr in arrays.items():
+            np.save(out / f"{key}.npy", np.asarray(arr))
+
     def log_rewards(self, rewards, steps=None) -> None:
         """Rewrite rewards.csv. steps is the per-episode env-step count (same
         length as rewards); when given, a third column is written so learning

@@ -1,0 +1,22 @@
+{
+  "seeds": [
+    0
+  ],
+  "runs": {
+    "baseline": {
+      "0": "cached/runs/dqn_pacman_effrainbow100k_baseline_seed0_20260823-232935"
+    },
+    "exp3": {
+      "0": "cached/runs/dqn_pacman_effrainbow100k_exp3_seed0_20260824-001718"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

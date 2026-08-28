@@ -1,0 +1,16 @@
+{
+  "seeds": [
+    0,
+    1
+  ],
+  "runs": {},
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 10
+    }
+  }
+}

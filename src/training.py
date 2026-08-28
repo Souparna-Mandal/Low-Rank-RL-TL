@@ -89,6 +89,20 @@ def run_analysis_tick(agent, env, analysis_config: dict, run_logger=None, episod
     return rolled_out
 
 
+def _flush_window_rank(agent, run_logger) -> None:
+    """Drain the agent's penalised-window rank probe rows (agents without the
+    probe — no drain_window_rank attribute — are a no-op) into
+    window_hankel.csv / window_matrices/, mirroring FHRSB3Callback."""
+    drain = getattr(agent, "drain_window_rank", None)
+    if drain is None or run_logger is None:
+        return
+    rows, arrays = drain()
+    if rows:
+        run_logger.log_window_hankel(rows)
+    if arrays:
+        run_logger.save_window_matrices(arrays)
+
+
 def _print_autoregressive_summary(summary):
     """One compact line per recurrence order, for the training-run console."""
     results = summary["results"]
@@ -201,6 +215,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                 diag = agent.train() # train every train_frequency_steps steps
                 if diag is not None and run_logger is not None:
                     run_logger.log_train_diagnostics(episode, **diag)
+                _flush_window_rank(agent, run_logger)
 
         # reset the environment for next episode
         state, _ = env.reset()
@@ -224,6 +239,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             diag = agent.train() # train every train_frequency_steps steps
             if diag is not None and run_logger is not None:
                 run_logger.log_train_diagnostics(episode, **diag)
+            _flush_window_rank(agent, run_logger)
 
         # Optional per-episode agent hook — e.g. FHR-DQN's automatic lambda
         # ramp-down watches episode rewards against its own residual trend.
@@ -282,6 +298,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
     if run_logger is not None:
         run_logger.log_rewards(episode_rewards_training,
                                steps=episode_steps_training)
+        _flush_window_rank(agent, run_logger)
         run_logger.checkpoint(agent, "final")
         print(f"run artifacts saved under {run_logger.dir}")
     return episode_rewards_training
