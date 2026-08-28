@@ -317,9 +317,12 @@ def launch_all(max_workers=6, force=False, exp_dir=None, timesteps=None,
         return manifest
 
     (exp_dir / LOGS).mkdir(parents=True, exist_ok=True)
+    # CPU intra-op threads per child (FHR_CHILD_THREADS, default 1) — same
+    # knob as the Atari launcher: children x threads ~= core count.
+    threads = os.environ.get("FHR_CHILD_THREADS", "1")
     child_env = dict(os.environ, MPLBACKEND="Agg", TQDM_DISABLE="1",
-                     OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
-                     OPENBLAS_NUM_THREADS="1")
+                     OMP_NUM_THREADS=threads, MKL_NUM_THREADS=threads,
+                     OPENBLAS_NUM_THREADS=threads)
     lock = threading.Lock()
     failures = []
 
