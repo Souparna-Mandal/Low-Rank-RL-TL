@@ -25,6 +25,22 @@ experiment:
   include_in_aggregate: __INCLUDE_IN_AGGREGATE__
   fhr_experiments:
     3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)
+  # ---- TUNING GRID (config_effrainbow_tune.yaml only) ---------------------
+  # The arms of the 5-game / 50k-step CX3 tuning pass. EDIT HERE to add or
+  # drop arms, then:  python experiments/src/sync_effrainbow_configs_from_global.py
+  #                   python experiments/hpc/cx3/make_jobs.py --mode tune
+  # This block is stripped from the rendered per-game 100k configs; in the
+  # tune configs it REPLACES fhr_experiments (baseline is always included by
+  # the launcher). Keep new arm numbers >= 10 — they can never collide with
+  # historical manifest keys. Every entry costs (5 games x seeds) cluster runs.
+  tune_fhr_experiments:
+    3:  {fhr_weight: 2, fhr_order: 8}                        # suite anchor
+    10: {fhr_weight: 1, fhr_order: 8}
+    11: {fhr_weight: 4, fhr_order: 8}
+    12: {fhr_weight: 2, fhr_order: 4}
+    13: {fhr_weight: 2, fhr_order: 16}
+    14: {fhr_weight: 2, fhr_order: 8, reward_lags: True}     # ARX twin
+    15: {fhr_weight: 2, fhr_order: 8, c_learning_rate: 0.001}
 
 environment:
   name: __ENV_ID__

@@ -70,8 +70,10 @@ def main():
     print(f"{len(lines)} job(s) -> {out}"
           + (f" ({skipped} already finished, skipped)" if skipped else ""))
     if lines:
-        print(f"submit:  qsub -J 1-{len(lines)}%12 "
-              f"experiments/hpc/cx3/{args.mode}.pbs")
+        packs = -(-len(lines) // 2)          # default PACK=2 (2 runs per GPU)
+        print(f"submit (PACK=2 default): from experiments/hpc/cx3/logs run\n"
+              f"  qsub -J 1-{packs}%12 ../{args.mode}.pbs\n"
+              f"(PACK=1: qsub -v PACK=1 -J 1-{len(lines)}%12 ../{args.mode}.pbs)")
 
 
 if __name__ == "__main__":

@@ -8,13 +8,15 @@ include_in_aggregate. Comments survive because substitution is textual.
 
 Also renders config_effrainbow_tune.yaml into the TUNE_GAMES dirs — the
 hyperparameter-tuning variant for the CX3 campaign: 50k env steps, denser
-checkpoints, seeds [0, 1], and the tuning fhr_experiments grid around the
-suite arm (lambda 2, r 8). EDIT the grid below before submitting if you want
-different arms — every entry is one (arm x game x seed) job on the cluster.
+checkpoints, seeds [0, 1]. The tuning ARM GRID lives in the global yaml
+itself (experiment.tune_fhr_experiments — edit it THERE): this script strips
+that block from the 100k renderings and swaps it in as the tune configs'
+fhr_experiments.
 
     python experiments/src/sync_effrainbow_configs_from_global.py
 """
 import pathlib
+import re
 import sys
 
 import yaml
@@ -35,21 +37,19 @@ TUNE_GAMES = {
     "dqn_demon_attack":   "-0.33 dHNS — worst loss",
 }
 
-# The tuning grid (arm number -> FHR overrides). 3 is the suite anchor; keep
-# numbers >= 10 for new arms so they never collide with historical manifests.
-TUNE_EXPERIMENTS = """\
-    3:  {fhr_weight: 2, fhr_order: 8}                        # suite anchor
-    10: {fhr_weight: 1, fhr_order: 8}
-    11: {fhr_weight: 4, fhr_order: 8}
-    12: {fhr_weight: 2, fhr_order: 4}
-    13: {fhr_weight: 2, fhr_order: 16}
-    14: {fhr_weight: 2, fhr_order: 8, reward_lags: True}     # ARX twin
-    15: {fhr_weight: 2, fhr_order: 8, c_learning_rate: 0.001}"""
+# The tune grid + its comment banner in the global yaml, stripped from every
+# 100k rendering and swapped into the tune configs as their fhr_experiments.
+TUNE_BLOCK_RE = re.compile(                 # line-anchored on purpose: the
+    r"  # ---- TUNING GRID.*\n"             # banner line,
+    r"(?:  #.*\n)*"                         # its remaining comment lines,
+    r"  tune_fhr_experiments:\n"            # the key,
+    r"((?:    .*\n)+)")                     # -> group(1): the entry lines
 
 
 def render(template: str, name: str, env_id: str, episodic_life: bool,
            include_in_aggregate: bool) -> str:
-    out = (template
+    out = TUNE_BLOCK_RE.sub("", template)
+    out = (out
            .replace("__EXPERIMENT_NAME__", name)
            .replace("__ENV_ID__", env_id)
            .replace("__INCLUDE_IN_AGGREGATE__",
@@ -57,12 +57,27 @@ def render(template: str, name: str, env_id: str, episodic_life: bool,
            .replace("__EPISODIC_LIFE__",
                     "true" if episodic_life
                     else "false  # no lives counter in this game"))
-    yaml.safe_load(out)               # must render to valid YAML
+    _validate(out)
     return out
 
 
-def tune_variant(text: str) -> str:
-    """The 50k-step tuning rendering of an already-rendered game config."""
+def _validate(text: str) -> None:
+    """Guard against a bad template edit or regex slip: every placeholder
+    substituted, valid YAML, and every top-level section still present."""
+    for tok in ("__EXPERIMENT_NAME__", "__ENV_ID__",
+                "__INCLUDE_IN_AGGREGATE__", "__EPISODIC_LIFE__"):
+        assert tok not in text, f"unsubstituted {tok} in rendered config"
+    cfg = yaml.safe_load(text)
+    for key in ("experiment", "environment", "network", "agent", "training",
+                "evaluation", "analysis"):
+        assert key in cfg, f"rendered config lost its {key}: section"
+    assert "tune_fhr_experiments" not in cfg["experiment"]
+
+
+def tune_variant(text: str, grid: str) -> str:
+    """The 50k-step tuning rendering of an already-rendered game config.
+    grid: the tune_fhr_experiments entry lines lifted from the global yaml,
+    re-indented to sit under fhr_experiments."""
     text = text.replace("_effrainbow100k", "_effrainbowtune")
     text = text.replace("  seeds: [0, 1, 2, 3, 4]", "  seeds: [0, 1]")
     text = text.replace(
@@ -76,13 +91,17 @@ def tune_variant(text: str) -> str:
         "  step_freq: 5000                   # rank/Hankel tick every 5k ENV STEPS (at")
     old_arm = "    3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)"
     assert old_arm in text
-    text = text.replace(old_arm, TUNE_EXPERIMENTS)
-    yaml.safe_load(text)
+    text = text.replace(old_arm, grid.rstrip("\n"))
+    _validate(text)
     return text
 
 
 def main():
     template = GLOBAL.read_text()
+    m = TUNE_BLOCK_RE.search(template)
+    if m is None:
+        sys.exit("no tune_fhr_experiments block in the global yaml")
+    grid = m.group(1)
     made = tuned = 0
     for src_cfg in sorted(ATARI.glob("dqn_*/config_fhrdqn_100k.yaml")):
         game_dir = src_cfg.parent
@@ -99,7 +118,7 @@ def main():
         made += 1
         if game_dir.name in TUNE_GAMES:
             (game_dir / "config_effrainbow_tune.yaml").write_text(
-                tune_variant(text))
+                tune_variant(text, grid))
             tuned += 1
         print(f"wrote {game_dir.name}"
               + (" (+ tune config)" if game_dir.name in TUNE_GAMES else ""))
