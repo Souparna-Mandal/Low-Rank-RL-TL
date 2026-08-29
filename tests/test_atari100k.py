@@ -249,3 +249,47 @@ def test_sign_clip_handles_numpy_scalar_rewards():
     assert [s[1] for s in seen] == [1.0, -1.0, 0.0]
     for r in np.linspace(-3, 3, 13):
         assert float(r > 0) - float(r < 0) == float(np.sign(r))
+
+
+def test_periodic_eval_and_step_freq_analysis(tmp_path):
+    """Env-step-cadenced instrumentation: greedy-eval checkpoints land in
+    eval.csv at the first episode boundary after each every_steps multiple,
+    and analysis.step_freq replaces the ep_freq gate (which would otherwise
+    fire every episode here)."""
+    import csv as _csv
+    from analysis.run_logger import RunLogger
+
+    env = gym.make("CartPole-v1")
+    eval_env = gym.make("CartPole-v1")
+    agent = _cartpole_agent(env)
+    logger = RunLogger(tmp_path, name="stepfreq")
+    tick_eps = []
+    import training as _training
+    orig_tick = _training.run_analysis_tick
+    _training.run_analysis_tick = (
+        lambda *a, **k: (tick_eps.append(a[3] if len(a) > 3 else k.get("episode")),
+                         False)[1])
+    try:
+        dqn_training_loop(
+            agent, env, no_episodes=10**6, target_network_update_steps=10**9,
+            train_frequency_steps=25, use_episode_training=False,
+            solved_reward=10**9, warmup_steps=0,
+            early_stopping_patience_eps=10**6, np_seed=0, no_eps_to_avg=100,
+            analysis_config={"step_freq": 200, "methods": [],
+                             "hankel_sweep": {"enabled": False}},
+            max_env_steps=650, run_logger=logger,
+            periodic_eval={"env": eval_env, "every_steps": 250,
+                           "episodes": 2, "epsilon": 0.0, "base_seed": 7})
+    finally:
+        _training.run_analysis_tick = orig_tick
+    rows = list(_csv.DictReader(open(logger.dir / "eval.csv")))
+    # 650 training steps, checkpoints after crossing 250 and 500 (the final
+    # crossing at 650 >= 750 never happens)
+    assert len(rows) == 2
+    steps = [int(r["env_steps"]) for r in rows]
+    assert steps[0] >= 250 and steps[1] >= 500 and steps == sorted(steps)
+    assert all(int(r["n_episodes"]) == 2 for r in rows)
+    # step-cadence analysis: ~3 ticks over 650 steps (crossings of 200/400/600),
+    # far fewer than the per-episode count the default ep_freq gate would give
+    assert 2 <= len(tick_eps) <= 4
+    env.close(), eval_env.close()

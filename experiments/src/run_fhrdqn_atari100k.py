@@ -176,21 +176,35 @@ def run_one(arm, seed, steps=None, agent_overrides=None, name_tag=None,
         raise ValueError(f"unknown experiment.agent_class {agent_class!r} — "
                          f"one of {sorted(FAMILIES)}")
     logger = make_run_logger(cfg, config_path=CONFIG, base_dir="cached")
-    train(cfg, agent, env, run_logger=logger)
 
-    # Final-policy evaluation on a FRESH env (the training env may sit in a
-    # hijacked post-analysis state); raw scores, protocol in the config.
-    # FULL-GAME episodes: the published Atari-100k numbers (random/human and
-    # every method in src/analysis/atari100k.py) score complete games across
-    # all lives, so the eval env must never terminate on life loss — no
-    # matter how the TRAINING env treats lives.
+    # Evaluation config + FULL-GAME eval env, prepared up front: the published
+    # Atari-100k numbers score complete games across all lives, so evaluation
+    # never terminates on life loss — no matter how the TRAINING env treats
+    # lives. The same env serves the optional env-step-cadenced mid-training
+    # checkpoints (evaluation.checkpoint_every_steps -> eval.csv) and the
+    # final evaluation below.
     eval_cfg = dict(cfg.get("evaluation") or {})
     if eval_episodes is not None:                 # smoke-test override
         eval_cfg["episodes"] = eval_episodes
+    ckpt_every = eval_cfg.pop("checkpoint_every_steps", None)
+    ckpt_episodes = int(eval_cfg.pop("checkpoint_episodes", 8))
     eval_env_cfg = copy.deepcopy(cfg)
     eval_env_cfg["environment"]["atari"]["terminal_on_life_loss"] = False
     eval_env_cfg["environment"]["atari"]["episodic_life"] = False
-    eval_env = build_env(eval_env_cfg)
+    eval_env = None
+    periodic_eval = None
+    if ckpt_every:
+        eval_env = build_env(eval_env_cfg)
+        periodic_eval = {"env": eval_env, "every_steps": int(ckpt_every),
+                         "episodes": ckpt_episodes,
+                         "epsilon": eval_cfg.get("epsilon", 0.001),
+                         "base_seed": eval_cfg.get("base_seed", 1000)}
+    train(cfg, agent, env, run_logger=logger, periodic_eval=periodic_eval)
+
+    # Final-policy evaluation on a FRESH env (the training env may sit in a
+    # hijacked post-analysis state); raw scores, protocol in the config.
+    if eval_env is None:
+        eval_env = build_env(eval_env_cfg)
     if hasattr(agent, "sample_actions"):
         # SAC-family eval protocol: argmax pi with prob 1 - epsilon (the
         # stochastic policy is training-time exploration only)

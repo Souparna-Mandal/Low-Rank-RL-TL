@@ -14,9 +14,9 @@
 # env-step-cadenced rank/Hankel analysis — episodes vary wildly across games,
 # env steps are the protocol constant.
 experiment:
-  name: dqn_jamesbond_effrainbow100k
+  name: dqn_kung_fu_master_effrainbowtune
   seed: 0
-  seeds: [0, 1, 2, 3, 4]
+  seeds: [0, 1]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
@@ -24,10 +24,16 @@ experiment:
   agent_class: efficient_rainbow
   include_in_aggregate: false
   fhr_experiments:
-    3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)
+    3:  {fhr_weight: 2, fhr_order: 8}                        # suite anchor
+    10: {fhr_weight: 1, fhr_order: 8}
+    11: {fhr_weight: 4, fhr_order: 8}
+    12: {fhr_weight: 2, fhr_order: 4}
+    13: {fhr_weight: 2, fhr_order: 16}
+    14: {fhr_weight: 2, fhr_order: 8, reward_lags: True}     # ARX twin
+    15: {fhr_weight: 2, fhr_order: 8, c_learning_rate: 0.001}
 
 environment:
-  name: ALE/Jamesbond-v5
+  name: ALE/KungFuMaster-v5
   render_mode: null
   discrete_config: null
   normalise: {action: {}, state: {}}
@@ -95,7 +101,7 @@ agent:
 
 training:
   no_episodes: 100000               # upper bound; max_env_steps ends training
-  max_env_steps: 100000             # THE Atari-100k interaction budget
+  max_env_steps: 50000              # tuning budget: half of Atari-100k
   target_network_update_steps: 1     # DrQ: hard target copy every env step (TD_LR 1.0)
   train_frequency_steps: 32          # burst cadence: 64 grad steps every 32 env steps
   use_episode_training: False
@@ -112,11 +118,11 @@ evaluation:
   episodes: 32
   epsilon: 0.001
   base_seed: 1000
-  checkpoint_every_steps: 10000     # 10 tracking points across the 100k budget
+  checkpoint_every_steps: 5000      # 10 tracking points across the 50k budget
   checkpoint_episodes: 8            # cheaper than the final 32
 
 analysis:
-  step_freq: 10000                  # rank/Hankel tick every 10k ENV STEPS (at
+  step_freq: 5000                   # rank/Hankel tick every 5k ENV STEPS (at
                                     # the next episode boundary) — replaces the
                                     # legacy per-episode ep_freq gate; map tick
                                     # episodes to env steps via rewards.csv

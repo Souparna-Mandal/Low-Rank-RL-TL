@@ -1,0 +1,25 @@
+#!/bin/bash
+# CX3 array job — EfficientRainbow +/- FHR FULL SUITE (Atari-100k, 27 games x
+# {baseline, exp3} x 5 seeds). One array index = one line of jobs_suite.txt.
+#
+#   python experiments/hpc/cx3/make_jobs.py --mode suite
+#   cd experiments/hpc/cx3/logs        # .o/.e files collect here
+#   qsub -J 1-<N>%12 ../suite.pbs      # N printed by make_jobs; %12 = user GPU cap
+#
+# Resubmission after a partial pass: regenerate with --skip-existing first.
+# Repo path / conda env override:  qsub -v REPO=...,CONDA_ENV=... -J ... ../suite.pbs
+#PBS -l select=1:ncpus=4:mem=48gb:ngpus=1:gpu_type=L40S
+#PBS -l walltime=08:00:00
+
+set -euo pipefail
+REPO=${REPO:-$HOME/Low-Rank-RL-TL}
+CONDA_ENV=${CONDA_ENV:-lowrank}
+
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
+conda activate "$CONDA_ENV"
+export PYTHONUNBUFFERED=1 MPLBACKEND=Agg TQDM_DISABLE=1
+export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
+
+cd "$REPO"
+bash experiments/hpc/cx3/run_one.sh \
+     experiments/hpc/cx3/jobs_suite.txt "$PBS_ARRAY_INDEX"

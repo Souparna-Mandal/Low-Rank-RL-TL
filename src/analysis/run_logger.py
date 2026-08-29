@@ -228,6 +228,22 @@ class RunLogger:
         for key, arr in arrays.items():
             np.save(out / f"{key}.npy", np.asarray(arr))
 
+    def log_eval_checkpoint(self, env_steps: int, scores) -> None:
+        """Append one mid-training greedy-eval checkpoint to eval.csv — the
+        same schema the SB3 GreedyEvalCallback writes (env_steps,
+        mean/std/min/max reward, n_episodes), so eval-curve loaders work on
+        classic and SB3 runs alike."""
+        path = self.dir / "eval.csv"
+        header_needed = not path.exists()
+        s = np.asarray(list(scores), dtype=float)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if header_needed:
+                writer.writerow(["env_steps", "mean_reward", "std_reward",
+                                 "min_reward", "max_reward", "n_episodes"])
+            writer.writerow([int(env_steps), f"{s.mean():.4f}", f"{s.std():.4f}",
+                             f"{s.min():.4f}", f"{s.max():.4f}", s.size])
+
     def log_rewards(self, rewards, steps=None) -> None:
         """Rewrite rewards.csv. steps is the per-episode env-step count (same
         length as rewards); when given, a third column is written so learning
