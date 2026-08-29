@@ -488,3 +488,35 @@ def test_window_rank_probe_sacd_and_dqn():
     assert rows and any(r["n_windows"] > 0 for r in rows)
     assert {r["critic"] for r in rows} == {0}                # single critic
     assert all(k.endswith("_c0") for k in arrays)
+
+
+@pytest.mark.parametrize("family", ["sac", "sacd"])
+def test_fhr_lag_source_variants(family):
+    """detached/target train cleanly on both critics; at init critic_target
+    == critic, so the first-step penalty value matches online. A perturbed
+    critic_target then shifts the target-source penalty but not detached's."""
+    make = _filled_sac if family == "sac" else _filled_sacd
+    rows = {}
+    for src in ("online", "detached", "target"):
+        _seed_all(5)
+        m = make(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                 learning_starts=0, fhr_lag_source=src)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        rows[src] = m.drain_diagnostics()
+        assert m.nan_skips == 0
+    r0 = rows["online"][0]
+    assert r0["b_h"] > 0 and np.isfinite(r0["penalty_raw"])
+    assert abs(rows["detached"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert abs(rows["target"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    # target source actually reads critic_target
+    _seed_all(5)
+    mt = make(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+              learning_starts=0, fhr_lag_source="target")
+    with torch.no_grad():
+        for p in mt.critic_target.parameters():
+            p.add_(0.5)
+    _seed_all(123)
+    mt.train(gradient_steps=1, batch_size=32)
+    shifted = mt.drain_diagnostics()[0]["penalty_raw"]
+    assert abs(shifted - rows["detached"][0]["penalty_raw"]) > 1e-6

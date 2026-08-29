@@ -36,6 +36,21 @@ experiment:
     4: {fhr_weight: 0.5, fhr_order: 3, reward_lags: False, rampdown_reward_threshold: null }
     # 4: {fhr_weight: 0.7, fhr_order:3, reward_lags: False}
                              # theory-minimal pure-AR order-2 recurrence
+    # 5/6/7: fhr_lag_source three-way ablation on the multi-seed 3/3 block
+    # (0.5, r=2, no-ARX, warm 500, c_lr 0.05) — who evaluates the recurrence
+    # RHS: online (original, lags in the graph), detached (online values,
+    # lags grad-free), target (target-net values, grad-free backward
+    # bootstrap). Ramp-down disarmed so lambda stays constant for the
+    # spectrum-decay comparison.
+    5: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        warmup_grad_steps: 500, c_learning_rate: 0.05,
+        rampdown_reward_threshold: null, fhr_lag_source: online}
+    6: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        warmup_grad_steps: 500, c_learning_rate: 0.05,
+        rampdown_reward_threshold: null, fhr_lag_source: detached}
+    7: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        warmup_grad_steps: 500, c_learning_rate: 0.05,
+        rampdown_reward_threshold: null, fhr_lag_source: target}
   device: auto
   # Save run artifacts (rewards/diagnostics CSVs, figures, checkpoints) under
   # runs/<timestamp>/ instead of rendering analysis figures inline.
@@ -94,6 +109,13 @@ agent:
                           # steps.
   c_learning_rate: 0.03 # lr of the c/d param group: weight_decay 0, excluded
                           # from grad clipping and the target network.
+  fhr_lag_source: online  # who evaluates the recurrence RHS lags: online
+                          # (in-graph, the original), detached (online values,
+                          # grad-free), target (target-net values, grad-free);
+                          # per-arm overrides in fhr_experiments 5/6/7.
+  window_rank_every: 200  # replay-window singular-spectrum probe on EVERY arm
+  window_rank_lags: 16    # incl. the lambda=0 baseline (window_hankel.csv) —
+                          # feeds the sigma_i/sigma_{i-1} decay analysis.
   # --- automatic lambda ramp-down (armed only when the reward threshold is set) ---
   # After warm-up, once the mean episode reward over the last
   # rampdown_patience_eps episodes reaches rampdown_reward_threshold while every

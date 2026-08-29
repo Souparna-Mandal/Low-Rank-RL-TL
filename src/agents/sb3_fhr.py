@@ -39,6 +39,7 @@ from a repo-native run for the analysis stack and the result viewer app:
     act_greedy, save) those analyses expect, wrapping q_net (DQN) or the
     quantile-mean of quantile_net (QR-DQN).
 """
+import contextlib
 import csv
 import pathlib
 import re
@@ -269,6 +270,7 @@ class FHRCoefficientPredictor(nn.Module):
 # run_fhrdqn_seeds.FHR_PARAMS so launchers/notebooks can validate identically.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "fhr_lag_source",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
@@ -292,8 +294,9 @@ class _FHRMixin:
                         rampdown_episodes, c_predictor="none",
                         prioritized_replay=False, per_alpha=0.6,
                         per_beta0=0.4, window_rank_every=0,
-                        window_rank_lags=16):
+                        window_rank_lags=16, fhr_lag_source="online"):
         self.fhr_weight = fhr_weight
+        self.fhr_lag_source = fhr_lag_source
         self.fhr_order = fhr_order
         self.reward_lags = reward_lags
         self.warmup_grad_steps = warmup_grad_steps
@@ -323,6 +326,9 @@ class _FHRMixin:
             raise ValueError(
                 "prioritized_replay is only supported by the SAC-family FHR "
                 f"algorithms, not {type(self).__name__}")
+        if self.fhr_lag_source not in ("online", "detached", "target"):
+            raise ValueError("fhr_lag_source must be one of online|detached|"
+                             f"target, got {self.fhr_lag_source!r}")
         if self.c_predictor not in ("none", "shared", "separate"):
             raise ValueError("c_predictor must be one of none|shared|separate, "
                              f"got {self.c_predictor!r}")
@@ -564,11 +570,20 @@ class _FHRMixin:
 
         anchor_q_sa: (B,) online Q(s_t, a_t) — the same tensor the TD loss
         uses, so the anchor gradient is shared. lag_q_fn(obs, actions) -> (N,)
-        evaluates online Q(s, a) for the flattened predecessor batch.
+        evaluates online Q(s, a) for the flattened predecessor batch (under
+        fhr_lag_source="detached" it runs grad-free; under "target" it is
+        replaced by the algorithm's _fhr_target_lag_q_fns twin).
         Returns the Huber penalty (in the graph iff lam > 0) or None when no
         batch sample has r valid predecessors; fills diag in place.
         """
         return self._fhr_penalty_multi([anchor_q_sa], [lag_q_fn], lam, diag)
+
+    def _fhr_target_lag_q_fns(self):
+        """Target-net twins of the online lag_q closures, one per critic —
+        consumed when fhr_lag_source="target". Each concrete algorithm
+        supplies its own (it knows its target module's name and shape)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support fhr_lag_source='target'")
 
     def _fhr_penalty_multi(self, anchor_q_sas: list, lag_q_fns: list,
                            lam: float, diag: dict) -> torch.Tensor | None:
@@ -620,9 +635,17 @@ class _FHRMixin:
             rews = None
             if self.reward_lags:
                 rews = buf.to_torch(buf.rewards[pred_k, 0]).float()  # (n, r)
+            # fhr_lag_source routing: "detached" keeps the online closures but
+            # evaluates them grad-free; "target" swaps in the target-net twins
+            # (also grad-free). The anchors are untouched either way.
+            if self.fhr_lag_source == "target":
+                lag_q_fns = self._fhr_target_lag_q_fns()
+            lag_grad = (contextlib.nullcontext
+                        if self.fhr_lag_source == "online" else torch.no_grad)
             hubers, sq_residuals = [], []
             for anchor_q_sa, lag_q_fn in zip(anchor_q_sas, lag_q_fns):
-                q_lags = lag_q_fn(obs, acts).view(n, r)
+                with lag_grad():
+                    q_lags = lag_q_fn(obs, acts).view(n, r)
                 if c_pred is not None:
                     prediction = (q_lags * c_pred).sum(dim=1)
                     if self.reward_lags:
@@ -753,7 +776,8 @@ class FHRDQN(_FHRMixin, DQN):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16,
+                 fhr_lag_source: str = "online", **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -763,13 +787,19 @@ class FHRDQN(_FHRMixin, DQN):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags,
+                             fhr_lag_source=fhr_lag_source)
         kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
         super().__init__(*args, **kwargs)
 
     def _lag_q_fns(self):
         def lag_q(obs, acts):
             return self.q_net(obs).gather(1, acts).squeeze(1)
+        return [lag_q]
+
+    def _fhr_target_lag_q_fns(self):
+        def lag_q(obs, acts):
+            return self.q_net_target(obs).gather(1, acts).squeeze(1)
         return [lag_q]
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
@@ -851,7 +881,8 @@ if QRDQN is not None:
                      rampdown_episodes: int = 0, c_predictor: str = "none",
                      prioritized_replay: bool = False, per_alpha: float = 0.6,
                      per_beta0: float = 0.4, window_rank_every: int = 0,
-                     window_rank_lags: int = 16, **kwargs):
+                     window_rank_lags: int = 16,
+                     fhr_lag_source: str = "online", **kwargs):
             self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                                  warmup_grad_steps, c_learning_rate,
                                  rampdown_reward_threshold,
@@ -861,13 +892,21 @@ if QRDQN is not None:
                                  prioritized_replay=prioritized_replay,
                                  per_alpha=per_alpha, per_beta0=per_beta0,
                                  window_rank_every=window_rank_every,
-                                 window_rank_lags=window_rank_lags)
+                                 window_rank_lags=window_rank_lags,
+                                 fhr_lag_source=fhr_lag_source)
             kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
             super().__init__(*args, **kwargs)
 
         def _lag_q_fns(self):
             def lag_q(obs, acts):
                 quantiles = self.quantile_net(obs)
+                idx = acts[..., None].expand(-1, self.n_quantiles, 1)
+                return quantiles.gather(dim=2, index=idx).squeeze(dim=2).mean(dim=1)
+            return [lag_q]
+
+        def _fhr_target_lag_q_fns(self):
+            def lag_q(obs, acts):
+                quantiles = self.quantile_net_target(obs)
                 idx = acts[..., None].expand(-1, self.n_quantiles, 1)
                 return quantiles.gather(dim=2, index=idx).squeeze(dim=2).mean(dim=1)
             return [lag_q]

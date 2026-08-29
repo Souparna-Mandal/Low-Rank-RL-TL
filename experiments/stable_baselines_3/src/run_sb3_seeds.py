@@ -71,6 +71,7 @@ def _manifest_name(config):
 # penalty alone. Mirrors agents.sb3_fhr.FHR_PARAMS.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "fhr_lag_source",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",

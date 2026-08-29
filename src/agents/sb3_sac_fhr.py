@@ -212,7 +212,8 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16,
+                 fhr_lag_source: str = "online", **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -222,7 +223,8 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags,
+                             fhr_lag_source=fhr_lag_source)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -249,6 +251,24 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
         distinct (obs, acts) pair, so the twin-critic penalty costs one fused
         evaluation instead of two."""
         critic = self.critic
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = (id(obs), id(acts))
+                if key not in cache:
+                    feats = critic.extract_features(
+                        obs, critic.features_extractor)
+                    qin = torch.cat([feats, acts], dim=1)
+                    cache[key] = [q_net(qin) for q_net in critic.q_networks]
+                return cache[key][i].squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(critic.q_networks))]
+
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target") —
+        the same fused per-(obs, acts) evaluation, one cache per call."""
+        critic = self.critic_target
         cache: dict = {}
 
         def make(i):
@@ -794,7 +814,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16,
+                 fhr_lag_source: str = "online", **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -804,7 +825,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags,
+                             fhr_lag_source=fhr_lag_source)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -821,6 +843,19 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                 key = id(obs)
                 if key not in cache:
                     cache[key] = self.critic(obs)
+                return cache[key][i].gather(1, acts).squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(self.critic.q_networks))]
+
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target")."""
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = id(obs)
+                if key not in cache:
+                    cache[key] = self.critic_target(obs)
                 return cache[key][i].gather(1, acts).squeeze(1)
             return lag_q
         return [make(i) for i in range(len(self.critic.q_networks))]

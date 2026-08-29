@@ -233,13 +233,33 @@ class EfficientRainbowAgent(IQNTDMixin, FHRDQNAgent):
                                 ).repeat_interleave(r + 1, dim=0)
                             flat, _ = intensity(flat, self.aug_intensity,
                                                 factors=fac)
-                    out = self.policy_net(flat, n_taus=self.n_quantiles_fhr)
                     a_seq = torch.cat(
                         [actions[keep].view(n, 1), p_actions], dim=1)   # (n, r+1)
-                    q_seq = out.gather(
-                        1, a_seq.reshape(n * (r + 1), 1)).view(n, r + 1)
-                    anchor = q_seq[:, 0]
-                    q_lags = q_seq[:, 1:]
+                    if self.fhr_lag_source == "online":
+                        out = self.policy_net(flat, n_taus=self.n_quantiles_fhr)
+                        q_seq = out.gather(
+                            1, a_seq.reshape(n * (r + 1), 1)).view(n, r + 1)
+                        anchor = q_seq[:, 0]
+                        q_lags = q_seq[:, 1:]
+                    else:
+                        # detached/target lag source: split the fused forward
+                        # on the SAME augmented frames (offsets/factors were
+                        # drawn per sequence above) — the anchor stays an
+                        # online in-graph forward, the r lags run grad-free
+                        # through the chosen net. NB with this recipe's
+                        # every-step hard target copy, "target" only differs
+                        # from "detached" by <= gd_steps_ceil grad steps of
+                        # staleness; BBF's EMA target makes it meaningful.
+                        seq_aug = flat.reshape(n, r + 1, *flat.shape[1:])
+                        anchor = self.policy_net(
+                            seq_aug[:, 0], n_taus=self.n_quantiles_fhr
+                            ).gather(1, a_seq[:, :1]).squeeze(1)
+                        lag_net, lag_ctx = self._fhr_lag_net_ctx()
+                        with lag_ctx:
+                            q_lags = lag_net(
+                                seq_aug[:, 1:].reshape(n * r, *flat.shape[1:]),
+                                n_taus=self.n_quantiles_fhr).gather(
+                                1, a_seq[:, 1:].reshape(n * r, 1)).view(n, r)
                     prediction = q_lags @ self.c
                     if self.reward_lags:
                         prediction = prediction + p_rewards @ self.d
