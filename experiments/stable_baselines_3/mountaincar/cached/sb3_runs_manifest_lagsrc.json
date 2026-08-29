@@ -1,0 +1,50 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_mountaincar_lagsrc_baseline_seed44_20260829-002641",
+      "66": "cached/runs/sb3_mountaincar_lagsrc_baseline_seed66_20260829-002641"
+    },
+    "exp1": {
+      "66": "cached/runs/sb3_mountaincar_lagsrc_exp1_seed66_20260829-002641",
+      "44": "cached/runs/sb3_mountaincar_lagsrc_exp1_seed44_20260829-002641"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_mountaincar_lagsrc_exp2_seed44_20260829-005217",
+      "66": "cached/runs/sb3_mountaincar_lagsrc_exp2_seed66_20260829-005252"
+    },
+    "exp3": {
+      "44": "cached/runs/sb3_mountaincar_lagsrc_exp3_seed44_20260829-005943",
+      "66": "cached/runs/sb3_mountaincar_lagsrc_exp3_seed66_20260829-010016"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03,
+      "fhr_lag_source": "online"
+    },
+    "exp2": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03,
+      "fhr_lag_source": "detached"
+    },
+    "exp3": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "c_learning_rate": 0.03,
+      "fhr_lag_source": "target"
+    }
+  }
+}
