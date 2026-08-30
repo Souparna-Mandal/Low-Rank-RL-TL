@@ -1,0 +1,89 @@
+{
+  "seeds": [
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_swimmer_sac_baseline_seed44_20260828-225438",
+      "66": "cached/runs/sb3_swimmer_sac_baseline_seed66_20260828-225438"
+    },
+    "exp8": {
+      "66": "cached/runs/sb3_swimmer_sac_exp8_seed66_20260828-225438",
+      "44": "cached/runs/sb3_swimmer_sac_exp8_seed44_20260828-225438"
+    },
+    "exp7": {
+      "66": "cached/runs/sb3_swimmer_sac_exp7_seed66_20260828-225437",
+      "44": "cached/runs/sb3_swimmer_sac_exp7_seed44_20260828-225438"
+    },
+    "exp1": {
+      "44": "cached/runs/sb3_swimmer_sac_exp1_seed44_20260828-225438",
+      "66": "cached/runs/sb3_swimmer_sac_exp1_seed66_20260828-225438"
+    },
+    "exp2": {
+      "44": "cached/runs/sb3_swimmer_sac_exp2_seed44_20260828-225438",
+      "66": "cached/runs/sb3_swimmer_sac_exp2_seed66_20260828-225438"
+    },
+    "exp3": {
+      "66": "cached/runs/sb3_swimmer_sac_exp3_seed66_20260828-225438",
+      "44": "cached/runs/sb3_swimmer_sac_exp3_seed44_20260828-225438"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_swimmer_sac_exp4_seed44_20260828-225438",
+      "66": "cached/runs/sb3_swimmer_sac_exp4_seed66_20260828-225438"
+    },
+    "exp5": {
+      "44": "cached/runs/sb3_swimmer_sac_exp5_seed44_20260828-225438",
+      "66": "cached/runs/sb3_swimmer_sac_exp5_seed66_20260828-225438"
+    },
+    "exp6": {
+      "66": "cached/runs/sb3_swimmer_sac_exp6_seed66_20260828-225438",
+      "44": "cached/runs/sb3_swimmer_sac_exp6_seed44_20260828-225437"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 10.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp4": {
+      "fhr_weight": 0.1,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp5": {
+      "fhr_weight": 1.0,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp6": {
+      "fhr_weight": 10.0,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp7": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.0
+    },
+    "exp8": {
+      "fhr_weight": 1.0,
+      "fhr_order": 1,
+      "c_learning_rate": 0.0
+    }
+  }
+}

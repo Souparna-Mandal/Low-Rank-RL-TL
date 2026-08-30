@@ -1,0 +1,56 @@
+{
+  "seeds": [
+    22,
+    44,
+    66,
+    88,
+    100
+  ],
+  "runs": {
+    "baseline": {
+      "100": "cached/runs/sb3_ant_sac_tuned_baseline_seed100_20260829-001428",
+      "88": "cached/runs/sb3_ant_sac_tuned_baseline_seed88_20260829-001427",
+      "44": "cached/runs/sb3_ant_sac_tuned_baseline_seed44_20260829-001428",
+      "22": "cached/runs/sb3_ant_sac_tuned_baseline_seed22_20260829-001428",
+      "66": "cached/runs/sb3_ant_sac_tuned_baseline_seed66_20260829-001428"
+    },
+    "exp1": {
+      "22": "cached/runs/sb3_ant_sac_tuned_exp1_seed22_20260829-001428"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 0.1,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.0,
+      "c_init": [
+        2.001,
+        -1.001
+      ]
+    },
+    "exp4": {
+      "fhr_weight": 0.1,
+      "fhr_order": 4,
+      "c_learning_rate": 0.0,
+      "c_init": [
+        3.6281,
+        -5.2625,
+        3.6445,
+        -1.0101
+      ]
+    }
+  }
+}

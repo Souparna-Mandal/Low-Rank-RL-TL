@@ -131,8 +131,22 @@ class FHRRecurrenceHead(nn.Module):
     init as in FHRDQNAgent: with reward lags c1=1/gamma, d1=-1/gamma; pure AR
     with r>=2 c=(1+1/gamma, -1/gamma, 0, ...); r=1 pure AR c1=1/gamma."""
 
-    def __init__(self, order: int, gamma: float, reward_lags: bool):
+    def __init__(self, order: int, gamma: float, reward_lags: bool,
+                 c_init=None):
         super().__init__()
+        if c_init is not None:
+            # explicit coefficient init (e.g. theory roots for a frozen-c
+            # control arm) — replaces the Bellman-informed default for c only
+            c0 = torch.as_tensor(list(c_init), dtype=torch.float32)
+            if c0.shape != (order,):
+                raise ValueError(f"c_init must have length {order} "
+                                 f"(fhr_order), got {list(c_init)!r}")
+            d0 = torch.zeros(order)
+            if reward_lags:
+                d0[0] = -1.0 / gamma
+            self.c = nn.Parameter(c0)
+            self.d = nn.Parameter(d0) if reward_lags else None
+            return
         c0 = torch.zeros(order)
         if reward_lags:
             c0[0] = 1.0 / gamma
@@ -268,7 +282,7 @@ class FHRCoefficientPredictor(nn.Module):
 # The FHR parameter set a numbered experiment arm may override — mirrors
 # run_fhrdqn_seeds.FHR_PARAMS so launchers/notebooks can validate identically.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
-              "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "warmup_grad_steps", "c_learning_rate", "c_predictor", "c_init",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
@@ -292,13 +306,14 @@ class _FHRMixin:
                         rampdown_episodes, c_predictor="none",
                         prioritized_replay=False, per_alpha=0.6,
                         per_beta0=0.4, window_rank_every=0,
-                        window_rank_lags=16):
+                        window_rank_lags=16, c_init=None):
         self.fhr_weight = fhr_weight
         self.fhr_order = fhr_order
         self.reward_lags = reward_lags
         self.warmup_grad_steps = warmup_grad_steps
         self.c_learning_rate = c_learning_rate
         self.c_predictor = c_predictor
+        self.c_init = list(c_init) if c_init is not None else None
         self.prioritized_replay = prioritized_replay
         self.per_alpha = per_alpha
         self.per_beta0 = per_beta0
@@ -323,6 +338,13 @@ class _FHRMixin:
             raise ValueError(
                 "prioritized_replay is only supported by the SAC-family FHR "
                 f"algorithms, not {type(self).__name__}")
+        if self.c_init is not None:
+            if len(self.c_init) != self.fhr_order:
+                raise ValueError(f"c_init must have length fhr_order="
+                                 f"{self.fhr_order}, got {self.c_init!r}")
+            if self.c_predictor != "none":
+                raise ValueError("c_init only applies to the global c head "
+                                 "(c_predictor: none)")
         if self.c_predictor not in ("none", "shared", "separate"):
             raise ValueError("c_predictor must be one of none|shared|separate, "
                              f"got {self.c_predictor!r}")
@@ -351,7 +373,8 @@ class _FHRMixin:
                 "buffer bypasses SB3's NStepReplayBuffer selection, and the "
                 "recurrence penalty assumes 1-step adjacency anyway")
         self.fhr_head = FHRRecurrenceHead(
-            self.fhr_order, self.gamma, self.reward_lags).to(self.device)
+            self.fhr_order, self.gamma, self.reward_lags,
+            c_init=self.c_init).to(self.device)
         # State-conditioned coefficients (c_predictor shared|separate): the
         # predictor replaces the global c/d in the penalty AND in the c-lr
         # optimiser group; the global head stays constructed (it is the init
@@ -753,7 +776,7 @@ class FHRDQN(_FHRMixin, DQN):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16, c_init=None, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -763,7 +786,7 @@ class FHRDQN(_FHRMixin, DQN):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags, c_init=c_init)
         kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
         super().__init__(*args, **kwargs)
 
@@ -851,7 +874,7 @@ if QRDQN is not None:
                      rampdown_episodes: int = 0, c_predictor: str = "none",
                      prioritized_replay: bool = False, per_alpha: float = 0.6,
                      per_beta0: float = 0.4, window_rank_every: int = 0,
-                     window_rank_lags: int = 16, **kwargs):
+                     window_rank_lags: int = 16, c_init=None, **kwargs):
             self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                                  warmup_grad_steps, c_learning_rate,
                                  rampdown_reward_threshold,
@@ -861,7 +884,7 @@ if QRDQN is not None:
                                  prioritized_replay=prioritized_replay,
                                  per_alpha=per_alpha, per_beta0=per_beta0,
                                  window_rank_every=window_rank_every,
-                                 window_rank_lags=window_rank_lags)
+                                 window_rank_lags=window_rank_lags, c_init=c_init)
             kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
             super().__init__(*args, **kwargs)
 

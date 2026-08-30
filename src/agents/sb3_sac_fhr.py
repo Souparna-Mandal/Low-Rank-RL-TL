@@ -212,7 +212,7 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16, c_init=None, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -222,7 +222,7 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags, c_init=c_init)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -794,7 +794,7 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16, c_init=None, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -804,7 +804,7 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags, c_init=c_init)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 

@@ -70,7 +70,7 @@ def _manifest_name(config):
 # to the baseline so an exp<N>-vs-baseline gap is attributable to the FHR
 # penalty alone. Mirrors agents.sb3_fhr.FHR_PARAMS.
 FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
-              "warmup_grad_steps", "c_learning_rate", "c_predictor",
+              "warmup_grad_steps", "c_learning_rate", "c_predictor", "c_init",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",

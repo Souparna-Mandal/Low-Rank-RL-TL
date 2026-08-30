@@ -86,6 +86,8 @@ agent:
                              # steepest part of the curve, which is precisely
                              # where FHR's sample-efficiency claim lives.
   c_learning_rate: 0.03
+  window_rank_every: 5000   # in-training penalised-window probe (200 ticks / 1e6 grad steps)
+  window_rank_lags: 16
   prioritized_replay: false
   per_alpha: 0.6
   per_beta0: 0.4

@@ -27,6 +27,13 @@ experiment:
     4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
     5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
     6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
+    # Controls: 7 = c FROZEN at the theory init [1+1/g, -1/g] = [2.0001, -1.0001]
+    # (gamma 0.9999) — the exact Bellman rank-2 recurrence, no learning; read
+    # against exp2 (identical but c learns). 8 = pure-SMOOTHING control: order-1
+    # frozen c = [1/g] ~ 1, penalty ~ Huber(Q_t - Q_{t-1}) — no Bellman
+    # structure; if smoothing were the mechanism this should match exp2.
+    7: {fhr_weight: 1.0, fhr_oasxdrder: 2, c_learning_rate: 0.00}
+    8: {fhr_weight: 1.0, fhr_order: 1, c_learning_rate: 0.00}
   # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too
   # small to amortise CUDA kernel-launch latency, so a single SAC process
   # measures ~123 fps on CPU vs ~40 fps on the GB10 GPU, and CPU processes
@@ -78,13 +85,15 @@ agent:
   rampdown_penalty_topk: 20
   rampdown_patience_eps: 10
   rampdown_episodes: 0
+  window_rank_every: 5000   # 200 ticks over 1e6 grad steps (200 -> 10k npy/run on SMB)
+  window_rank_lags: 16
 
 training:
   solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop
   early_stopping_patience_eps: null
   no_eps_to_avg: 10
   eval:                   # greedy eval -> eval.csv: deterministic policy on
-    freq_steps: 20000     # fixed reset seeds; training stream untouched.
+    freq_steps: 10000     # fixed reset seeds; training stream untouched.
     n_episodes: 5         # 1000-step episodes: 5 eps = 5k env steps per eval,
     seed: 9000            # 50 eval points over the 1e6 budget
 
