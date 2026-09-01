@@ -16,7 +16,7 @@
 experiment:
   name: dqn_alien_effrainbow100kref
   seed: 0
-  seeds: [0, 1, 2, 3, 4]
+  seeds: [0, 1, 2]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ

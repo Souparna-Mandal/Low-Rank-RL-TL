@@ -79,16 +79,21 @@ def tune_variant(text: str, grid: str) -> str:
     grid: the tune_fhr_experiments entry lines lifted from the global yaml,
     re-indented to sit under fhr_experiments."""
     text = text.replace("_effrainbow100k", "_effrainbowtune")
-    text = text.replace("  seeds: [0, 1, 2, 3, 4]", "  seeds: [0, 1]")
-    text = text.replace(
-        "  max_env_steps: 100000             # THE Atari-100k interaction budget",
-        "  max_env_steps: 50000              # tuning budget: half of Atari-100k")
-    text = text.replace(
-        "  checkpoint_every_steps: 10000     # 10 tracking points across the 100k budget",
-        "  checkpoint_every_steps: 5000      # 10 tracking points across the 50k budget")
-    text = text.replace(
-        "  step_freq: 10000                  # rank/Hankel tick every 10k ENV STEPS (at",
-        "  step_freq: 5000                   # rank/Hankel tick every 5k ENV STEPS (at")
+    # seeds are INHERITED from the global config — one seeds line governs the
+    # tune, suite and ref campaigns alike. Budget/cadences are tune-specific
+    # and forced regardless of the global values:
+    text, n = re.subn(r"  max_env_steps: \d+.*",
+                      "  max_env_steps: 50000              "
+                      "# tuning budget: half of Atari-100k", text, count=1)
+    assert n == 1, "max_env_steps line not found"
+    text, n = re.subn(r"  checkpoint_every_steps: \d+.*",
+                      "  checkpoint_every_steps: 5000      "
+                      "# 10 tracking points across the 50k budget", text, count=1)
+    assert n == 1, "checkpoint_every_steps line not found"
+    text, n = re.subn(r"  step_freq: \d+ .*",
+                      "  step_freq: 5000                   "
+                      "# rank/Hankel tick every 5k ENV STEPS (at", text, count=1)
+    assert n == 1, "step_freq line not found"
     old_arm = "    3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)"
     assert old_arm in text
     text = text.replace(old_arm, grid.rstrip("\n"))
@@ -108,7 +113,7 @@ def ref_variant(text: str) -> str:
                       "", text)
     assert n == 1, "checkpoint keys not found for ref variant"
     text, n = re.subn(
-        r"  step_freq: 10000 .*\n(?: {30,}#.*\n)*",
+        r"  step_freq: \d+ .*\n(?: {30,}#.*\n)*",
         "  ep_freq: 200                      # legacy per-episode cadence — the\n"
         "                                    # notebook suite pass ran exactly this\n",
         text)
