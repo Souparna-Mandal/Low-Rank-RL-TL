@@ -134,6 +134,12 @@ class EfficientRainbowAgent(IQNTDMixin, FHRDQNAgent):
             x, factors = intensity(x, self.aug_intensity, factors=factors)
         return x, offsets, factors
 
+    def _probe_q(self, x):
+        """Window-rank probe forward on the SAME fixed tau grid the FHR
+        anchor/lag forwards use (plain forward would default to the wider
+        acting grid)."""
+        return self.policy_net(x, n_taus=self.n_quantiles_fhr)
+
     def _train_step(self):
         states, actions, returns, next_list, discounts, handles = \
             self.replay_buffer.sample_nstep_transitions(
@@ -194,7 +200,7 @@ class EfficientRainbowAgent(IQNTDMixin, FHRDQNAgent):
                 "rampdown_scale": self._rampdown_scale(),
                 "rampdown_penalty_bar": (float("nan") if (bar := self._penalty_bar()) is None
                                          else bar),
-                "nan_skips": self.nan_skips}
+                "nan_skips": self.nan_skips, "rho": np.nan}
         for j in range(self.fhr_order):
             diag[f"c_{j + 1}"] = float(self.c[j].detach())
             if self.reward_lags:
@@ -270,8 +276,16 @@ class EfficientRainbowAgent(IQNTDMixin, FHRDQNAgent):
                     self._ep_penalty_vals.append(diag["penalty_raw"])
                 diag["residual_rms"] = float(
                     (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
+                if (self.rho_every > 0 and lam > 0
+                        and self._grad_steps % self.rho_every == 0):
+                    diag["rho"] = self._grad_ratio(loss, penalty, lam)
                 if lam > 0:
                     loss = loss + lam * penalty
+
+        if (self.window_rank_every > 0
+                and self._grad_steps % self.window_rank_every == 0):
+            # un-augmented frames on the penalty's fixed tau grid; RNG-free
+            self._window_rank_probe(states, actions, handles)
 
         self._grad_steps += 1
         if not torch.isfinite(loss):
