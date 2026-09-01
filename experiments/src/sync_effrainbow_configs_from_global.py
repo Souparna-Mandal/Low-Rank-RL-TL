@@ -96,6 +96,28 @@ def tune_variant(text: str, grid: str) -> str:
     return text
 
 
+def ref_variant(text: str) -> str:
+    """The notebook-comparison rendering: the EXACT protocol the completed
+    1-seed suite (exp_atari100k_effrainbow.ipynb) trained under — no
+    mid-training eval checkpoints, episode-gated analysis (ep_freq 200) —
+    so new seeds extend that comparison rather than the instrumented
+    protocol. Own run-name family (_effrainbow100kref) so provenance can
+    never blur into the instrumented suite runs."""
+    text = text.replace("_effrainbow100k", "_effrainbow100kref")
+    text, n = re.subn(r"  checkpoint_every_steps:.*\n  checkpoint_episodes:.*\n",
+                      "", text)
+    assert n == 1, "checkpoint keys not found for ref variant"
+    text, n = re.subn(
+        r"  step_freq: 10000 .*\n(?: {30,}#.*\n)*",
+        "  ep_freq: 200                      # legacy per-episode cadence — the\n"
+        "                                    # notebook suite pass ran exactly this\n",
+        text)
+    assert n == 1, "step_freq block not found for ref variant"
+    _validate(text)
+    assert "checkpoint_every_steps" not in text
+    return text
+
+
 def main():
     template = GLOBAL.read_text()
     m = TUNE_BLOCK_RE.search(template)
@@ -115,6 +137,8 @@ def main():
                                                        False),
         )
         (game_dir / "config_effrainbow_100k.yaml").write_text(text)
+        (game_dir / "config_effrainbow_100k_ref.yaml").write_text(
+            ref_variant(text))
         made += 1
         if game_dir.name in TUNE_GAMES:
             (game_dir / "config_effrainbow_tune.yaml").write_text(

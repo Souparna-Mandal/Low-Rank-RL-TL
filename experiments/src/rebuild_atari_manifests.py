@@ -28,6 +28,8 @@ FAMILIES = {
     # family key -> (config file, manifest file name)
     "100k": ("config_effrainbow_100k.yaml", "effrainbow100k_runs_manifest.json"),
     "tune": ("config_effrainbow_tune.yaml", "effrainbowtune_runs_manifest.json"),
+    "ref": ("config_effrainbow_100k_ref.yaml",
+            "effrainbow100kref_runs_manifest.json"),
 }
 
 

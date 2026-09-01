@@ -7,6 +7,15 @@ renders from `experiments/atari/config_effrainbow_100k.global.yaml`:
 |---|---|---|---|---|
 | **tune** (`tune.pbs`) | 5 games × 8 arms × 2 seeds = **80** | 50k steps | baseline + 7-arm grid around λ2/r8 | 0–1 |
 | **suite** (`suite.pbs`) | 27 games × 2 arms × 5 seeds = **270** | 100k steps | baseline + exp3 (λ2, r8) | 0–4 |
+| **ref** (`ref.pbs`) | 27 games × 2 arms × 5 seeds = **270** | 100k steps | baseline + exp3, **pre-instrumentation protocol** | 0–4 |
+
+`ref` renders `config_effrainbow_100k_ref.yaml`: functionally identical to the
+config that produced `exp_atari100k_effrainbow.ipynb`'s results (no
+mid-training eval checkpoints, episode-gated analysis) — run it instead of
+`suite` when new numbers must extend that notebook's comparison; runs get
+their own `_effrainbow100kref` name/manifest family
+(`rebuild_atari_manifests.py --family ref`). Don't run both `suite` and
+`ref` — pick one protocol and spend the GPU hours once.
 
 Tuning subset (picked from the 1-seed suite's per-game ΔHNS): Boxing (+1.47)
 and BankHeist (+0.62) as wins, KungFuMaster and BattleZone as washes,
@@ -31,7 +40,7 @@ never the global directly, so always re-sync before re-listing.)
 
 ```bash
 # 1. conda via the RCS-recommended miniforge route (skip if you have it)
-module load miniforge/3
+module load miniforge/3   # some nodes name it Miniforge3/<ver> — check `module avail -i miniforge`
 miniforge-setup                      # installs ~/miniforge3; then re-login
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda create -n lowrank python=3.12 -y
