@@ -32,7 +32,7 @@ experiment:
     # against exp2 (identical but c learns). 8 = pure-SMOOTHING control: order-1
     # frozen c = [1/g] ~ 1, penalty ~ Huber(Q_t - Q_{t-1}) — no Bellman
     # structure; if smoothing were the mechanism this should match exp2.
-    7: {fhr_weight: 1.0, fhr_oasxdrder: 2, c_learning_rate: 0.00}
+    7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.00}
     8: {fhr_weight: 1.0, fhr_order: 1, c_learning_rate: 0.00}
   # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too
   # small to amortise CUDA kernel-launch latency, so a single SAC process

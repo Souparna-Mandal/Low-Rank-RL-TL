@@ -1,0 +1,132 @@
+# SB3 FHR comparison - Swimmer-v5 (MuJoCo), stock SAC vs FHRSAC.
+#
+# Third MuJoCo env of the SAC track, and the outlier: Swimmer needs a
+# near-undiscounted horizon (RL-Zoo sets gamma 0.9999 for SAC; the zoo default
+# 0.99 makes SAC converge to a ~50-return local optimum) because forward
+# progress only pays off over hundreds of steps. That long effective horizon
+# is the reason Swimmer is worth including in an FHR study: the recurrence
+# penalty acts on exactly the long-range temporal structure a gamma-0.9999
+# critic has to represent, so this is the env where the order-8 arm has the
+# most room to differ from order-2. Zoo reference SAC score ~345.
+#
+# Recipe = RL-Zoo SAC `mujoco-defaults` + gamma 0.9999 (see the HalfCheetah
+# config for the full cadence/target-rule rationale - identical here).
+#
+# ARM GRID (user-specified): identical lambda x order sweep across all four
+# envs so the arms are comparable - lambda 0.1 / 1 / 10 x order 2 / 8.
+#
+# TUNED FAMILY (this file) - the 5-seed follow-up to config_sb3_sac.yaml, which
+# ran the full lambda x order grid on 2 seeds and came back mechanism-AMBIGUOUS:
+# every arm landed within noise of the baseline (final greedy eval - baseline
+# 343; lam1.r8 344; lam0.1.r8 337; lam1.r2 307; the frozen-c control 314 and
+# the order-1 smoothing control 311), and lam0.1.r2 split its two seeds
+# 348 / 48. On two seeds none of that separates "FHR is neutral on Swimmer"
+# from "FHR is noisy on Swimmer". This family therefore drops the arms the
+# first pass ruled out (lam10, which costs ~20-30%) and spends the budget on
+# 5 seeds x the four arms that decide the mechanism question:
+#
+#   exp1  lam 1,   r 8   learned c   - the best arm of the first pass
+#   exp2  lam 0.1, r 8   learned c   - the rung below it, same order
+#   exp3  lam 1,   r 2   learned c   - the order floor at the same lambda
+#   exp4  lam 1,   r 2   FROZEN at the exact Bellman pair [1+1/g, -1/g] =
+#                        [2.0001, -1.0001] for gamma 0.9999 - read against
+#                        exp3: same penalty, no coefficient learning
+#   exp5  lam 1,   r 1   FROZEN at [1/g] ~ 1 - the PURE-SMOOTHING control.
+#                        Its penalty is ~Huber(Q_t - Q_{t-1}) with no Bellman
+#                        structure at all, so if plain temporal smoothing were
+#                        the mechanism it should match exp3/exp4; if the
+#                        Bellman recurrence is the mechanism it should not.
+#
+# The window-rank probe is ON for every arm (baseline included - its windows
+# are the control), so the rank-vs-training panels have data from the start.
+experiment:
+  name: sb3_swimmer_sac_tuned
+  seed: 44
+  seeds: [22, 44, 66, 88, 100]
+  fhr_experiments:
+    # order 8 - the best-performing order of the 2-seed pass
+    1: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
+    2: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
+    # order 2 - the floor, same lambda as exp1
+    3: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    # Mechanism controls, both with c FROZEN (c_learning_rate 0 zeroes the
+    # coefficient param group's Adam update and _update_learning_rate
+    # re-asserts the 0 lr every train() call, so the head never moves).
+    # 4: the exact Bellman rank-2 recurrence for gamma 0.9999.
+    4: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.0,
+        c_init: [2.0001, -1.0001]}
+    # 5: order-1, c = [1/gamma] ~ 1 - smoothing without Bellman structure.
+    5: {fhr_weight: 1.0, fhr_order: 1, c_learning_rate: 0.0,
+        c_init: [1.0001]}
+
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: Swimmer-v5
+
+algo:                     # RL-Zoo SAC mujoco-defaults
+  type: sac
+  n_timesteps: 1000000
+  learning_rate: 3.0e-4
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.9999          # RL-Zoo Swimmer override (0.99 -> ~50-return local optimum)
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1           # SAC cadence: one gradient step per env step
+  gradient_steps: 1
+  ent_coef: auto
+  net_arch: [256, 256]    # standard SAC size (Haarnoja 2018 / zoo)
+
+agent:
+  fhr_weight: 0.1         # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 10000   # penalty active from env step 20000 = 2% of the
+                             # budget. Sized in ABSOLUTE gradient steps, not as
+                             # a fraction of budget: every prior FHR config in
+                             # this repo switches the penalty on between env
+                             # step 1.5k and 4k (dqn 256-500, sacd 1000-2000,
+                             # pendulum/fetch_reach sac 2000-3000 grad steps) -
+                             # the "10% of budget" reading of the two SAC
+                             # configs is an artifact of their 20k/30k budgets.
+                             # 10% here would mean env step 110000, past the
+                             # steepest part of the curve, which is precisely
+                             # where FHR's sample-efficiency claim lives.
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 5000   # 200 ticks over 1e6 grad steps (200 -> 10k npy/run on SMB)
+  window_rank_lags: 16
+
+training:
+  solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 10000     # fixed reset seeds; training stream untouched.
+    n_episodes: 5         # 1000-step episodes: 5 eps = 5k env steps per eval,
+    seed: 9000            # 50 eval points over the 1e6 budget
+
+analysis:
+  ep_freq: 100            # 1000-step episodes -> 1000 episodes / 1e6 steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each of the 2 action dimensions of pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto
