@@ -45,8 +45,12 @@ OKABE_ITO = ["#0072B2",  # blue
              "#CC79A7",  # reddish purple
              "#56B4E9",  # sky blue
              "#E69F00",  # orange
-             "#7F3C8D",  # deep purple (overflow)
-             "#11A579"]  # teal (overflow)
+             "#7F3C8D",  # deep purple
+             "#8C564B",  # brown
+             "#17BECF",  # cyan
+             "#BCBD22",  # olive
+             "#4C4C9D",  # indigo
+             "#F781BF"]  # light pink
 BASELINE_COLOUR = "#222222"
 
 BAND = "sem"          # module-level default for every seed band
@@ -210,42 +214,62 @@ def _smooth(y, window):
 # --------------------------------------------------------------------------
 class Arm:
     """One launched arm of a family: its manifest key, plotting identity and
-    the FHR hyper-parameters that distinguish it."""
+    the FHR hyper-parameters that distinguish it.
 
-    def __init__(self, key, kind, lam, order, frozen, c_init, colour, ls):
+    `kind` is what separates arms that a lambda/order pair cannot:
+    baseline | global (learned global c) | frozen (c_learning_rate 0) |
+    ar (state-conditioned c(s,a) via c_predictor) | per (prioritized replay).
+    Colour identifies the arm; kind picks the line style.
+    """
+
+    KIND_RANK = {"baseline": 0, "global": 1, "frozen": 2, "ar": 3, "per": 4}
+    KIND_LS = {"baseline": "-", "global": "-", "frozen": (0, (5, 2)),
+               "ar": (0, (1, 1.3)), "per": (0, (6, 1.6, 1, 1.6))}
+
+    def __init__(self, key, kind, lam, order, frozen, c_init, pred, colour, ls,
+                 algo_label="SAC"):
         self.key, self.kind = key, kind
         self.lam, self.order = lam, order
-        self.frozen, self.c_init = frozen, c_init
+        self.frozen, self.c_init, self.pred = frozen, c_init, pred
         self.colour, self.ls = colour, ls
+        self.algo_label = algo_label
 
     @property
     def is_baseline(self):
         return self.kind == "baseline"
 
+    def _tag(self, long=False):
+        if self.kind == "frozen":
+            return " (frozen c)" if long else " frozen-c"
+        if self.kind == "ar":
+            return (f" (c(s,a), {self.pred})" if long
+                    else f" c(s,a) {self.pred}")
+        if self.kind == "per":
+            return " (learned c, + PER)" if long else " +PER"
+        return " (learned c)" if long else ""
+
     @property
     def short(self):
         if self.is_baseline:
             return "baseline"
-        tag = " frozen-c" if self.frozen else ""
-        return f"$\\lambda${self.lam:g}$\\cdot$r{self.order}{tag}"
+        return f"$\\lambda${self.lam:g}$\\cdot$r{self.order}{self._tag()}"
+
+    @property
+    def label(self):
+        if self.is_baseline:
+            return f"baseline (stock SB3 {self.algo_label})"
+        return (f"FHR  $\\lambda$={self.lam:g}, r={self.order}"
+                f"{self._tag(long=True)}")
 
     @property
     def plain(self):
         """ASCII label for printed tables (the mathtext ones do not align)."""
         if self.is_baseline:
-            return "baseline (stock SB3 SAC)"
-        tag = " frozen-c" if self.frozen else ""
-        return f"FHR lam={self.lam:g} r={self.order}{tag}"
-
-    @property
-    def label(self):
-        if self.is_baseline:
-            return "baseline (stock SB3 SAC)"
-        tag = "frozen c" if self.frozen else "learned c"
-        return f"FHR  $\\lambda$={self.lam:g}, r={self.order}  ({tag})"
+            return f"baseline (stock SB3 {self.algo_label})"
+        return f"FHR lam={self.lam:g} r={self.order}{self._tag()}"
 
     def __repr__(self):
-        return f"<Arm {self.key}: {self.short}>"
+        return f"<Arm {self.key}: {self.plain}>"
 
 
 def load_family(config, manifest, root=None, band=None):
@@ -267,6 +291,13 @@ class Family:
                          else {"runs": {}})
         self.env = self.cfg["environment"]["name"]
         self.name = self.cfg["experiment"]["name"]
+        self.algo = str(self.cfg.get("algo", {}).get("type", "sac")).lower()
+        self.algo_label = {"sac": "SAC", "sacd": "SAC-Discrete", "dqn": "DQN",
+                           "qrdqn": "QR-DQN"}.get(self.algo, self.algo.upper())
+        # continuous-action algos have a policy trace to Hankel per action
+        # dim; the discrete ones have a categorical actor and use the greedy
+        # value trajectory instead (fig_value_hankel).
+        self.is_continuous = self.algo in ("sac",)
         exp = self.cfg["experiment"]
         self.seeds = [str(s) for s in (exp.get("seeds") or [exp["seed"]])]
         self.defaults = self.cfg["agent"]
@@ -285,30 +316,40 @@ class Family:
         specs, unrun = [], []
         if runs.get("baseline"):
             specs.append(dict(key="baseline", kind="baseline", lam=0.0,
-                              order=0, frozen=False, c_init=None))
+                              order=0, frozen=False, c_init=None, pred=None))
         for n, ov in sorted((int(k), v) for k, v in
                             (self.cfg["experiment"].get("fhr_experiments")
                              or {}).items()):
             d = dict(self.defaults) | dict(ov)
-            spec = dict(key=f"exp{n}", kind="fhr",
+            frozen = float(d.get("c_learning_rate", 0.0)) == 0.0
+            pred = d.get("c_predictor")
+            if d.get("prioritized_replay"):
+                kind = "per"
+            elif pred:
+                kind = "ar"
+            elif frozen:
+                kind = "frozen"
+            else:
+                kind = "global"
+            spec = dict(key=f"exp{n}", kind=kind,
                         lam=float(d.get("fhr_weight", 0.0)),
                         order=int(d.get("fhr_order", 2)),
-                        frozen=float(d.get("c_learning_rate", 0.0)) == 0.0,
-                        c_init=d.get("c_init"))
+                        frozen=frozen, c_init=d.get("c_init"), pred=pred)
             (specs if runs.get(spec["key"]) else unrun).append(spec)
-        # Plot order: baseline first, then learned-c arms by (order, lambda),
-        # then the frozen-c controls - controls read as a block in every legend.
+        # Plot order: baseline, learned-global arms, frozen-c controls, then
+        # the c(s,a) and PER variants - so each kind reads as a legend block.
         body = sorted([s for s in specs if s["kind"] != "baseline"],
-                      key=lambda s: (s["frozen"], s["order"], s["lam"]))
+                      key=lambda s: (Arm.KIND_RANK[s["kind"]], s["order"],
+                                     s["lam"], str(s["pred"] or "")))
         arms, ci = {}, 0
         for s in [s for s in specs if s["kind"] == "baseline"] + body:
             if s["kind"] == "baseline":
-                colour, ls = BASELINE_COLOUR, "-"
+                colour = BASELINE_COLOUR
             else:
                 colour = OKABE_ITO[ci % len(OKABE_ITO)]
-                ls = (0, (5, 2)) if s["frozen"] else "-"
                 ci += 1
-            arms[s["key"]] = Arm(colour=colour, ls=ls, **s)
+            arms[s["key"]] = Arm(colour=colour, ls=Arm.KIND_LS[s["kind"]],
+                                 algo_label=self.algo_label, **s)
         return arms, [s["key"] for s in unrun]
 
     def __repr__(self):
@@ -403,6 +444,41 @@ class Family:
             ax.set_title(title)
         if legend:
             ax.legend(loc=legend)
+
+    def legacy_namespace(self):
+        """The names the older hand-written cells expect (ARMS, INFO, BASE,
+        GLOBALS_, VARIANTS, PER_ARMS, labels_of, run_dirs, curves, diag),
+        rebuilt from this Family.
+
+        Notebooks that keep bespoke analysis cells from before the toolkit
+        (the DQN comparison and c-conditioning studies) do
+        `globals().update(F.legacy_namespace())` and keep working - and pick
+        up the per-arm colours for free, since ARMS carries them.
+        """
+        def by_kind(*kinds):
+            return [a.label for a in self.arms.values() if a.kind in kinds]
+        return {
+            "ARMS": {a.label: (a.key, a.colour) for a in self.arms.values()},
+            "INFO": {a.label: {"arm": a.key, "kind": a.kind, "lam": a.lam,
+                               "order": a.order, "pred": a.pred,
+                               "frozen": a.frozen, "colour": a.colour,
+                               "ls": a.ls, "label": a.label}
+                     for a in self.arms.values()},
+            "BASE": self.baseline.label if self.baseline else None,
+            "GLOBALS_": by_kind("global", "frozen"),
+            "VARIANTS": by_kind("ar"),
+            "PRED_ARMS": by_kind("ar"),      # the c-conditioning notebooks' name
+            "PER_ARMS": by_kind("per"),
+            "labels_of": by_kind,
+            "SEEDS": self.seeds,
+            "CFG": self.cfg,
+            "CMAN": self.manifest,
+            "run_dirs": self.run_dirs,
+            "curves": (lambda arm, fname="eval.csv", x="env_steps",
+                       y="mean_reward": self._csv(arm, fname, x, y)),
+            "diag": (lambda arm, col:
+                     self._csv(arm, "train_diagnostics.csv", "episode", col)),
+        }
 
     def save(self, fig, name, formats=("pdf", "png")):
         """Write one figure to <exp dir>/figures/<family>/<name>.{pdf,png}."""
@@ -555,11 +631,15 @@ class Family:
         partial_seen = False
         for i, (k, a) in enumerate(self.arms.items()):
             vals = [xs[k][t] for t in thresholds]
-            full = np.array([v.size > 0 and np.isfinite(v).all() for v in vals])
+            # dtype=bool matters: an empty family gives an empty float array,
+            # and ~float raises "ufunc 'invert' not supported"
+            full = np.array([v.size > 0 and np.isfinite(v).all() for v in vals],
+                            dtype=bool)
             mu = np.array([np.nanmean(v) if np.isfinite(v).any() else np.nan
-                           for v in vals])
+                           for v in vals], dtype=float)
             se = np.array([np.nanstd(v, ddof=1) / np.sqrt(np.isfinite(v).sum())
-                           if np.isfinite(v).sum() > 1 else 0.0 for v in vals])
+                           if np.isfinite(v).sum() > 1 else 0.0 for v in vals],
+                          dtype=float)
             ax.errorbar(pos, np.where(full, mu, np.nan),
                         yerr=np.where(full, se, np.nan),
                         color=a.colour, ls=a.ls,
@@ -789,14 +869,43 @@ class Family:
                 self.load_diag(d, n_bins, refresh=refresh)
         print(f"diagnostics cache ready ({time.time() - t0:.1f}s)")
 
-    DIAG_PANELS = (("penalty_weighted", "$\\lambda\\cdot$penalty (weighted)", "log", "fhr"),
-                   ("td_loss", "critic TD loss", "log", "all"),
-                   ("rho", "$\\rho=\\lambda\\cdot$penalty / TD", "log", "fhr"),
-                   ("residual_rms", "recurrence residual RMS", "log", "fhr"),
-                   ("companion_radius", "companion spectral radius", None, "fhr"),
-                   ("sum_c", "$\\sum_i c_i$", None, "fhr"),
-                   ("ent_coef", "temperature $\\alpha$", "log", "all"),
-                   ("actor_loss", "actor loss", None, "all"))
+    # Candidate panels, in priority order. Columns come from the agent's own
+    # diagnostics dict (agents.sb3_fhr._FHR_base_diag + the SAC/SACD extras),
+    # so a family only ever plots what its algorithm actually logged -
+    # ent_coef/actor_loss are absent for DQN, c_spread only appears on the
+    # state-conditioned c(s,a) arms.
+    DIAG_CANDIDATES = (("penalty_weighted", "$\\lambda\\cdot$penalty (weighted)", "log", "fhr"),
+                       ("td_loss", "critic TD loss", "log", "all"),
+                       ("rho", "$\\rho=\\lambda\\cdot$penalty / TD", "log", "fhr"),
+                       ("residual_rms", "recurrence residual RMS", "log", "fhr"),
+                       ("companion_radius", "companion spectral radius", None, "fhr"),
+                       ("sum_c", "$\\sum_i c_i$", None, "fhr"),
+                       ("c_spread", "$c(s,a)$ spread across the batch", None, "fhr"),
+                       ("ent_coef", "temperature $\\alpha$", "log", "all"),
+                       ("actor_loss", "actor loss", None, "all"),
+                       ("b_h", "penalty batch size", None, "fhr"),
+                       ("nan_skips", "NaN skips", None, "fhr"))
+
+    def available_diag_cols(self, n_bins=600):
+        """Union of the diagnostics columns actually present, over one run per
+        arm (plus the derived `rho` when its two inputs are there)."""
+        cols = set()
+        for k in self.arms:
+            dirs = self.run_dirs(k)
+            if dirs:
+                d = self.load_diag(dirs[0][1], n_bins)
+                if d:
+                    cols |= set(d)
+        if {"td_loss", "penalty_weighted"} <= cols:
+            cols.add("rho")
+        return cols
+
+    def diag_panels(self, n_bins=600, limit=9):
+        """DIAG_CANDIDATES filtered to what this family logged."""
+        avail = self.available_diag_cols(n_bins)
+        out = [pn for pn in self.DIAG_CANDIDATES
+               if pn[0] in avail and (pn[3] != "fhr" or self.fhr_arms)]
+        return out[:limit]
 
     def _diag_series(self, arm, col, n_bins):
         """Diagnostics column, with the derived `rho` handled here."""
@@ -835,9 +944,11 @@ class Family:
         """The internals grid. Every panel is a seed-aggregated line + band
         over the cached down-sampling, so this is a few hundred points per
         curve instead of ~1e6 - it renders and re-renders instantly."""
-        panels = panels or self.DIAG_PANELS
-        panels = [p for p in panels
-                  if (p[3] != "fhr" or self.fhr_arms)]
+        panels = panels if panels is not None else self.diag_panels(n_bins)
+        if not panels:
+            return _empty_fig("no train_diagnostics.csv columns available "
+                              "for this family")
+        ncols = min(ncols, len(panels))
         nrows = -(-len(panels) // ncols)
         fig, axes = plt.subplots(nrows, ncols, squeeze=False,
                                  figsize=(panel_size[0] * ncols,
@@ -872,8 +983,8 @@ class Family:
                           lw=2.4 if a.is_baseline else 1.9, label=a.label)
                    for a in self.arms.values()]
         if handles:
-            fig.legend(handles=handles, loc="lower center",
-                       ncol=min(3, len(handles)), bbox_to_anchor=(0.5, -0.05))
+            fig.legend(handles=handles, loc="outside lower center",
+                       ncol=min(3, len(handles)))
         fig.suptitle(f"{self.env} - FHR + SAC internals "
                      f"({_band_caption(self.band)}, {n_bins}-point binning)")
         return fig
@@ -957,6 +1068,57 @@ class Family:
                      f"(seed {self.seeds[seed_idx]}, {n_rollouts} rollouts)")
         return fig, table
 
+    def fig_value_hankel(self, runner, n_rollouts=3, base_seed=52, seed_idx=0,
+                         n_show=30, figsize=(6.6, 4.0), arms=None):
+        """Discrete-action counterpart of `fig_rollout_hankel`: Hankel of the
+        min-twin Q(s_t, a_t) sequence along the greedy rollout.
+
+        The claim under test is that the greedy rollout's Q sequence obeys a
+        low-order linear recurrence, so FHR arms should concentrate the Hankel
+        spectrum faster than the baseline. Returns (fig, table).
+        """
+        from analysis.low_rank.hankel_policy import (_hankel_from_sequence,
+                                                     collect_hankel_sequences)
+        from analysis.low_rank.rank import energy_rank
+        fig, ax = plt.subplots(figsize=figsize)
+        table = []
+        for k in (arms or list(self.arms)):
+            a = self.arms[k]
+            dirs = self.run_dirs(k)
+            if len(dirs) <= seed_idx:
+                continue
+            _, adapter = runner.load_run_model(dirs[seed_idx][1], device="cpu")
+            adapter.epsilon = 0.0          # greedy rollout
+            env = runner._make_env(self.cfg)
+            spectra = []
+            try:
+                for j in range(n_rollouts):
+                    seqs = collect_hankel_sequences(adapter, env,
+                                                    seed=base_seed + j)
+                    H = _hankel_from_sequence(seqs["Hankel Q"])
+                    sv = np.linalg.svd(H, compute_uv=False)
+                    spectra.append(sv / sv[0])
+            finally:
+                env.close()
+            if not spectra:
+                continue
+            n = min(len(x) for x in spectra)
+            S = np.stack([x[:n] for x in spectra]).mean(0)
+            r = energy_rank(S, 0.999)
+            ax.semilogy(np.arange(1, min(len(S), n_show) + 1), S[:n_show],
+                        color=a.colour, ls=a.ls,
+                        lw=2.3 if a.is_baseline else 1.8,
+                        label=f"{a.label} (rank {r})")
+            table.append((a.plain, r))
+        if not table:
+            plt.close(fig)
+            return _empty_fig("no completed runs in this family yet"), []
+        ax.set(title=f"{self.env} - Hankel(Q along the greedy rollout)",
+               xlabel="singular-value index",
+               ylabel="$\\sigma_i/\\sigma_1$")
+        ax.legend(fontsize=7.5)
+        return fig, table
+
     # ----------------------------------------------------------------------
     # 5 - penalised-window Hankel rank (the in-training probe)
     # ----------------------------------------------------------------------
@@ -1018,8 +1180,8 @@ class Family:
                           lw=2.4 if a.is_baseline else 1.9, label=a.label)
                    for a in self.arms.values()]
         if handles:
-            fig.legend(handles=handles, loc="lower center",
-                       ncol=min(3, len(handles)), bbox_to_anchor=(0.5, -0.12))
+            fig.legend(handles=handles, loc="outside lower center",
+                       ncol=min(3, len(handles)))
         fig.suptitle(f"{self.env} - penalised-window Hankel spectrum, all arms")
         return fig
 
