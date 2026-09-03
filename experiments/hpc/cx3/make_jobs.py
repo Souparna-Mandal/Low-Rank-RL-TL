@@ -28,7 +28,8 @@ MODES = {
     # mode -> (config file, restrict arms to these keys | None = all defined)
     "tune": ("config_effrainbow_tune.yaml", None),
     "suite": ("config_effrainbow_100k.yaml", ["baseline", "exp3"]),
-    # notebook-comparison protocol (no checkpoints, episode-gated analysis):
+    # notebook-comparison protocol (no checkpoints, episode-gated analysis);
+    # seeds = the global yaml's ref_seeds (seed 0 exists from the notebook pass):
     "ref": ("config_effrainbow_100k_ref.yaml", ["baseline", "exp3"]),
 }
 

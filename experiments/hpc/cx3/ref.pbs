@@ -1,6 +1,7 @@
 #!/bin/bash
 # CX3 array job — EfficientRainbow +/- FHR NOTEBOOK-REF protocol (27 games x
-# {baseline, exp3} x 5 seeds). One array index = one line of jobs_ref.txt.
+# {baseline, exp3} x seeds 1-4; seed 0 exists from the notebook's 1-seed pass
+# -> 5-seed pooled mean). One array index = one PACK of jobs_ref.txt lines.
 #
 #   python experiments/hpc/cx3/make_jobs.py --mode ref
 #   cd experiments/hpc/cx3/logs        # .o/.e files collect here

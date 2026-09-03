@@ -5,9 +5,9 @@ renders from `experiments/atari/config_effrainbow_100k.global.yaml`:
 
 | campaign | jobs | budget | arms | seeds |
 |---|---|---|---|---|
-| **tune** (`tune.pbs`) | 5 games × 8 arms × 2 seeds = **80** | 50k steps | baseline + 7-arm grid around λ2/r8 | 0–1 |
-| **suite** (`suite.pbs`) | 27 games × 2 arms × 5 seeds = **270** | 100k steps | baseline + exp3 (λ2, r8) | 0–4 |
-| **ref** (`ref.pbs`) | 27 games × 2 arms × 5 seeds = **270** | 100k steps | baseline + exp3, **pre-instrumentation protocol** | 0–4 |
+| **tune** (`tune.pbs`) | 5 games × 8 arms × 3 seeds = **120** (done 2026-09-03) | 50k steps | baseline + 7-arm grid around λ2/r8 | 0–2 |
+| **suite** (`suite.pbs`) | 27 games × 2 arms × 3 seeds = **162** | 100k steps | baseline + exp3 (λ2, r8) | 0–2 |
+| **ref** (`ref.pbs`) | 27 games × 2 arms × 4 seeds = **216** | 100k steps | baseline + exp3, **pre-instrumentation protocol** | **1–4** (seed 0 = the notebook pass) |
 
 `ref` renders `config_effrainbow_100k_ref.yaml`: functionally identical to the
 config that produced `exp_atari100k_effrainbow.ipynb`'s results (no
@@ -16,6 +16,19 @@ mid-training eval checkpoints, episode-gated analysis) — run it instead of
 their own `_effrainbow100kref` name/manifest family
 (`rebuild_atari_manifests.py --family ref`). Don't run both `suite` and
 `ref` — pick one protocol and spend the GPU hours once.
+
+The ref campaign's seeds come from `experiment.ref_seeds` in the global yaml
+(currently `[1, 2, 3, 4]`): seed 0 of exactly this protocol already exists
+for all 27 games × {baseline, exp3} (the `effrainbow100k` manifests), so
+pooling the ref runs with that seed-0 pass gives a **5-seed mean** per
+game/arm. The tuning grid (2026-09-03, `exp_effrainbow_tune50k.ipynb`)
+confirmed exp3 (λ=2, r=8) as the best arm, so the ref pass is the campaign
+to run now:
+
+```bash
+python experiments/hpc/cx3/make_jobs.py --mode ref     # 216 jobs -> jobs_ref.txt
+cd experiments/hpc/cx3/logs && qsub -J 1-108%12 ../ref.pbs
+```
 
 Tuning subset (picked from the 1-seed suite's per-game ΔHNS): Boxing (+1.47)
 and BankHeist (+0.62) as wins, KungFuMaster and BattleZone as washes,

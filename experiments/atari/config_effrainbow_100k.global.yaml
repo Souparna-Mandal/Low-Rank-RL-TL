@@ -17,6 +17,13 @@ experiment:
   name: __EXPERIMENT_NAME__
   seed: 0
   seeds: [0, 1, 2]
+  # ---- REF-CAMPAIGN SEEDS (config_effrainbow_100k_ref.yaml only) ----------
+  # Seed 0 of the notebook protocol already exists for all 27 games x
+  # {baseline, exp3} (the 1-seed 100k suite pass behind
+  # exp_atari100k_effrainbow.ipynb, effrainbow100k manifests) — the ref pass
+  # trains the REMAINING seeds so the pooled thesis number is a 5-seed mean.
+  # Overrides `seeds` in the ref rendering only; stripped from 100k/tune.
+  ref_seeds: [1, 2, 3, 4]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
