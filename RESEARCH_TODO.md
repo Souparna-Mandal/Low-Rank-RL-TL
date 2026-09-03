@@ -81,10 +81,20 @@ trajectories — no episodic-replay surgery needed.
       (b) blended advantages — mix GAE with Q-derived advantages
       (β-weighted), which is where the regularised Q can actually change the
       policy gradient.
-- [ ] **SAC-FHR**: penalty on both critics over sampled episodic segments.
-      Port `FHREpisodicReplayBuffer` (already solved for SB3 DQN in
-      `src/agents/sb3_fhr.py`) to SAC's buffer; the recurrence head reuses
-      `FHRRecurrenceHead` as-is.
+- [x] **SAC-FHR**: penalty on both critics over sampled episodic segments.
+      Shipped as `FHRSAC` / `FHRSACD` (`src/agents/sb3_sac_fhr.py`) on the
+      SB3 episodic buffer; MuJoCo waves (Ant, HalfCheetah, Swimmer,
+      HumanoidStandup) done — too noisy seed-to-seed to read the mechanism
+      cleanly (stochastic actor + auto-alpha + entropy inside the soft target).
+- [x] **TD3-FHR** (2026-09-03): `FHRTD3` (`src/agents/sb3_td3_fhr.py`) — the
+      lower-variance host: deterministic actor, fixed exploration noise,
+      plain Bellman target (the frozen-theory `c` is an exact identity test).
+      Penalty on TD3's own scale, `sum_i MSE_i + lambda * sum_i Huber_i`.
+      Adds the gradient-stream probe (`grad_probe_every`: `grad_ratio`,
+      `grad_rho`, `grad_cos` next to `loss_ratio` / `rho_loss`) — the
+      cross-algorithm quantity lambda is chosen from. Families: Pendulum +
+      MountainCarContinuous (validation), Ant / HalfCheetah / Swimmer
+      (decade ladder lambda {0.1, 1, 10} x order {2, 8} + frozen-theory).
 - [ ] (stretch) **λ-return variant**: FHR directly on the empirical λ-return
       sequence rather than the network outputs — closest to the theory,
       probably noisiest.

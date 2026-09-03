@@ -74,7 +74,8 @@ FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes", "window_rank_every", "window_rank_lags")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags",
+              "grad_probe_every")
 
 
 def _algo_class(algo_type):
@@ -82,12 +83,29 @@ def _algo_class(algo_type):
         sys.path.insert(0, str(SRC))
     from agents.sb3_fhr import FHRDQN, FHRQRDQN
     from agents.sb3_sac_fhr import FHRSAC, FHRSACD
+    from agents.sb3_td3_fhr import FHRTD3
     try:
         return {"dqn": FHRDQN, "qrdqn": FHRQRDQN,
-                "sac": FHRSAC, "sacd": FHRSACD}[algo_type]
+                "sac": FHRSAC, "sacd": FHRSACD, "td3": FHRTD3}[algo_type]
     except KeyError:
-        raise ValueError("algo.type must be one of dqn|qrdqn|sac|sacd, "
+        raise ValueError("algo.type must be one of dqn|qrdqn|sac|sacd|td3, "
                          f"got {algo_type!r}")
+
+
+def _action_noise(noise_type, noise_std, env):
+    """RL-Zoo's `noise_type` / `noise_std` -> the SB3 ActionNoise object TD3
+    wants, sized to the env's action dimension (zero mean, isotropic std)."""
+    from stable_baselines3.common.noise import (NormalActionNoise,
+                                                OrnsteinUhlenbeckActionNoise)
+    n = int(np.prod(env.action_space.shape))
+    mean, sigma = np.zeros(n), float(noise_std) * np.ones(n)
+    kind = str(noise_type).lower().replace("_", "-")
+    if kind == "normal":
+        return NormalActionNoise(mean, sigma)
+    if kind in ("ornstein-uhlenbeck", "ou"):
+        return OrnsteinUhlenbeckActionNoise(mean, sigma)
+    raise ValueError("algo.noise_type must be normal|ornstein-uhlenbeck, "
+                     f"got {noise_type!r}")
 
 
 def _build_model(cfg, env, seed):
@@ -104,15 +122,22 @@ def _build_model(cfg, env, seed):
     n_quantiles = algo.pop("n_quantiles", None)
     if algo_type == "qrdqn" and n_quantiles is not None:
         policy_kwargs["n_quantiles"] = n_quantiles
-    # SAC-family-only keys: n_critics shapes the policy; target_entropy_scale
-    # exists on SACD alone. Popped unconditionally so a config switched
-    # between types can keep them around without crashing the constructor.
+    # Actor-critic-only keys: n_critics shapes the policy (SAC, SACD, TD3);
+    # target_entropy_scale exists on SACD alone. Popped unconditionally so a
+    # config switched between types can keep them around without crashing
+    # the constructor.
     n_critics = algo.pop("n_critics", None)
-    if algo_type in ("sac", "sacd") and n_critics is not None:
+    if algo_type in ("sac", "sacd", "td3") and n_critics is not None:
         policy_kwargs["n_critics"] = int(n_critics)
     tes = algo.pop("target_entropy_scale", None)
     if algo_type == "sacd" and tes is not None:
         algo["target_entropy_scale"] = float(tes)
+    # TD3-only: RL-Zoo expresses the exploration noise as noise_type /
+    # noise_std; SB3 wants an ActionNoise object sized to the action space.
+    noise_type = algo.pop("noise_type", None)
+    noise_std = algo.pop("noise_std", 0.0)
+    if algo_type == "td3" and noise_type is not None:
+        algo["action_noise"] = _action_noise(noise_type, noise_std, env)
     fhr = {k: cfg["agent"][k] for k in FHR_PARAMS if k in cfg["agent"]}
     return cls("MlpPolicy", env, policy_kwargs=policy_kwargs, seed=seed,
                device=cfg["experiment"]["_device"], verbose=0, **algo, **fhr)
@@ -411,7 +436,7 @@ def load_run_model(run_dir, device="cpu", checkpoint="final"):
         cfg = yaml.safe_load(f)
     cls = _algo_class(cfg["algo"]["type"])
     model = cls.load(run_dir / "checkpoints" / f"{checkpoint}.pt", device=device)
-    make = getattr(model, "qagent_adapter", None)   # SAC family
+    make = getattr(model, "qagent_adapter", None)   # SAC / TD3 families
     adapter = make(epsilon=0.0) if make else SB3QAgentAdapter(model, epsilon=0.0)
     return model, adapter
 

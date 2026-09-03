@@ -19,6 +19,13 @@ The actor loss — the KL(pi || exp(Q/alpha)/Z) improvement step — is left
 untouched: it consumes the FHR-shaped critics implicitly through min Q, so the
 regularised values steer the policy with no direct penalty term of their own.
 
+The continuous-critic hooks (raw-action encoding, float lag/anchor actions,
+ContinuousCritic penultimate features, fused twin lag_q closures) live in
+_FHRContinuousCriticMixin, shared with FHRTD3 (agents/sb3_td3_fhr.py) — the
+two hosts differ only in their train() loops and in how the per-critic Huber
+terms combine (SAC "mean" against its 0.5 * sum_i MSE_i TD term; TD3 "sum").
+grad_probe_every > 0 adds the gradient-stream probe of agents/sb3_fhr.py.
+
 Design contracts carried over from agents/sb3_fhr.py:
   * fhr_weight=0 with uniform replay reproduces stock SB3 SAC bit-for-bit
     (same RNG streams, same updates); everything non-stock is gated behind
@@ -194,37 +201,13 @@ class _FHRSACFamilyMixin(_FHRMixin):
             * (1.0 - self._current_progress_remaining))
 
 
-_FHR_KWARG_DOC = """fhr_weight and friends match FHRDQN (agents/sb3_fhr.py);
-    prioritized_replay/per_alpha/per_beta0 opt into the PER buffer."""
-
-
-class FHRSAC(_FHRSACFamilyMixin, SAC):
-    """stable_baselines3 SAC + the FHR recurrence penalty on both critics.
-    fhr_weight=0 with uniform replay is bit-for-bit stock SAC."""
-
-    def __init__(self, *args, fhr_weight: float = 0.0, fhr_order: int = 2,
-                 reward_lags: bool = False, warmup_grad_steps: int = 2000,
-                 c_learning_rate: float = 5e-3,
-                 rampdown_reward_threshold: float | None = None,
-                 rampdown_penalty_threshold: float | str | None = None,
-                 rampdown_penalty_topk: int = 20,
-                 rampdown_patience_eps: int = 10,
-                 rampdown_episodes: int = 0, c_predictor: str = "none",
-                 prioritized_replay: bool = False, per_alpha: float = 0.6,
-                 per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, c_init=None, **kwargs):
-        self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
-                             warmup_grad_steps, c_learning_rate,
-                             rampdown_reward_threshold,
-                             rampdown_penalty_threshold,
-                             rampdown_penalty_topk, rampdown_patience_eps,
-                             rampdown_episodes, c_predictor=c_predictor,
-                             prioritized_replay=prioritized_replay,
-                             per_alpha=per_alpha, per_beta0=per_beta0,
-                             window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags, c_init=c_init)
-        kwargs = self._fhr_per_kwargs(kwargs)
-        super().__init__(*args, **kwargs)
+class _FHRContinuousCriticMixin(_FHRSACFamilyMixin):
+    """Continuous-action (Box) hooks shared by the twin-ContinuousCritic
+    hosts — FHRSAC here and FHRTD3 (agents/sb3_td3_fhr.py): raw-action
+    encoding for the c(s,a) predictor, float lag/anchor actions (the buffer
+    stores the policy's [-1, 1]-scaled actions), the critic's penultimate
+    features for the shared predictor, and per-critic lag_q closures with one
+    fused feature/head forward per distinct (obs, acts) pair."""
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -234,7 +217,7 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
         return int(np.prod(self.action_space.shape)), "raw"
 
     def _fhr_lag_actions(self, raw_actions, n: int, r: int):
-        # buffer actions are float, already scaled to [-1, 1] by SAC
+        # buffer actions are float, already scaled to [-1, 1] by the policy
         return self.replay_buffer.to_torch(
             raw_actions).float().reshape(n * r, -1)
 
@@ -262,6 +245,40 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                 return cache[key][i].squeeze(1)
             return lag_q
         return [make(i) for i in range(len(critic.q_networks))]
+
+_FHR_KWARG_DOC = """fhr_weight and friends match FHRDQN (agents/sb3_fhr.py);
+    prioritized_replay/per_alpha/per_beta0 opt into the PER buffer."""
+
+
+class FHRSAC(_FHRContinuousCriticMixin, SAC):
+    """stable_baselines3 SAC + the FHR recurrence penalty on both critics.
+    fhr_weight=0 with uniform replay is bit-for-bit stock SAC."""
+
+    def __init__(self, *args, fhr_weight: float = 0.0, fhr_order: int = 2,
+                 reward_lags: bool = False, warmup_grad_steps: int = 2000,
+                 c_learning_rate: float = 5e-3,
+                 rampdown_reward_threshold: float | None = None,
+                 rampdown_penalty_threshold: float | str | None = None,
+                 rampdown_penalty_topk: int = 20,
+                 rampdown_patience_eps: int = 10,
+                 rampdown_episodes: int = 0, c_predictor: str = "none",
+                 prioritized_replay: bool = False, per_alpha: float = 0.6,
+                 per_beta0: float = 0.4, window_rank_every: int = 0,
+                 window_rank_lags: int = 16, c_init=None,
+                 grad_probe_every: int = 0, **kwargs):
+        self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
+                             warmup_grad_steps, c_learning_rate,
+                             rampdown_reward_threshold,
+                             rampdown_penalty_threshold,
+                             rampdown_penalty_topk, rampdown_patience_eps,
+                             rampdown_episodes, c_predictor=c_predictor,
+                             prioritized_replay=prioritized_replay,
+                             per_alpha=per_alpha, per_beta0=per_beta0,
+                             window_rank_every=window_rank_every,
+                             window_rank_lags=window_rank_lags, c_init=c_init,
+                             grad_probe_every=grad_probe_every)
+        kwargs = self._fhr_per_kwargs(kwargs)
+        super().__init__(*args, **kwargs)
 
     def qagent_adapter(self, epsilon: float | None = None):
         return SB3SACAdapter(self, epsilon=epsilon)
@@ -358,11 +375,15 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
             diag = self._fhr_base_diag(td_loss=critic_losses[-1], lam=lam)
             diag["ent_coef"] = ent_coefs[-1]
             diag["actor_loss"] = np.nan       # filled after the actor step
-            if self.fhr_weight > 0:
+            probe = self._fhr_grad_probe_due()
+            if self.fhr_weight > 0 or probe:
                 anchors = [q.squeeze(1) for q in current_q_values]
                 penalty = self._fhr_penalty_multi(
-                    anchors, self._lag_q_fns(), lam, diag)
-                if penalty is not None and lam > 0:
+                    anchors, self._lag_q_fns(), lam, diag, need_grad=probe)
+                if probe and penalty is not None:
+                    # on the pure TD term, before the penalty joins the loss
+                    self._fhr_grad_probe(critic_loss, penalty, lam, diag)
+                if self.fhr_weight > 0 and penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
             if self._fhr_window_rank_due():
                 self._fhr_window_rank_probe(self._lag_q_fns())
@@ -794,7 +815,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, c_init=None, **kwargs):
+                 window_rank_lags: int = 16, c_init=None,
+                 grad_probe_every: int = 0, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -804,7 +826,8 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags, c_init=c_init)
+                             window_rank_lags=window_rank_lags, c_init=c_init,
+                             grad_probe_every=grad_probe_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -895,11 +918,15 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
             diag = self._fhr_base_diag(td_loss=critic_losses[-1], lam=lam)
             diag["ent_coef"] = ent_coefs[-1]
             diag["actor_loss"] = np.nan
-            if self.fhr_weight > 0:
+            probe = self._fhr_grad_probe_due()
+            if self.fhr_weight > 0 or probe:
                 anchors = [q.squeeze(1) for q in current_q_values]
                 penalty = self._fhr_penalty_multi(
-                    anchors, self._lag_q_fns(), lam, diag)
-                if penalty is not None and lam > 0:
+                    anchors, self._lag_q_fns(), lam, diag, need_grad=probe)
+                if probe and penalty is not None:
+                    # on the pure TD term, before the penalty joins the loss
+                    self._fhr_grad_probe(critic_loss, penalty, lam, diag)
+                if self.fhr_weight > 0 and penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
             if self._fhr_window_rank_due():
                 self._fhr_window_rank_probe(self._lag_q_fns())
@@ -1009,7 +1036,8 @@ class SB3SACDAdapter:
 
 
 class SB3SACAdapter:
-    """Continuous-action analysis surface over FHRSAC. The discrete
+    """Continuous-action analysis surface over FHRSAC (and, as
+    SB3TD3Adapter, over FHRTD3 — same calls). The discrete
     (B, n_actions) policy_net contract cannot exist here — grid/row analyses
     are disabled for Box action spaces — but the rollout-Hankel analysis
     (analysis method `hankel_rollout_continuous`) uses:

@@ -2,11 +2,18 @@
 
 Reads a completed PROBE arm (fhr_weight > 0 with an infinite warm-up: trains
 bit-identically to the baseline while train_diagnostics.csv logs penalty_raw
-next to td_loss) and derives:
+next to td_loss — or, since the gradient probe, simply the BASELINE of a
+family launched with agent.grad_probe_every > 0, which logs the unweighted
+loss and gradient stream ratios without the penalty ever entering the loss)
+and derives:
 
-  * lambda by MAGNITUDE MATCHING: lambda_rho = rho * median(td_loss) /
-    median(penalty_raw) over the tail of training, so the weighted penalty
-    contributes a chosen fraction rho of the TD term at equilibrium;
+  * lambda by MAGNITUDE MATCHING (--by loss): lambda_rho = rho *
+    median(td_loss) / median(penalty_raw) over the tail of training, so the
+    weighted penalty contributes a chosen fraction rho of the TD term at
+    equilibrium; or by GRADIENT MATCHING (--by grad): lambda_rho = rho /
+    median(grad_ratio), so the penalty's gradient on the critic is a chosen
+    fraction rho of the TD gradient — the stream ratio that transfers across
+    algorithms whose TD losses sit on different scales (SAC 0.5*sum, TD3 sum);
   * fhr_order from the CONVERGED POLICY'S MEASURED RANK: the effective rank
     (99.9% Frobenius energy) of the stacked rollout Hankel of
     Q(s_t, pi(s_t)) under the trained probe policy — Kronecker: a rank-r*
@@ -45,7 +52,7 @@ def _tail_median(rows, col, tail_frac):
 
 def calibrate(probe_arm="exp9", exp_dir=None, config=runner.CONFIG,
               tail_frac=0.5, ratios=(0.5, 2.0), n_rollouts=3, base_seed=52,
-              energy_frac=0.999, device="cpu"):
+              energy_frac=0.999, device="cpu", by="loss"):
     """-> dict with per-seed magnitudes/ranks and the suggested lambda/order.
 
     lambda uses the seed-mean of the tail-median td/penalty ratio; fhr_order
@@ -61,8 +68,12 @@ def calibrate(probe_arm="exp9", exp_dir=None, config=runner.CONFIG,
     for run in runner.load_runs(probe_arm, exp_dir=exp_dir, config=config):
         rows = list(csv.DictReader(open(run["run_dir"]
                                         / "train_diagnostics.csv")))
-        td = _tail_median(rows, "td_loss", tail_frac)
-        pen = _tail_median(rows, "penalty_raw", tail_frac)
+        if by == "grad":
+            # td/pen ratio := 1 / (|g_pen| / |g_td|), so lambda = rho / grad_ratio
+            td, pen = 1.0, _tail_median(rows, "grad_ratio", tail_frac)
+        else:
+            td = _tail_median(rows, "td_loss", tail_frac)
+            pen = _tail_median(rows, "penalty_raw", tail_frac)
         _, adapter = runner.load_run_model(run["run_dir"], device=device)
         env = runner._make_env(run["cfg"])
         mats = hankel_rollout_continuous(adapter, env, n_rollouts=n_rollouts,
@@ -101,10 +112,13 @@ def main():
                         help="target penalty/TD contribution ratios rho")
     parser.add_argument("--n-rollouts", type=int, default=3)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--by", choices=["loss", "grad"], default="loss",
+                        help="match penalty to TD by loss magnitudes or by "
+                             "critic-gradient norms (needs grad_probe_every)")
     args = parser.parse_args()
     cal = calibrate(probe_arm=args.probe_arm, config=args.config,
                     tail_frac=args.tail_frac, ratios=tuple(args.ratios),
-                    n_rollouts=args.n_rollouts, device=args.device)
+                    n_rollouts=args.n_rollouts, device=args.device, by=args.by)
     for i, seed in enumerate(cal["seeds"]):
         print(f"seed {seed}: td_loss median {cal['td_median'][i]:.4g}, "
               f"penalty_raw median {cal['penalty_median'][i]:.4g}, "

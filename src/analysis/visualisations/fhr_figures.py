@@ -1,8 +1,12 @@
-"""Publication-quality figures for the SB3 FHR-SAC comparison families.
+"""Publication-quality figures for the SB3 FHR comparison families (SAC, TD3
+and the discrete DQN / QR-DQN / SAC-Discrete stacks).
 
 One module behind every `exp*_results*.ipynb` in experiments/stable_baselines_3,
-so the four MuJoCo notebooks (HalfCheetah, Ant, Swimmer, HumanoidStandup) plot
-the same family the same way and a figure only has to be fixed once.
+so every notebook plots its family the same way and a figure only has to be
+fixed once. `experiments/stable_baselines_3/src/make_results_notebook.py`
+generates the notebooks from one template; each saves EVERY panel as its own
+file (fig_internals_individual, fig_rollout_hankel_single, single-key
+fig_window_rank) so figures can be copy-pasted one at a time.
 
 Design rules, all of them deliberate:
 
@@ -293,11 +297,12 @@ class Family:
         self.name = self.cfg["experiment"]["name"]
         self.algo = str(self.cfg.get("algo", {}).get("type", "sac")).lower()
         self.algo_label = {"sac": "SAC", "sacd": "SAC-Discrete", "dqn": "DQN",
-                           "qrdqn": "QR-DQN"}.get(self.algo, self.algo.upper())
+                           "qrdqn": "QR-DQN", "td3": "TD3"}.get(
+                               self.algo, self.algo.upper())
         # continuous-action algos have a policy trace to Hankel per action
         # dim; the discrete ones have a categorical actor and use the greedy
         # value trajectory instead (fig_value_hankel).
-        self.is_continuous = self.algo in ("sac",)
+        self.is_continuous = self.algo in ("sac", "td3")
         exp = self.cfg["experiment"]
         self.seeds = [str(s) for s in (exp.get("seeds") or [exp["seed"]])]
         self.defaults = self.cfg["agent"]
@@ -870,13 +875,23 @@ class Family:
         print(f"diagnostics cache ready ({time.time() - t0:.1f}s)")
 
     # Candidate panels, in priority order. Columns come from the agent's own
-    # diagnostics dict (agents.sb3_fhr._FHR_base_diag + the SAC/SACD extras),
-    # so a family only ever plots what its algorithm actually logged -
-    # ent_coef/actor_loss are absent for DQN, c_spread only appears on the
-    # state-conditioned c(s,a) arms.
+    # diagnostics dict (agents.sb3_fhr._fhr_base_diag + the SAC/SACD/TD3
+    # extras), so a family only ever plots what its algorithm actually logged:
+    # ent_coef is absent for DQN and TD3, c_spread only appears on the
+    # state-conditioned c(s,a) arms, and the stream ratios (loss_ratio /
+    # rho_loss from the penalty, grad_* from the gradient probe,
+    # agent.grad_probe_every > 0) only on families launched with them. The
+    # unweighted ratios are plotted for the baseline too - on it they are the
+    # calibration signal (lambda* = target / ratio) measured for free.
     DIAG_CANDIDATES = (("penalty_weighted", "$\\lambda\\cdot$penalty (weighted)", "log", "fhr"),
                        ("td_loss", "critic TD loss", "log", "all"),
-                       ("rho", "$\\rho=\\lambda\\cdot$penalty / TD", "log", "fhr"),
+                       ("rho", "$\\rho_{loss}=\\lambda\\cdot$penalty / TD", "log", "fhr"),
+                       ("grad_rho", "$\\rho_{grad}=\\lambda\\,\\|\\nabla$pen$\\|/\\|\\nabla$TD$\\|$", "log", "fhr"),
+                       ("loss_ratio", "penalty / TD (unweighted)", "log", "all"),
+                       ("grad_ratio", "$\\|\\nabla$pen$\\|/\\|\\nabla$TD$\\|$ (unweighted)", "log", "all"),
+                       ("grad_cos", "cos$(\\nabla$TD$,\\nabla$pen$)$ - stream alignment", None, "all"),
+                       ("grad_norm_td", "$\\|\\nabla_\\theta$TD$\\|$", "log", "all"),
+                       ("grad_norm_pen", "$\\|\\nabla_\\theta$penalty$\\|$", "log", "all"),
                        ("residual_rms", "recurrence residual RMS", "log", "fhr"),
                        ("companion_radius", "companion spectral radius", None, "fhr"),
                        ("sum_c", "$\\sum_i c_i$", None, "fhr"),
@@ -908,9 +923,13 @@ class Family:
         return out[:limit]
 
     def _diag_series(self, arm, col, n_bins):
-        """Diagnostics column, with the derived `rho` handled here."""
+        """Diagnostics column, with `rho` handled here: the logged rho_loss
+        when the family carries it, else derived from its two inputs."""
         if col != "rho":
             return self.diag_curves(arm, col, n_bins)
+        logged = self.diag_curves(arm, "rho_loss", n_bins)
+        if logged:
+            return logged
         out = []
         for s, d in self.run_dirs(arm):
             data = self.load_diag(d, n_bins)
@@ -924,7 +943,8 @@ class Family:
         return out
 
     def fig_internal(self, col, title=None, scale=None, arms=None,
-                     figsize=(6.2, 3.6), n_bins=600, ax=None, smooth=5):
+                     figsize=(6.2, 3.6), n_bins=600, ax=None, smooth=5,
+                     ylabel=None):
         """One diagnostics column as its own figure - seed mean + band."""
         fig, ax = (ax.figure, ax) if ax is not None else plt.subplots(figsize=figsize)
         keys = arms or ([a.key for a in self.fhr_arms] +
@@ -934,10 +954,29 @@ class Family:
             if cs:
                 self._plot_band(ax, k, cs, smooth=smooth, alpha_band=0.15,
                                 zorder=1 if self.arms[k].is_baseline else 2)
+        if not ax.lines:
+            plt.close(fig)
+            return _empty_fig(f"{col}: not logged by any completed run")
         if scale:
             ax.set_yscale(scale)
-        self._finish(ax, ylabel=title or col, title=title or col, legend="best")
+        self._finish(ax, ylabel=ylabel or title or col, title=title or col,
+                     legend="best")
         return fig
+
+    def fig_internals_individual(self, n_bins=600, smooth=5, limit=None,
+                                 figsize=(6.2, 3.6)):
+        """The internals as ONE FIGURE PER PANEL - the copy-pastable form of
+        fig_internals. Yields (column, fig) over diag_panels(limit=None), so
+        a family plots exactly the diagnostics it logged, FHR-only panels
+        over the FHR arms and the rest over every arm including the
+        baseline."""
+        for col, title, scale, who in self.diag_panels(n_bins, limit=limit):
+            keys = ([a.key for a in self.fhr_arms] if who == "fhr"
+                    else list(self.arms))
+            yield col, self.fig_internal(col, title=f"{self.env} - {title}",
+                                         ylabel=title, scale=scale, arms=keys,
+                                         n_bins=n_bins, smooth=smooth,
+                                         figsize=figsize)
 
     def fig_internals(self, panels=None, n_bins=600, ncols=3,
                       panel_size=(4.3, 3.0), smooth=5):
@@ -985,7 +1024,7 @@ class Family:
         if handles:
             fig.legend(handles=handles, loc="outside lower center",
                        ncol=min(3, len(handles)))
-        fig.suptitle(f"{self.env} - FHR + SAC internals "
+        fig.suptitle(f"{self.env} - FHR + {self.algo_label} internals "
                      f"({_band_caption(self.band)}, {n_bins}-point binning)")
         return fig
 
@@ -1010,24 +1049,76 @@ class Family:
             rho = pen / td if td else np.nan
             print(f"{a.plain:30s} {td:12.4g} {pen:14.4g} {rho:10.3g}")
 
+    # the two streams' ratios: loss-side (from the penalty) and gradient-side
+    # (from the probe), unweighted and lambda-weighted, plus their alignment
+    STREAM_COLS = (("loss_ratio", "pen/TD"), ("rho_loss", "rho_loss"),
+                   ("grad_ratio", "|g_pen|/|g_TD|"), ("grad_rho", "rho_grad"),
+                   ("grad_cos", "cos"))
+
+    def stream_medians(self, arm, tail=0.5, n_bins=600):
+        """Seed-mean of the per-seed tail medians of every stream column
+        (nan where the family did not log it)."""
+        vals = {c: [] for c, _ in self.STREAM_COLS}
+        for _, d in self.run_dirs(arm):
+            data = self.load_diag(d, n_bins)
+            if data is None:
+                continue
+            cut = int(len(data["env_steps"]) * (1 - tail))
+            for c, _ in self.STREAM_COLS:
+                if c in data:
+                    v = np.asarray(data[c], float)[cut:]
+                    if np.isfinite(v).any():
+                        vals[c].append(float(np.nanmedian(v)))
+        return {c: (float(np.mean(v)) if v else np.nan) for c, v in vals.items()}
+
+    def table_rho_streams(self, tail=0.5, targets=(0.1, 0.5, 1.0), n_bins=600):
+        """The hyper-parameter-selection table: loss- and gradient-stream
+        ratios over the training tail per arm, and - from the BASELINE's
+        unweighted measurements, where the penalty never entered the loss -
+        the lambda that would put each target ratio on the critic. Returns
+        {arm: medians} (+ "lambda_for" when a baseline is present)."""
+        hdr = "  ".join(f"{lab:>14s}" for _, lab in self.STREAM_COLS)
+        print(f"stream ratios over the last {tail:.0%} of training - "
+              f"{self.env}, seeds {', '.join(self.seeds)}")
+        print(f"{'arm':30s}  {hdr}")
+        print("-" * (32 + 16 * len(self.STREAM_COLS)))
+        out = {}
+        for k, a in self.arms.items():
+            m = self.stream_medians(k, tail, n_bins)
+            out[k] = m
+            cells = "  ".join(f"{m[c]:14.4g}" if np.isfinite(m[c]) else f"{'-':>14s}"
+                              for c, _ in self.STREAM_COLS)
+            print(f"{a.plain:30s}  {cells}")
+        if self.baseline:
+            base = out[self.baseline.key]
+            print(f"\nlambda for a target ratio, from the baseline's unweighted "
+                  f"streams (lambda* = target / ratio):")
+            print(f"{'target':>8s} {'by gradients':>14s} {'by losses':>12s}")
+            out["lambda_for"] = {}
+            for t in targets:
+                lg = t / base["grad_ratio"] if np.isfinite(base["grad_ratio"]) and base["grad_ratio"] > 0 else np.nan
+                ll = t / base["loss_ratio"] if np.isfinite(base["loss_ratio"]) and base["loss_ratio"] > 0 else np.nan
+                out["lambda_for"][t] = {"grad": lg, "loss": ll}
+                print(f"{t:8.3g} {lg:14.4g} {ll:12.4g}")
+        return out
+
     # ----------------------------------------------------------------------
     # 5a - rollout Hankel rank of the CONVERGED policy
     # ----------------------------------------------------------------------
-    def fig_rollout_hankel(self, runner, n_rollouts=3, base_seed=52, seed_idx=0,
-                           n_show=30, figsize=(7.2, 3.4), arms=None):
-        """Stacked per-rollout Hankels of the min-twin critic trace
-        Q(s_t, pi(s_t)) and of the first action dimension of pi(s_t), for the
-        converged policy of one seed per arm.
-
-        `runner` is the experiment dir's run_sb3_seeds module (it owns
-        load_run_model / _make_env). Returns (fig, table).
-        """
+    def _rollout_spectra(self, runner, n_rollouts=3, base_seed=52, seed_idx=0,
+                         arms=None):
+        """[(arm key, sv_q, rank_q, [sv per action dim], [rank per dim])] for
+        the converged policy of one seed per arm - cached, since it reloads
+        checkpoints and steps the env."""
         from analysis.low_rank.continuous_rollout import hankel_rollout_continuous
         from analysis.low_rank.rank import energy_rank
-        fig, axes = plt.subplots(1, 2, figsize=figsize)
-        table = []
-        for k in (arms or list(self.arms)):
-            a = self.arms[k]
+        keys = list(arms or self.arms)
+        ck = (n_rollouts, base_seed, seed_idx, tuple(keys))
+        cache = self.__dict__.setdefault("_rollout_cache", {})
+        if ck in cache:
+            return cache[ck]
+        out = []
+        for k in keys:
             dirs = self.run_dirs(k)
             if len(dirs) <= seed_idx:
                 continue
@@ -1042,31 +1133,94 @@ class Family:
             h_q, h_acts = mats[0], mats[1:]
             sv = np.linalg.svd(h_q, compute_uv=False)
             sv = sv / sv[0]
-            rq = energy_rank(sv, 0.999)
-            axes[0].semilogy(np.arange(1, min(len(sv), n_show) + 1), sv[:n_show],
-                             color=a.colour, ls=a.ls,
-                             lw=2.3 if a.is_baseline else 1.8,
-                             label=f"{a.label} (rank {rq})")
-            pi_ranks = []
-            for j, h_a in enumerate(h_acts):
+            svas = []
+            for h_a in h_acts:
                 sva = np.linalg.svd(h_a, compute_uv=False)
-                sva = sva / sva[0]
-                pi_ranks.append(energy_rank(sva, 0.999))
-                if j == 0:
-                    axes[1].semilogy(np.arange(1, min(len(sva), n_show) + 1),
-                                     sva[:n_show], color=a.colour, ls=a.ls,
-                                     lw=2.3 if a.is_baseline else 1.8,
-                                     label=f"{a.label} (rank {pi_ranks[0]})")
-            table.append((a.plain, rq, pi_ranks))
+                svas.append(sva / sva[0])
+            out.append((k, sv, energy_rank(sv, 0.999), svas,
+                        [energy_rank(x, 0.999) for x in svas]))
+        cache[ck] = out
+        return out
+
+    def _plot_spectra(self, ax, spectra, which, n_show, dim=0):
+        for k, sv, rq, svas, pr in spectra:
+            a = self.arms[k]
+            if which == "q":
+                s_, r_ = sv, rq
+            elif dim < len(svas):
+                s_, r_ = svas[dim], pr[dim]
+            else:
+                continue
+            ax.semilogy(np.arange(1, min(len(s_), n_show) + 1), s_[:n_show],
+                        color=a.colour, ls=a.ls,
+                        lw=2.3 if a.is_baseline else 1.8,
+                        label=f"{a.label} (rank {r_})")
+
+    def fig_rollout_hankel(self, runner, n_rollouts=3, base_seed=52, seed_idx=0,
+                           n_show=30, figsize=(7.2, 3.4), arms=None):
+        """Stacked per-rollout Hankels of the min-twin critic trace
+        Q(s_t, pi(s_t)) and of the first action dimension of pi(s_t), for the
+        converged policy of one seed per arm, side by side. Returns
+        (fig, table); fig_rollout_hankel_single gives each panel on its own.
+
+        `runner` is the experiment dir's run_sb3_seeds module (it owns
+        load_run_model / _make_env).
+        """
+        spectra = self._rollout_spectra(runner, n_rollouts, base_seed,
+                                        seed_idx, arms)
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        self._plot_spectra(axes[0], spectra, "q", n_show)
+        self._plot_spectra(axes[1], spectra, "pi", n_show, 0)
         axes[0].set(title="Hankel$(Q(s_t,\\pi(s_t)))$ - critic trace",
                     xlabel="singular-value index", ylabel="$\\sigma_i/\\sigma_1$")
         axes[1].set(title="Hankel$(\\pi(s_t)_0)$ - first action dim",
                     xlabel="singular-value index")
         for ax in axes:
-            ax.legend(fontsize=7)
+            if ax.lines:
+                ax.legend(fontsize=7)
         fig.suptitle(f"{self.env} - rollout Hankel spectra of the final policy "
                      f"(seed {self.seeds[seed_idx]}, {n_rollouts} rollouts)")
+        table = [(self.arms[k].plain, rq, pr) for k, _, rq, _, pr in spectra]
         return fig, table
+
+    def table_rollout_hankel(self, runner, n_rollouts=3, base_seed=52,
+                             seed_idx=0, arms=None):
+        """Printed energy ranks (99.9%) of the final policy's rollout Hankels:
+        the critic trace and every action dimension, per arm."""
+        spectra = self._rollout_spectra(runner, n_rollouts, base_seed,
+                                        seed_idx, arms)
+        print(f"{'arm':30s} rank(Q)  ranks(pi dims)   (energy rank @ 99.9%, "
+              f"seed {self.seeds[seed_idx]}, {n_rollouts} rollouts)")
+        print("-" * 72)
+        for k, _, rq, _, pr in spectra:
+            print(f"{self.arms[k].plain:30s} {rq:7d}  {pr}")
+        if not spectra:
+            print("(no completed runs in this family yet)")
+        return [(self.arms[k].plain, rq, pr) for k, _, rq, _, pr in spectra]
+
+    def fig_rollout_hankel_single(self, runner, which="q", dim=0, n_rollouts=3,
+                                  base_seed=52, seed_idx=0, n_show=30,
+                                  figsize=(6.2, 3.6), arms=None):
+        """One rollout-Hankel spectrum as its own figure: which="q" for the
+        critic trace Q(s_t, pi(s_t)), which="pi" (+ dim) for one action
+        dimension of pi(s_t)."""
+        spectra = self._rollout_spectra(runner, n_rollouts, base_seed,
+                                        seed_idx, arms)
+        fig, ax = plt.subplots(figsize=figsize)
+        self._plot_spectra(ax, spectra, which, n_show, dim)
+        if not ax.lines:
+            plt.close(fig)
+            return _empty_fig("no completed runs in this family yet")
+        if which == "q":
+            title = (f"{self.env} - Hankel$(Q(s_t,\\pi(s_t)))$ of the final "
+                     f"policy (critic trace)")
+        else:
+            title = (f"{self.env} - Hankel$(\\pi(s_t)_{{{dim}}})$ of the final "
+                     f"policy (action dim {dim})")
+        ax.set(title=title, xlabel="singular-value index",
+               ylabel="$\\sigma_i/\\sigma_1$")
+        ax.legend(fontsize=7.5)
+        return fig
 
     def fig_value_hankel(self, runner, n_rollouts=3, base_seed=52, seed_idx=0,
                          n_show=30, figsize=(6.6, 4.0), arms=None):
@@ -1157,8 +1311,12 @@ class Family:
             ax.xaxis.set_major_formatter(_steps_formatter())
             ax.set_xlabel("environment steps")
         axes[0, 0].legend(loc="best")
-        fig.suptitle(f"{self.env} - {self.arms[arm].short} vs baseline, "
-                     f"penalised-window Hankel spectrum")
+        if len(keys) == 1:      # single panel: one title, no suptitle
+            axes[0, 0].set_title(f"{self.env} - {self.arms[arm].short} vs "
+                                 f"baseline, penalised windows\n{keys[0][1]}")
+        else:
+            fig.suptitle(f"{self.env} - {self.arms[arm].short} vs baseline, "
+                         f"penalised-window Hankel spectrum")
         return fig
 
     def fig_window_rank_overlay(self, keys=None, figsize=(7.2, 3.6), smooth=3):
@@ -1182,7 +1340,11 @@ class Family:
         if handles:
             fig.legend(handles=handles, loc="outside lower center",
                        ncol=min(3, len(handles)))
-        fig.suptitle(f"{self.env} - penalised-window Hankel spectrum, all arms")
+        if len(keys) == 1:
+            axes[0, 0].set_title(f"{self.env} - penalised windows, all arms"
+                                 f"\n{keys[0][1]}")
+        else:
+            fig.suptitle(f"{self.env} - penalised-window Hankel spectrum, all arms")
         return fig
 
     def table_window_rank(self):

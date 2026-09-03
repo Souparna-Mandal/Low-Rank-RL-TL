@@ -12,6 +12,63 @@ bit-for-bit the stock SB3 algorithm** — same RNG stream, same updates —
 asserted in `tests/test_sb3_fhr.py`. An `exp<N>`-vs-baseline gap is therefore
 attributable to the FHR penalty alone.
 
+## Continuous-action families: SAC and TD3
+
+The same launcher, callback, manifest and notebook contract also carries the
+two continuous-action hosts:
+
+- **`algo.type: sac`** — `FHRSAC` (`src/agents/sb3_sac_fhr.py`): SB3 SAC with
+  the FHR penalty on both critics, one shared `c` (or `c(s,a)` predictor),
+  combined as the per-critic **mean** against SAC's `0.5 * sum_i MSE_i` TD term.
+- **`algo.type: td3`** — `FHRTD3` (`src/agents/sb3_td3_fhr.py`): SB3 TD3 with
+  the penalty on both critics on **TD3's own scale**: stock TD3's critic loss
+  is the plain `sum_i MSE_i`, so the loss is
+  `sum_i MSE_i + lambda * sum_i Huber_i` — per critic `MSE_i + lambda*Huber_i`,
+  no division by the number of critics. `lambda` is therefore a TD3-scale
+  knob, not numerically comparable to the SAC families' `lambda`; the
+  cross-algorithm quantities are the stream ratios below. TD3 configs carry
+  RL-Zoo's `noise_type` / `noise_std` in the `algo:` block (the launcher turns
+  them into SB3's `ActionNoise`), `policy_delay`, `target_policy_noise`,
+  `target_noise_clip`, and must not carry `ent_coef` /
+  `target_update_interval`. Why TD3: a deterministic actor, a fixed
+  exploration noise and a plain Bellman target (no entropy term inside the
+  value the recurrence is fitted to) make it the lower-variance host for the
+  FHR claim and make the frozen-theory control `c = (1+1/gamma, -1/gamma)` an
+  exact identity test.
+
+Both hosts, and the DQN family, share two in-training probes (both run on
+every arm including the `lambda = 0` baseline, consume no RNG and leave the
+baseline bit-for-bit stock):
+
+- `agent.window_rank_every` — the penalised-window Hankel spectrum
+  (`window_hankel.csv`): rank measured on the replay windows the penalty acts
+  on;
+- `agent.grad_probe_every` — the **gradient-stream probe**: on the same batch,
+  `grad_ratio = |d penalty/d theta| / |d TD/d theta|` on the critic
+  parameters (unweighted), `grad_rho = lambda_eff * grad_ratio`, `grad_cos`
+  (alignment; negative = the streams conflict), next to the loss-side
+  `loss_ratio` / `rho_loss`, all in `train_diagnostics.csv`. On the baseline
+  the penalty never enters the loss, so its ratio is the free calibration
+  signal `lambda* = target / grad_ratio` (`calibrate_fhr.py --by grad`, or
+  `Family.table_rho_streams()` in a notebook).
+
+Results notebooks are generated from one template —
+`python ../src/make_results_notebook.py --config configs/config_sb3_td3.yaml`
+from the experiment dir — and save **every figure individually** under
+`figures/<family>/` (training / eval per arm, sample-efficiency ladder,
+final returns, one figure per diagnostic, the loss- and gradient-stream rho
+figures + selection table, rollout Hankel per signal, window-rank per arm
+per metric, cost, videos). The TD3 families live in `pendulum`,
+`mountaincar_continuous`, `ant`, `halfcheetah`, `swimmer`
+(`configs/config_sb3_td3.yaml`, manifest `cached/sb3_runs_manifest_td3.json`,
+notebook `exp1_fhrtd3_results.ipynb`). Waves are launched detached, one
+launcher per family:
+
+    cd experiments/stable_baselines_3/ant
+    nohup env FHR_CHILD_THREADS=1 ../../../.venv/bin/python ../src/run_sb3_seeds.py \
+        --config configs/config_sb3_td3.yaml --experiment 1 2 3 4 5 6 7 \
+        --max-workers 20 > ~/localfiles/ant_td3.log 2>&1 & disown
+
 ## Layout
 
 The shared SB3 runners plus one experiment dir per env, each with the
