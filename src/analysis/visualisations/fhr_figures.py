@@ -573,13 +573,38 @@ class Family:
     # 2 - sample efficiency, measured on the TRAINING stream
     # ----------------------------------------------------------------------
     def auto_thresholds(self, window=50, n_target=6, step=None, start=None):
-        tops = []
+        """A round ladder of training-return thresholds for the family.
+        Positive-return envs get nice_thresholds(top); negative-return envs
+        (Pendulum: -1400 -> -140) get the same round ladder laid over the span
+        from the worst seed-mean level to the top, so the sample-efficiency
+        section is not empty there."""
+        tops, lows = [], []
         for k in self.arms:
             agg = _aggregate(self.train_curves(k, window), band="none")
             if agg:
                 tops.append(np.nanmax(agg[1]))
-        return nice_thresholds(max(tops) if tops else np.nan,
-                               n_target=n_target, step=step, start=start)
+                lows.append(np.nanmin(agg[1]))
+        if not tops:
+            return []
+        top = max(tops)
+        if top > 0:
+            return nice_thresholds(top, n_target=n_target, step=step, start=start)
+        lo, span = float(min(lows)), float(top - min(lows))
+        if not np.isfinite(span) or span <= 0:
+            return []
+        if step is None:
+            raw = span / (n_target + 1)
+            mag = 10.0 ** np.floor(np.log10(raw))
+            step = min((m * mag for m in (1, 2, 2.5, 5, 10)),
+                       key=lambda s_: abs(s_ - raw))
+        # multiples of the step, starting two steps above the worst level
+        first = (np.ceil((lo + 2 * step) / step) * step if start is None
+                 else float(start))
+        out, t = [], float(first)
+        while t <= top + 1e-9:
+            out.append(float(round(t, 6)))
+            t += step
+        return out
 
     def steps_to_thresholds(self, thresholds, window=50):
         """{arm key: {threshold: array of per-seed crossing steps}} on the
