@@ -274,7 +274,8 @@ FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes", "window_rank_every", "window_rank_lags")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags",
+              "grad_ratio_every")
 
 
 class _FHRMixin:
@@ -294,7 +295,8 @@ class _FHRMixin:
                         rampdown_episodes, c_predictor="none",
                         prioritized_replay=False, per_alpha=0.6,
                         per_beta0=0.4, window_rank_every=0,
-                        window_rank_lags=16, fhr_lag_source="online"):
+                        window_rank_lags=16, fhr_lag_source="online",
+                        grad_ratio_every=0):
         self.fhr_weight = fhr_weight
         self.fhr_lag_source = fhr_lag_source
         self.fhr_order = fhr_order
@@ -312,6 +314,7 @@ class _FHRMixin:
         self.rampdown_episodes = rampdown_episodes
         self.window_rank_every = window_rank_every
         self.window_rank_lags = window_rank_lags
+        self.grad_ratio_every = grad_ratio_every
 
     def _validate_fhr_config(self):
         if self.fhr_order < 1:
@@ -322,6 +325,9 @@ class _FHRMixin:
         if self.window_rank_lags < 1:
             raise ValueError(
                 f"window_rank_lags must be >= 1, got {self.window_rank_lags}")
+        if self.grad_ratio_every < 0:
+            raise ValueError(
+                f"grad_ratio_every must be >= 0, got {self.grad_ratio_every}")
         if self.prioritized_replay and not self._fhr_supports_per:
             raise ValueError(
                 "prioritized_replay is only supported by the SAC-family FHR "
@@ -418,6 +424,14 @@ class _FHRMixin:
     def _fhr_online_qnet(self):
         """The online value network the shared predictor reads features from."""
         return getattr(self, "q_net", None) or self.quantile_net
+
+    def _fhr_value_params(self) -> list:
+        """The value-network parameters the gradient-ratio probe measures
+        against: everything the TD loss and the penalty both reach through Q.
+        The FHR head (c/d or the predictor) is deliberately excluded - it is
+        only reachable from the penalty, so it would inflate the FHR side.
+        The SAC family overrides this with its critic module."""
+        return list(self._fhr_online_qnet().parameters())
 
     # -- hooks whose defaults reproduce the DQN-family behavior exactly; the
     # -- SAC-family subclasses override them (see agents/sb3_sac_fhr.py) -----
@@ -552,6 +566,12 @@ class _FHRMixin:
                                          if (bar := self._penalty_bar()) is None
                                          else bar),
                 "nan_skips": self.nan_skips}
+        if self.grad_ratio_every > 0:
+            # gradient-ratio probe columns; filled at probe ticks only, NaN
+            # elsewhere (the per-burst nanmean aggregation skips NaNs)
+            diag.update(grad_td_norm=np.nan, grad_pen_norm=np.nan,
+                        grad_ratio_raw=np.nan, grad_ratio=np.nan,
+                        grad_cos=np.nan)
         for j in range(self.fhr_order):
             if self.fhr_predictor is not None:
                 # per-state coefficients: the penalty fills batch means in
@@ -565,7 +585,7 @@ class _FHRMixin:
         return diag
 
     def _fhr_penalty(self, anchor_q_sa: torch.Tensor, lag_q_fn, lam: float,
-                     diag: dict) -> torch.Tensor | None:
+                     diag: dict, keep_graph: bool = False) -> torch.Tensor | None:
         """The recurrence-residual penalty on the current TD batch.
 
         anchor_q_sa: (B,) online Q(s_t, a_t) — the same tensor the TD loss
@@ -576,7 +596,8 @@ class _FHRMixin:
         Returns the Huber penalty (in the graph iff lam > 0) or None when no
         batch sample has r valid predecessors; fills diag in place.
         """
-        return self._fhr_penalty_multi([anchor_q_sa], [lag_q_fn], lam, diag)
+        return self._fhr_penalty_multi([anchor_q_sa], [lag_q_fn], lam, diag,
+                                       keep_graph=keep_graph)
 
     def _fhr_target_lag_q_fns(self):
         """Target-net twins of the online lag_q closures, one per critic —
@@ -586,12 +607,18 @@ class _FHRMixin:
             f"{type(self).__name__} does not support fhr_lag_source='target'")
 
     def _fhr_penalty_multi(self, anchor_q_sas: list, lag_q_fns: list,
-                           lam: float, diag: dict) -> torch.Tensor | None:
+                           lam: float, diag: dict,
+                           keep_graph: bool = False) -> torch.Tensor | None:
         """_fhr_penalty over N online critics sharing ONE c (or one predictor):
         penalty = sum_i Huber(anchor_i, prediction_i) / N — for twin critics
         exactly 0.5 * (Huber_1 + Huber_2), keeping penalty_raw on the
         single-critic scale so lambda values transfer between recipes. The
         single-critic path is bit-identical to the pre-refactor _fhr_penalty.
+
+        keep_graph: build the penalty graph even at lambda = 0 (warm-up) so
+        the gradient-ratio probe can measure the counterfactual penalty
+        gradient. The penalty is still NOT added to the loss at lambda = 0,
+        and nothing calls backward on it, so the update is unchanged.
         """
         buf = self.replay_buffer
         inds = buf.last_batch_inds
@@ -610,7 +637,8 @@ class _FHRMixin:
         keep_t = torch.as_tensor(np.flatnonzero(keep), device=self.device)
         # lambda = 0 (warm-up / baseline diagnostics): keep the penalty out of
         # the graph, exactly as FHRDQNAgent does
-        with torch.enable_grad() if lam > 0 else torch.no_grad():
+        with (torch.enable_grad() if (lam > 0 or keep_graph)
+              else torch.no_grad()):
             c_pred = d_pred = None
             if self.fhr_predictor is not None:
                 anchor_inds = inds[keep]
@@ -668,6 +696,50 @@ class _FHRMixin:
         diag["residual_rms"] = float(
             torch.cat(sq_residuals).mean().sqrt())
         return penalty
+
+    # -- gradient-ratio probe --------------------------------------------------
+    def _fhr_grad_ratio_due(self) -> bool:
+        """Whether the current gradient step is a gradient-ratio probe tick.
+        Only FHR arms reach it (the penalty itself is gated on fhr_weight > 0),
+        but it is NOT gated on lambda_eff: during warm-up the probe reports the
+        counterfactual penalty gradient (grad_ratio_raw) while grad_ratio,
+        the lambda-weighted share, reads 0 - which is exactly the number that
+        says what lambda would balance the two terms once the penalty is
+        switched on."""
+        every = getattr(self, "grad_ratio_every", 0)
+        return every > 0 and self._fhr_grad_steps % every == 0
+
+    def _fhr_grad_ratio(self, td_loss: torch.Tensor, penalty: torch.Tensor,
+                        lam: float, diag: dict) -> None:
+        """rho_grad = ||d(lambda * penalty)/d theta|| / ||d td_loss/d theta||
+        over the value-network parameters theta (_fhr_value_params), plus the
+        cosine between the two gradients. Both gradients come from
+        torch.autograd.grad with retain_graph, so .grad is untouched and the
+        subsequent zero_grad/backward/step sees exactly the graph it would
+        have seen without the probe (bit-exactness asserted in tests).
+        Fills grad_td_norm, grad_pen_norm (UNweighted penalty gradient),
+        grad_ratio_raw = pen/td, grad_ratio = lambda * raw and grad_cos."""
+        params = [p for p in self._fhr_value_params() if p.requires_grad]
+        if not params or not (td_loss.requires_grad and penalty.requires_grad):
+            return
+
+        def _flat(loss):
+            grads = torch.autograd.grad(loss, params, retain_graph=True,
+                                        allow_unused=True)
+            return torch.cat([(torch.zeros_like(p) if g is None else g).reshape(-1)
+                              for p, g in zip(params, grads)])
+
+        g_td = _flat(td_loss)
+        g_pen = _flat(penalty)
+        td_norm = float(g_td.norm())
+        pen_norm = float(g_pen.norm())
+        diag["grad_td_norm"] = td_norm
+        diag["grad_pen_norm"] = pen_norm
+        raw = pen_norm / td_norm if td_norm > 0 else float("nan")
+        diag["grad_ratio_raw"] = raw
+        diag["grad_ratio"] = lam * raw
+        diag["grad_cos"] = (float(torch.dot(g_td, g_pen)) / (td_norm * pen_norm)
+                            if td_norm > 0 and pen_norm > 0 else float("nan"))
 
     # -- penalised-window spectrum probe ------------------------------------
     def _fhr_window_rank_due(self) -> bool:
@@ -777,7 +849,8 @@ class FHRDQN(_FHRMixin, DQN):
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
                  window_rank_lags: int = 16,
-                 fhr_lag_source: str = "online", **kwargs):
+                 fhr_lag_source: str = "online", grad_ratio_every: int = 0,
+                 **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -788,7 +861,8 @@ class FHRDQN(_FHRMixin, DQN):
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
                              window_rank_lags=window_rank_lags,
-                             fhr_lag_source=fhr_lag_source)
+                             fhr_lag_source=fhr_lag_source,
+                             grad_ratio_every=grad_ratio_every)
         kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
         super().__init__(*args, **kwargs)
 
@@ -834,10 +908,15 @@ class FHRDQN(_FHRMixin, DQN):
             if self.fhr_weight > 0:
                 def lag_q(obs, acts):
                     return self.q_net(obs).gather(1, acts).squeeze(1)
+                probe = self._fhr_grad_ratio_due()
+                td_loss_t = loss
                 penalty = self._fhr_penalty(
-                    current_q_values.squeeze(1), lag_q, lam, diag)
+                    current_q_values.squeeze(1), lag_q, lam, diag,
+                    keep_graph=probe)
                 if penalty is not None and lam > 0:
                     loss = loss + lam * penalty
+                if penalty is not None and probe:
+                    self._fhr_grad_ratio(td_loss_t, penalty, lam, diag)
             if self._fhr_window_rank_due():
                 self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)
@@ -882,7 +961,8 @@ if QRDQN is not None:
                      prioritized_replay: bool = False, per_alpha: float = 0.6,
                      per_beta0: float = 0.4, window_rank_every: int = 0,
                      window_rank_lags: int = 16,
-                     fhr_lag_source: str = "online", **kwargs):
+                     fhr_lag_source: str = "online", grad_ratio_every: int = 0,
+                     **kwargs):
             self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                                  warmup_grad_steps, c_learning_rate,
                                  rampdown_reward_threshold,
@@ -893,7 +973,8 @@ if QRDQN is not None:
                                  per_alpha=per_alpha, per_beta0=per_beta0,
                                  window_rank_every=window_rank_every,
                                  window_rank_lags=window_rank_lags,
-                                 fhr_lag_source=fhr_lag_source)
+                                 fhr_lag_source=fhr_lag_source,
+                                 grad_ratio_every=grad_ratio_every)
             kwargs.setdefault("replay_buffer_class", FHREpisodicReplayBuffer)
             super().__init__(*args, **kwargs)
 
@@ -947,10 +1028,15 @@ if QRDQN is not None:
                         quantiles = self.quantile_net(obs)
                         idx = acts[..., None].expand(-1, self.n_quantiles, 1)
                         return quantiles.gather(dim=2, index=idx).squeeze(dim=2).mean(dim=1)
+                    probe = self._fhr_grad_ratio_due()
+                    td_loss_t = loss
                     penalty = self._fhr_penalty(
-                        current_quantiles.mean(dim=1), lag_q, lam, diag)
+                        current_quantiles.mean(dim=1), lag_q, lam, diag,
+                        keep_graph=probe)
                     if penalty is not None and lam > 0:
                         loss = loss + lam * penalty
+                    if penalty is not None and probe:
+                        self._fhr_grad_ratio(td_loss_t, penalty, lam, diag)
                 if self._fhr_window_rank_due():
                     self._fhr_window_rank_probe(self._lag_q_fns())
                 step_diags.append(diag)

@@ -75,7 +75,8 @@ FHR_PARAMS = ("fhr_weight", "fhr_order", "reward_lags",
               "prioritized_replay", "per_alpha", "per_beta0",
               "rampdown_reward_threshold", "rampdown_penalty_threshold",
               "rampdown_penalty_topk", "rampdown_patience_eps",
-              "rampdown_episodes", "window_rank_every", "window_rank_lags")
+              "rampdown_episodes", "window_rank_every", "window_rank_lags",
+              "grad_ratio_every")
 
 
 def _algo_class(algo_type):
@@ -165,11 +166,13 @@ def _make_analysis_env(cfg, render_mode=None):
 
 
 def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None,
-            config=CONFIG):
+            config=CONFIG, base_dir="cached"):
     """Child mode: one full training run in this process (cwd = experiment
     dir). Baseline strips the FHR term (fhr_weight = 0.0); a numbered arm
     applies its FHR parameter set on top of the config's agent block. Returns
-    the run directory."""
+    the run directory. base_dir relocates the run-dir tree (default cached/;
+    the Optuna driver passes its own out-dir so study runs never mix with the
+    manifest families)."""
     if str(SRC) not in sys.path:
         sys.path.insert(0, str(SRC))
     import gymnasium as gym
@@ -192,7 +195,7 @@ def run_one(arm, seed, timesteps=None, agent_overrides=None, name_tag=None,
 
     env = Monitor(_make_env(cfg))
     model = _build_model(cfg, env, seed)
-    logger = make_run_logger(cfg, config_path=config, base_dir="cached")
+    logger = make_run_logger(cfg, config_path=config, base_dir=base_dir)
     analysis_env = _make_analysis_env(cfg)
     callback = FHRSB3Callback(run_logger=logger,
                               analysis_config=cfg.get("analysis"),

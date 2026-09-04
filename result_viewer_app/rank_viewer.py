@@ -536,6 +536,51 @@ def load_run(run_dir: pathlib.Path) -> dict:
     return payload
 
 
+# hankel_sweep.csv gained per-row singular-value columns (sv_01, sv_02, ...,
+# NaN-padded to a fixed width) on 2026-08-2x; older runs simply lack them.
+_SV_RE = re.compile(r"^sv_\d{2,}$")
+
+
+def load_spectra(run_dir: pathlib.Path) -> dict:
+    """The raw singular-value spectra behind the Hankel sweep, for the live
+    spectrum charts: {"sig", "rows": [[episode, matrix, rollout, sub_len,
+    n_rows, n_cols, [sv...]], ...]} with the NaN padding stripped, or
+    "rows": None when the CSV predates the sv columns.
+
+    Served as its own endpoint rather than folded into SWEEP_COLS: a long
+    Atari run has >100k sweep rows, and the spectra roughly triple the row
+    size, so the main /api/run payload must not carry them. The frontend
+    fetches this lazily for the spectra card and caches it on the run sig."""
+    out: dict = {"sig": run_sig(run_dir), "rows": None}
+    sweep = _csv_table(run_dir / "hankel_sweep.csv")
+    if not sweep:
+        return out
+    c = {k: i for i, k in enumerate(sweep["columns"])}
+    sv_idx = [c[k] for k in sorted(k for k in c if _SV_RE.match(k))]
+    if not sv_idx or not all(k in c for k in ("episode", "matrix", "sub_len")):
+        return out
+    rows = []
+    for r in sweep["rows"]:
+        e, ln = _num(r[c["episode"]]), _num(r[c["sub_len"]])
+        if e is None or ln is None:
+            continue
+        sv = [_num(r[i]) for i in sv_idx]
+        while sv and sv[-1] is None:  # NaN padding out to the fixed width
+            sv.pop()
+        if not sv:
+            continue
+        ro = _num(r[c["rollout"]]) if "rollout" in c else 0
+        nr = _num(r[c["n_rows"]]) if "n_rows" in c else None
+        nc = _num(r[c["n_cols"]]) if "n_cols" in c else None
+        rows.append([int(e), r[c["matrix"]], int(ro or 0), int(ln),
+                     None if nr is None else int(nr),
+                     None if nc is None else int(nc),
+                     [None if v is None else _sig6(v) for v in sv]])
+    if rows:
+        out["rows"] = rows
+    return out
+
+
 _NPY_FMT = {"<f8": ("d", 8), "<f4": ("f", 4), "<i8": ("q", 8), "<i4": ("i", 4)}
 
 
@@ -655,6 +700,12 @@ def make_handler(root: pathlib.Path):
                         self._json({"error": "run not found"}, 404)
                     else:
                         self._json(load_summary(d))
+                elif len(parts) >= 4 and parts[:2] == ["api", "spectra"]:
+                    d = self._run_dir("/".join(parts[2:-1]), parts[-1])
+                    if d is None:
+                        self._json({"error": "run not found"}, 404)
+                    else:
+                        self._json(load_spectra(d))
                 elif len(parts) >= 4 and parts[:2] == ["api", "sig"]:
                     d = self._run_dir("/".join(parts[2:-1]), parts[-1])
                     if d is None:
