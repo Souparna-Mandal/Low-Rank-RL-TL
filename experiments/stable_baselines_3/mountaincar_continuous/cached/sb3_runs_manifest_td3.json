@@ -1,0 +1,63 @@
+{
+  "seeds": [
+    22,
+    44,
+    66
+  ],
+  "runs": {
+    "baseline": {
+      "44": "cached/runs/sb3_mountaincar_continuous_td3_baseline_seed44_20260903-213205",
+      "22": "cached/runs/sb3_mountaincar_continuous_td3_baseline_seed22_20260903-213205",
+      "66": "cached/runs/sb3_mountaincar_continuous_td3_baseline_seed66_20260903-213205"
+    },
+    "exp1": {
+      "22": "cached/runs/sb3_mountaincar_continuous_td3_exp1_seed22_20260903-213205",
+      "66": "cached/runs/sb3_mountaincar_continuous_td3_exp1_seed66_20260903-213205",
+      "44": "cached/runs/sb3_mountaincar_continuous_td3_exp1_seed44_20260903-213205"
+    },
+    "exp4": {
+      "44": "cached/runs/sb3_mountaincar_continuous_td3_exp4_seed44_20260903-213205",
+      "22": "cached/runs/sb3_mountaincar_continuous_td3_exp4_seed22_20260903-213205",
+      "66": "cached/runs/sb3_mountaincar_continuous_td3_exp4_seed66_20260903-213205"
+    },
+    "exp2": {
+      "22": "cached/runs/sb3_mountaincar_continuous_td3_exp2_seed22_20260903-213205",
+      "66": "cached/runs/sb3_mountaincar_continuous_td3_exp2_seed66_20260903-213205",
+      "44": "cached/runs/sb3_mountaincar_continuous_td3_exp2_seed44_20260903-213205"
+    },
+    "exp3": {
+      "22": "cached/runs/sb3_mountaincar_continuous_td3_exp3_seed22_20260903-213205",
+      "44": "cached/runs/sb3_mountaincar_continuous_td3_exp3_seed44_20260903-213205",
+      "66": "cached/runs/sb3_mountaincar_continuous_td3_exp3_seed66_20260903-213205"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp1": {
+      "fhr_weight": 0.1,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp2": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp3": {
+      "fhr_weight": 1.0,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp4": {
+      "fhr_weight": 1.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.0,
+      "c_init": [
+        2.01010101,
+        -1.01010101
+      ]
+    }
+  }
+}

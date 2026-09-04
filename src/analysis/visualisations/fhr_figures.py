@@ -134,11 +134,12 @@ def nice_thresholds(top, n_target=6, step=None, start=None):
         mag = 10.0 ** np.floor(np.log10(raw))
         step = min((m * mag for m in (1, 2, 2.5, 5, 10)),
                    key=lambda s: abs(s - raw))
+    step = float(step)
     if start is None:
         start = 2 * step
     out, t = [], float(start)
     while t <= top + 1e-9:
-        out.append(round(t, 6))
+        out.append(float(round(t, 6)))
         t += step
     return out
 
