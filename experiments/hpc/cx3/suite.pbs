@@ -8,8 +8,8 @@
 #
 # Resubmission after a partial pass: regenerate with --skip-existing first.
 # Repo path / conda env override:  qsub -v REPO=...,CONDA_ENV=... -J ... ../suite.pbs
-#PBS -l select=1:ncpus=8:mem=96gb:ngpus=1:gpu_type=L40S
-#PBS -l walltime=12:00:00
+#PBS -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S
+#PBS -l walltime=03:00:00
 
 set -euo pipefail
 REPO=${REPO:-$HOME/Low-Rank-RL-TL}
@@ -25,7 +25,7 @@ else
 fi
 conda activate "$CONDA_ENV"
 export PYTHONUNBUFFERED=1 MPLBACKEND=Agg TQDM_DISABLE=1
-export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4   # per packed run
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2   # per packed run (4 cores / PACK 2)
 
 cd "$REPO"
 # PACK runs share this job's single GPU (default 2; PACK=1 restores
