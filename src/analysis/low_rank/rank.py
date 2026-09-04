@@ -90,6 +90,12 @@ def _svd_and_metrics(matrix: np.ndarray):
                nnz_rows, nnz_cols)
     return s_vals, metrics
 
+def spectrum_and_metrics(matrix: np.ndarray):
+    """(singular values, `compute_rank_metrics` 10-tuple) from ONE SVD — for
+    callers that log the raw spectrum (e.g. sigma_i / sigma_{i-1} decay along
+    a rollout Hankel) alongside the derived rank metrics."""
+    return _svd_and_metrics(matrix)
+
 def compute_rank_metrics(matrix: np.ndarray):
     """The rank properties of `matrix` WITHOUT plotting its spectrum — for sweeps
     that run many SVDs and don't want a matplotlib figure per matrix.

@@ -1,0 +1,111 @@
+# SB3 FHR lag-source comparison — MountainCar-v0, tuned recipe.
+#
+# The headline FHR block of config_sb3.yaml (lambda 0.5, r=2 on the
+# Polyak+lr1e-3 DQN, where FHR beat the lambda-0 baseline on onset AND solve
+# time) rerun as a THREE-WAY ablation of who evaluates the recurrence RHS
+# (agent.fhr_lag_source in src/agents/sb3_fhr.py):
+#   exp1 "online"   — the original formulation: lags in the graph, the penalty
+#                     gradient spreads over the anchor and all r lags.
+#   exp2 "detached" — same values, lags grad-free: only the anchor (and c)
+#                     absorb the penalty gradient.
+#   exp3 "target"   — lags from q_net_target, grad-free: the RHS is a
+#                     stationary regression target (backward-in-time
+#                     bootstrap; Polyak tau 0.005 makes it genuinely stale).
+# One knob per arm; everything else inherits. The baseline (lambda 0) is the
+# shared control. Own manifest family: cached/sb3_runs_manifest_lagsrc.json.
+#
+# Spectrum instrumentation for the sigma_i/sigma_{i-1} decay analysis, on for
+# EVERY arm including the baseline:
+#   * agent.window_rank_every/lags — replay-window singular spectra
+#     (window_hankel.csv sv_*/pen_sv_* columns, the penalised distribution);
+#   * analysis.hankel_sweep — greedy-rollout Hankel spectra
+#     (hankel_sweep.csv sv_01..sv_12 columns, the rolled-out trajectory).
+experiment:
+  name: sb3_mountaincar_lagsrc
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    1: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        c_learning_rate: 0.03, fhr_lag_source: online}
+    2: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        c_learning_rate: 0.03, fhr_lag_source: detached}
+    3: {fhr_weight: 0.5, fhr_order: 2, reward_lags: False,
+        c_learning_rate: 0.03, fhr_lag_source: target}
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: MountainCar-v0    # raw obs — the classic normalise trick actively
+                          # hurts under this lr (tuning phase B, normobs)
+
+algo:                     # RL-Zoo DQN, MountainCar-v0, tuned deltas marked
+  type: dqn
+  n_timesteps: 120000
+  learning_rate: 1.0e-3   # TUNED (zoo: 4e-3) — best/most reliable baseline
+  batch_size: 128
+  buffer_size: 10000
+  learning_starts: 1000
+  gamma: 0.98
+  tau: 0.005              # TUNED (zoo: hard sync) — Polyak soft targets,
+  target_update_interval: 1   # synced every env step
+  train_freq: 16
+  gradient_steps: 8
+  exploration_fraction: 0.2
+  exploration_final_eps: 0.07
+  net_arch: [32, 32]
+  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it)
+
+agent:
+  fhr_weight: 0.5
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 500  # ~1k env steps of gradient bursts past learning_starts
+  c_learning_rate: 0.03
+  fhr_lag_source: online  # per-arm override above; baseline ignores it
+  window_rank_every: 200  # replay-window spectrum probe, every arm (also
+  window_rank_lags: 16    # lambda=0): ~300 ticks over the 60k grad steps
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -110     # MountainCar-v0 standard bar
+  early_stopping_patience_eps: 50
+  no_eps_to_avg: 25
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 5000      # fixed reset seeds; bit-identical training stream
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 50
+  # MountainCar's raw observation space is already bounded — no state_bounds
+  methods:
+    - name: q_matrix_dqn
+      kwargs:
+        state_discretisation: [32, 32]   # one bin-count per obs dim
+        batch_size: 128
+      outputs: [Q-function]
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: true
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: true
+    orders: [2, 4]
+    n_trajectories: 40
+    training_fraction: 0.6
+    base_seed: 20000
+    ridge_penalty: 1.0e-8
+    fit_intercept: false
+    forecast_horizons: [1, 2, 4, 8, 16]
+    n_example_rollouts: 2

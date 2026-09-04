@@ -521,3 +521,70 @@ def test_window_rank_probe_classic():
         assert got and set(got[0]) == set(
             f2._pending_window_rank[0] if f2._pending_window_rank else got[0])
         assert any((logger.dir / "window_matrices").iterdir())
+
+
+# ------------------------------------------------- fhr_lag_source variants
+def test_lag_source_validation_and_routing():
+    a = _make_fhr(0.5)
+    assert a.fhr_lag_source == "online"
+    try:
+        _make_fhr(0.5, fhr_lag_source="bogus")
+        assert False, "expected ValueError for bad fhr_lag_source"
+    except ValueError:
+        pass
+    o = _make_fhr(0.5, fhr_lag_source="online")
+    net, ctx = o._fhr_lag_net_ctx()
+    assert net is o.policy_net
+    with ctx:
+        assert net(torch.randn(3, 4)).grad_fn is not None
+    d = _make_fhr(0.5, fhr_lag_source="detached")
+    net, ctx = d._fhr_lag_net_ctx()
+    assert net is d.policy_net
+    with ctx:
+        assert net(torch.randn(3, 4)).grad_fn is None
+    t = _make_fhr(0.5, fhr_lag_source="target")
+    net, ctx = t._fhr_lag_net_ctx()
+    assert net is t.target_net
+    with ctx:
+        assert net(torch.randn(3, 4)).grad_fn is None
+
+
+def test_lag_source_first_step_values_equal_grads_differ():
+    """target == online at init, so the first-step penalty VALUE is identical
+    across the three sources; only the gradient routing differs, which shows
+    as diverged parameters after the optimiser step."""
+    diags, agents, c0 = {}, {}, {}
+    for src in ("online", "detached", "target"):
+        a = _make_fhr(0.5, fhr_lag_source=src)
+        _fill_agent(a)
+        c0[src] = a.c.detach().clone()
+        random.seed(123), torch.manual_seed(123), np.random.seed(123)
+        diags[src] = a.train()
+        agents[src] = a
+    assert diags["online"]["b_h"] > 0
+    p0 = diags["online"]["penalty_raw"]
+    assert np.isfinite(p0)
+    assert abs(diags["detached"]["penalty_raw"] - p0) < 1e-10
+    assert abs(diags["target"]["penalty_raw"] - p0) < 1e-10
+    # the lag-path gradient exists only under "online"
+    assert any(not torch.equal(pa, pb) for pa, pb in zip(
+        agents["online"].policy_net.parameters(),
+        agents["detached"].policy_net.parameters()))
+    # c keeps training under every source
+    for src, a in agents.items():
+        assert not torch.equal(a.c.detach(), c0[src]), src
+
+
+def test_lag_source_target_reads_target_net():
+    a = _make_fhr(0.5, fhr_lag_source="target")
+    b = _make_fhr(0.5, fhr_lag_source="detached")
+    _fill_agent(a), _fill_agent(b)
+    with torch.no_grad():
+        for p in a.target_net.parameters():
+            p.add_(0.5)
+    random.seed(123), torch.manual_seed(123), np.random.seed(123)
+    da = a.train()
+    random.seed(123), torch.manual_seed(123), np.random.seed(123)
+    db = b.train()
+    assert da["b_h"] > 0 and db["b_h"] > 0
+    assert abs(da["penalty_raw"] - db["penalty_raw"]) > 1e-6

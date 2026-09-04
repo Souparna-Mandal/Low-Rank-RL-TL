@@ -473,3 +473,24 @@ def test_per_train_step_updates_priorities():
     assert agent.replay_buffer.tree.total() != total0
     assert "per_beta" in diag and "is_weight_mean" in diag
     assert 0 < diag["is_weight_mean"] <= 1.0
+
+
+def test_fhr_lag_source_split_path_matches_fused_at_init():
+    """detached/target split the fused feature pass; with synced nets and no
+    augmentation the first-step penalty value matches the online path for
+    both critic heads (penalty_raw is their mean)."""
+    diags = {}
+    for src in ("online", "detached", "target"):
+        _seed_all(0)
+        env = gym.make("CartPole-v1")
+        agent = _agent(env, fhr_weight=0.5, fhr_lag_source=src)
+        _fill(agent, env)
+        _seed_all(123)
+        diags[src] = agent.train()
+        assert agent.nan_skips == 0
+        env.close()
+    assert diags["online"]["b_h"] > 0
+    p0 = diags["online"]["penalty_raw"]
+    assert np.isfinite(p0)
+    assert abs(diags["detached"]["penalty_raw"] - p0) < 1e-5
+    assert abs(diags["target"]["penalty_raw"] - p0) < 1e-5

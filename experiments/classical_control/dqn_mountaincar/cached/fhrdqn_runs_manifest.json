@@ -27,6 +27,18 @@
     "exp4": {
       "44": "cached/runs/dqn_mountaincar_fhrdqn_2_exp4_seed44_20260814-185455",
       "66": "cached/runs/dqn_mountaincar_fhrdqn_2_exp4_seed66_20260814-185654"
+    },
+    "exp5": {
+      "66": "cached/runs/dqn_mountaincar_fhrdqn_2_exp5_seed66_20260829-002519",
+      "44": "cached/runs/dqn_mountaincar_fhrdqn_2_exp5_seed44_20260829-002519"
+    },
+    "exp6": {
+      "66": "cached/runs/dqn_mountaincar_fhrdqn_2_exp6_seed66_20260829-002519",
+      "44": "cached/runs/dqn_mountaincar_fhrdqn_2_exp6_seed44_20260829-002519"
+    },
+    "exp7": {
+      "44": "cached/runs/dqn_mountaincar_fhrdqn_2_exp7_seed44_20260829-002519",
+      "66": "cached/runs/dqn_mountaincar_fhrdqn_2_exp7_seed66_20260829-002519"
     }
   },
   "overrides": {
@@ -56,6 +68,33 @@
       "fhr_order": 3,
       "reward_lags": false,
       "rampdown_reward_threshold": null
+    },
+    "exp5": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "warmup_grad_steps": 500,
+      "c_learning_rate": 0.05,
+      "rampdown_reward_threshold": null,
+      "fhr_lag_source": "online"
+    },
+    "exp6": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "warmup_grad_steps": 500,
+      "c_learning_rate": 0.05,
+      "rampdown_reward_threshold": null,
+      "fhr_lag_source": "detached"
+    },
+    "exp7": {
+      "fhr_weight": 0.5,
+      "fhr_order": 2,
+      "reward_lags": false,
+      "warmup_grad_steps": 500,
+      "c_learning_rate": 0.05,
+      "rampdown_reward_threshold": null,
+      "fhr_lag_source": "target"
     }
   }
 }

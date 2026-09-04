@@ -150,6 +150,11 @@ class _FHRSACFamilyMixin(_FHRMixin):
     def _fhr_coeff_optimizer(self):
         return self.critic.optimizer
 
+    def _fhr_value_params(self) -> list:
+        """Both twin critics: the TD loss and the penalty each reach every
+        critic parameter (the penalty is averaged over the twins)."""
+        return list(self.critic.parameters())
+
     def _fhr_online_qnet(self):
         return self.critic
 
@@ -212,7 +217,9 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16,
+                 fhr_lag_source: str = "online", grad_ratio_every: int = 0,
+                 **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -222,7 +229,9 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags,
+                             fhr_lag_source=fhr_lag_source,
+                             grad_ratio_every=grad_ratio_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -249,6 +258,24 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
         distinct (obs, acts) pair, so the twin-critic penalty costs one fused
         evaluation instead of two."""
         critic = self.critic
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = (id(obs), id(acts))
+                if key not in cache:
+                    feats = critic.extract_features(
+                        obs, critic.features_extractor)
+                    qin = torch.cat([feats, acts], dim=1)
+                    cache[key] = [q_net(qin) for q_net in critic.q_networks]
+                return cache[key][i].squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(critic.q_networks))]
+
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target") —
+        the same fused per-(obs, acts) evaluation, one cache per call."""
+        critic = self.critic_target
         cache: dict = {}
 
         def make(i):
@@ -360,10 +387,14 @@ class FHRSAC(_FHRSACFamilyMixin, SAC):
             diag["actor_loss"] = np.nan       # filled after the actor step
             if self.fhr_weight > 0:
                 anchors = [q.squeeze(1) for q in current_q_values]
+                probe = self._fhr_grad_ratio_due()
+                td_loss_t = critic_loss
                 penalty = self._fhr_penalty_multi(
-                    anchors, self._lag_q_fns(), lam, diag)
+                    anchors, self._lag_q_fns(), lam, diag, keep_graph=probe)
                 if penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
+                if penalty is not None and probe:
+                    self._fhr_grad_ratio(td_loss_t, penalty, lam, diag)
             if self._fhr_window_rank_due():
                 self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)
@@ -794,7 +825,9 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  rampdown_episodes: int = 0, c_predictor: str = "none",
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **kwargs):
+                 window_rank_lags: int = 16,
+                 fhr_lag_source: str = "online", grad_ratio_every: int = 0,
+                 **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
                              rampdown_reward_threshold,
@@ -804,7 +837,9 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              prioritized_replay=prioritized_replay,
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
-                             window_rank_lags=window_rank_lags)
+                             window_rank_lags=window_rank_lags,
+                             fhr_lag_source=fhr_lag_source,
+                             grad_ratio_every=grad_ratio_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
 
@@ -821,6 +856,19 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                 key = id(obs)
                 if key not in cache:
                     cache[key] = self.critic(obs)
+                return cache[key][i].gather(1, acts).squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(self.critic.q_networks))]
+
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target")."""
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = id(obs)
+                if key not in cache:
+                    cache[key] = self.critic_target(obs)
                 return cache[key][i].gather(1, acts).squeeze(1)
             return lag_q
         return [make(i) for i in range(len(self.critic.q_networks))]
@@ -897,10 +945,14 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
             diag["actor_loss"] = np.nan
             if self.fhr_weight > 0:
                 anchors = [q.squeeze(1) for q in current_q_values]
+                probe = self._fhr_grad_ratio_due()
+                td_loss_t = critic_loss
                 penalty = self._fhr_penalty_multi(
-                    anchors, self._lag_q_fns(), lam, diag)
+                    anchors, self._lag_q_fns(), lam, diag, keep_graph=probe)
                 if penalty is not None and lam > 0:
                     critic_loss = critic_loss + lam * penalty
+                if penalty is not None and probe:
+                    self._fhr_grad_ratio(td_loss_t, penalty, lam, diag)
             if self._fhr_window_rank_due():
                 self._fhr_window_rank_probe(self._lag_q_fns())
             step_diags.append(diag)

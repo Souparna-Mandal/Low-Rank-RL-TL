@@ -432,3 +432,23 @@ def test_qagent_adam_kwargs_and_defaults():
     assert g["weight_decay"] == 0.0 and g["eps"] == pytest.approx(1.5e-4)
     assert g["amsgrad"] is False
     env.close()
+
+
+def test_fhr_lag_source_split_path_matches_fused_at_init():
+    """detached/target run the split anchor/lag forward; at init (nets synced,
+    no augmentation) the first-step penalty value must match the fused online
+    path, and the step must complete cleanly."""
+    diags = {}
+    for src in ("online", "detached", "target"):
+        torch.manual_seed(0), np.random.seed(0), random.seed(0)
+        agent, env = _cartpole_agent(fhr_weight=0.5, fhr_lag_source=src)
+        _fill_buffer(agent, env)
+        torch.manual_seed(123), np.random.seed(123), random.seed(123)
+        diags[src] = agent.train()
+        assert agent.nan_skips == 0
+        env.close()
+    assert diags["online"]["b_h"] > 0
+    p0 = diags["online"]["penalty_raw"]
+    assert np.isfinite(p0)
+    assert abs(diags["detached"]["penalty_raw"] - p0) < 1e-5
+    assert abs(diags["target"]["penalty_raw"] - p0) < 1e-5

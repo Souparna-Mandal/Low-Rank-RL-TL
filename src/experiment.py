@@ -77,8 +77,10 @@ def build_ppo_agent(cfg: dict, env):
     )
 
 
-def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
-    """dqn_training_loop"""
+def train(cfg: dict, agent, env, run_logger=None, periodic_eval=None,
+          DEBUG=False):
+    """dqn_training_loop. periodic_eval: optional mid-training greedy-eval
+    checkpoint spec (see dqn_training_loop) — the caller owns the eval env."""
     return dqn_training_loop(
         agent, env,
         **cfg["training"],
@@ -86,6 +88,7 @@ def train(cfg: dict, agent, env, run_logger=None, DEBUG=False):
         analysis_config=cfg["analysis"],
         atari=bool(cfg["environment"].get("atari")),
         run_logger=run_logger,
+        periodic_eval=periodic_eval,
         DEBUG=DEBUG,
     )
 

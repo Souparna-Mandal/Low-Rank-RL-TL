@@ -68,24 +68,36 @@ class RunLogger:
                              f"{irs.min():.6g}", f"{irs.max():.6g}",
                              f"{ics.min():.6g}", f"{ics.max():.6g}"])
 
+    # Leading singular values appended per sweep row (nan-padded): enough
+    # columns to read the sigma_{i+1}/sigma_i decay across every fhr_order in
+    # use while keeping the CSV width fixed.
+    SWEEP_N_SV = 12
+
     def log_hankel_sweep(self, episode, matrix_name, rollout_idx, seed, sub_len,
-                         r, sr, spk, shape, irs, ics, rc, cc, nzr, nzc) -> None:
+                         r, sr, spk, shape, irs, ics, rc, cc, nzr, nzc,
+                         s_vals=None) -> None:
         """Append one row of the multi-rollout / sub-trajectory Hankel sweep.
         Same metric columns as rank_stats.csv, prefixed with rollout/seed/sub_len
-        so a metrics-vs-(sub_len) curve can be reconstructed per rollout."""
+        so a metrics-vs-(sub_len) curve can be reconstructed per rollout, plus
+        the top SWEEP_N_SV singular values (sv_01..) for spectrum-decay
+        analysis; rows from runs predating the sv columns simply lack them."""
         header_needed = not self._sweep_csv.exists()
+        sv = [] if s_vals is None else list(s_vals[:self.SWEEP_N_SV])
+        sv += [float("nan")] * (self.SWEEP_N_SV - len(sv))
         with open(self._sweep_csv, "a", newline="") as f:
             writer = csv.writer(f)
             if header_needed:
                 writer.writerow(["episode", "matrix", "rollout", "seed", "sub_len",
                                  "eff_rank", "stable_rank", "spikiness", "n_rows", "n_cols",
                                  "nnz_rows", "nnz_cols", "row_coherence", "col_coherence",
-                                 "row_lev_min", "row_lev_max", "col_lev_min", "col_lev_max"])
+                                 "row_lev_min", "row_lev_max", "col_lev_min", "col_lev_max"]
+                                + [f"sv_{j + 1:02d}" for j in range(self.SWEEP_N_SV)])
             writer.writerow([episode, matrix_name, rollout_idx, seed, sub_len,
                              r, f"{sr:.4f}", f"{spk:.4f}", shape[0], shape[1],
                              nzr, nzc, f"{rc:.4f}", f"{cc:.4f}",
                              f"{irs.min():.6g}", f"{irs.max():.6g}",
-                             f"{ics.min():.6g}", f"{ics.max():.6g}"])
+                             f"{ics.min():.6g}", f"{ics.max():.6g}"]
+                            + [f"{v:.6g}" for v in sv])
 
     def save_trajectory(self, episode, seed, seqs: dict) -> pathlib.Path:
         """Persist the raw per-step scalar sequences of one rollout as a compressed
@@ -215,6 +227,22 @@ class RunLogger:
         out.mkdir(exist_ok=True)
         for key, arr in arrays.items():
             np.save(out / f"{key}.npy", np.asarray(arr))
+
+    def log_eval_checkpoint(self, env_steps: int, scores) -> None:
+        """Append one mid-training greedy-eval checkpoint to eval.csv — the
+        same schema the SB3 GreedyEvalCallback writes (env_steps,
+        mean/std/min/max reward, n_episodes), so eval-curve loaders work on
+        classic and SB3 runs alike."""
+        path = self.dir / "eval.csv"
+        header_needed = not path.exists()
+        s = np.asarray(list(scores), dtype=float)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if header_needed:
+                writer.writerow(["env_steps", "mean_reward", "std_reward",
+                                 "min_reward", "max_reward", "n_episodes"])
+            writer.writerow([int(env_steps), f"{s.mean():.4f}", f"{s.std():.4f}",
+                             f"{s.min():.4f}", f"{s.max():.4f}", s.size])
 
     def log_rewards(self, rewards, steps=None) -> None:
         """Rewrite rewards.csv. steps is the per-episode env-step count (same

@@ -8,6 +8,7 @@ residual an SVD-free surrogate for the same low-rank prior, and one shared
 coefficient vector across all episodes corresponds to low rank of the stacked
 (mosaic) Hankel of all trajectories.
 """
+import contextlib
 import re
 import warnings
 
@@ -52,6 +53,17 @@ class FHRDQNAgent(QAgent):
         warmup_grad_steps: hard warm-up K0 — lambda is exactly 0 for the first
             K0 gradient steps, then fhr_weight at full strength (no ramp).
         c_learning_rate: learning rate of the c/d param group.
+        fhr_lag_source: which network evaluates the r lagged Q-values on the
+            recurrence RHS. "online" (default, the original formulation): the
+            policy net, in the graph — the penalty gradient spreads over the
+            anchor AND all r lags, so the whole window moves to satisfy the
+            recurrence. "detached": the policy net under no_grad — same
+            values, but only the anchor (and c/d) absorb the gradient, closing
+            the everything-drifts-together channel. "target": the target net
+            under no_grad — the RHS becomes a stationary regression target
+            (a backward-in-time bootstrap, the two-timescale analogue of the
+            TD target). The anchor always stays the online in-graph Q(s_t, a_t)
+            shared with the TD term, and c/d always train.
         rampdown_reward_threshold: arming this (non-None) enables the automatic
             lambda ramp-DOWN. After warm-up, once the mean episode reward over
             the last rampdown_patience_eps episodes reaches this value while
@@ -79,7 +91,7 @@ class FHRDQNAgent(QAgent):
 
     def __init__(self, *, fhr_weight: float = 0.0, fhr_order: int = 2,
                  reward_lags: bool = False, warmup_grad_steps: int = 2000,
-                 c_learning_rate: float = 5e-3,
+                 c_learning_rate: float = 5e-3, fhr_lag_source: str = "online",
                  rampdown_reward_threshold: float | None = None,
                  rampdown_penalty_threshold: float | str | None = None,
                  rampdown_penalty_topk: int = 20,
@@ -89,6 +101,9 @@ class FHRDQNAgent(QAgent):
         super().__init__(**q_agent_kwargs)
         if fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {fhr_order}")
+        if fhr_lag_source not in ("online", "detached", "target"):
+            raise ValueError("fhr_lag_source must be one of online|detached|"
+                             f"target, got {fhr_lag_source!r}")
         if window_rank_every < 0:
             raise ValueError(f"window_rank_every must be >= 0, got {window_rank_every}")
         if window_rank_lags < 1:
@@ -110,6 +125,7 @@ class FHRDQNAgent(QAgent):
         self.fhr_order = fhr_order
         self.reward_lags = reward_lags
         self.warmup_grad_steps = warmup_grad_steps
+        self.fhr_lag_source = fhr_lag_source
 
         gamma = self.loss.gamma
         c0 = torch.zeros(fhr_order)
@@ -226,6 +242,16 @@ class FHRDQNAgent(QAgent):
                 and len(self._pen_top) >= self.rampdown_penalty_topk):
             return self._rd_pen_frac * float(np.mean(self._pen_top))
         return None
+
+    def _fhr_lag_net_ctx(self):
+        """(net, grad-context) that evaluates the penalty's r lagged Q-values,
+        per fhr_lag_source: the online net in the graph ("online"), the online
+        net grad-free ("detached"), or the target net grad-free ("target")."""
+        if self.fhr_lag_source == "online":
+            return self.policy_net, contextlib.nullcontext()
+        lag_net = (self.target_net if self.fhr_lag_source == "target"
+                   else self.policy_net)
+        return lag_net, torch.no_grad()
 
     def notify_episode_end(self, episode: int, episode_reward: float) -> None:
         """Per-episode hook (called by dqn_training_loop): watch the reward
@@ -407,8 +433,10 @@ class FHRDQNAgent(QAgent):
                     # reshape keeps trailing obs dims intact: (n, r, obs_dim)
                     # -> (n*r, obs_dim) for MLPs, (n, r, C, H, W) -> (n*r, C,
                     # H, W) for Atari frame stacks.
-                    out = self.policy_net(p_states.reshape(n * r, *p_states.shape[2:]))
-                    q_lags = out.gather(1, p_actions.reshape(n * r, 1)).view(n, r)
+                    lag_net, lag_ctx = self._fhr_lag_net_ctx()
+                    with lag_ctx:
+                        out = lag_net(p_states.reshape(n * r, *p_states.shape[2:]))
+                        q_lags = out.gather(1, p_actions.reshape(n * r, 1)).view(n, r)
                     prediction = q_lags @ self.c
                     if self.reward_lags:
                         prediction = prediction + p_rewards @ self.d

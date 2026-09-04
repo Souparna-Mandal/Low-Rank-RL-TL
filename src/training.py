@@ -135,6 +135,7 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
                       np_seed: int = 52, no_eps_to_avg: int = 10,
                       analysis_config: dict | None = None,
                       max_env_steps: int | None = None,
+                      periodic_eval: dict | None = None,
                       DEBUG=False, atari= False, run_logger=None):
     """The default behaviour is that we wait for atleast train_frequency_steps between training. However this is only invoked after every
     episode. This means that if after train_frequency_steps it will only update once the episode ends and not in between.
@@ -159,16 +160,34 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             like the benchmark's evaluation episodes, they collect no training
             data. Defaults to None (episode count alone ends training).
         DEBUG (bool, optional): _description_. Defaults to False.
+        periodic_eval (dict, optional): mid-training greedy-eval checkpoints
+            at a fixed ENV-STEP cadence (episodes vary wildly across Atari
+            games; env steps do not). Keys: env (a SEPARATE evaluation env —
+            for Atari the full-game one, never the episodic-life training
+            env), every_steps, episodes (default 8), epsilon (default 0.001),
+            base_seed (default 1000). Fires at the first episode boundary
+            after each multiple of every_steps; rows land in eval.csv via
+            run_logger.log_eval_checkpoint. NB the eval rollouts consume
+            action-RNG, so runs are stream-comparable only when every arm
+            uses the same checkpoint settings. Defaults to None (off).
         run_logger (RunLogger, optional): when provided, analysis figures are
             saved to its run directory instead of rendered inline, rank stats go
             to rank_stats.csv, rewards to rewards.csv, and checkpoints are kept
             (latest at every analysis tick, best on new reward-window high, final
             on return). Defaults to None (old behaviour, everything inline).
 
+    analysis_config extras (besides the method blocks run_analysis_tick
+    reads): ep_freq gates analysis ticks by EPISODE index (legacy default);
+    step_freq, when set, replaces that gate with an env-step cadence — the
+    tick fires at the first episode boundary after each multiple.
+
     Returns:
         _type_: _description_
     """
     analysis_config = analysis_config or {}
+    analysis_step_freq = analysis_config.get("step_freq")
+    next_analysis_at = analysis_step_freq
+    next_eval_at = periodic_eval["every_steps"] if periodic_eval else None
     state, info = env.reset(seed = np_seed)
     s_tn_upd, s_train, step_count = 0,0,0
     last_rewards_write = time.monotonic()
@@ -250,6 +269,22 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
         if episode_hook is not None:
             episode_hook(episode, epsiode_total_reward)
 
+        # Env-step-cadenced greedy-eval checkpoint (before the budget break so
+        # the final crossing — e.g. the 100k point — still lands in eval.csv).
+        if next_eval_at is not None and step_count >= next_eval_at:
+            while next_eval_at <= step_count:
+                next_eval_at += periodic_eval["every_steps"]
+            eval_scores = evaluate_policy_atari(
+                agent, periodic_eval["env"],
+                episodes=periodic_eval.get("episodes", 8),
+                epsilon=periodic_eval.get("epsilon", 0.001),
+                base_seed=periodic_eval.get("base_seed", 1000))
+            mean_score = sum(eval_scores) / len(eval_scores)
+            print(f"eval checkpoint @ {step_count:,} env steps: "
+                  f"mean {mean_score:.1f} over {len(eval_scores)} episodes")
+            if run_logger is not None:
+                run_logger.log_eval_checkpoint(step_count, eval_scores)
+
         # Interaction budget exhausted — stop after logging the (possibly
         # partial) episode above; the post-loop block writes rewards.csv and
         # the final checkpoint exactly as on a normal finish.
@@ -275,8 +310,17 @@ def dqn_training_loop(agent: q_agent.QAgent, env: gym.Env,
             print(f"Epsilon for epsilon-greedy is {agent.epsilon}")
             print("**************************** DEBUG INFO END **********************************")
             
-        # Analysis prints during training
-        if episode % analysis_config.get("ep_freq", 1) == 0:
+        # Analysis prints during training. step_freq (env-step cadence)
+        # replaces the legacy episode gate when set: episodes vary wildly
+        # across Atari games, env steps are the protocol constant.
+        if analysis_step_freq is not None:
+            analysis_due = step_count >= next_analysis_at
+            if analysis_due:
+                while next_analysis_at <= step_count:
+                    next_analysis_at += analysis_step_freq
+        else:
+            analysis_due = episode % analysis_config.get("ep_freq", 1) == 0
+        if analysis_due:
             rolled_out = run_analysis_tick(agent, env, analysis_config,
                                            run_logger, episode)
             if run_logger is not None:

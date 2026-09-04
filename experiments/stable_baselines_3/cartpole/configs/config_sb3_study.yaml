@@ -1,0 +1,83 @@
+# SB3 FHR Optuna study config — CartPole-v1, consumed by
+# ../../src/run_sb3_optuna.py (never by run_sb3_seeds launcher mode; no
+# manifest family). The tuned config_sb3.yaml recipe (Polyak fresh-target
+# port of the zoo entry) with the study deltas:
+#   * seeds — the 5 study seeds; every trial trains all of them.
+#   * agent.window_rank_every/lags — replay-window singular spectra
+#     (window_hankel.csv) on for every run, ~250 ticks over 25k grad steps.
+#   * analysis.ep_freq 25 — Hankel sweeps at 2x the standard cadence;
+#     q_matrix + AR probe dropped (not study deliverables).
+#   * training.early_stopping_patience_eps null — every trial runs the full
+#     budget so the FINAL objective is measured at the same env step.
+# The driver overrides fhr_weight (from rho) and fhr_order per trial;
+# reward_lags stays false and c_learning_rate stays at the value below.
+experiment:
+  name: sb3_cartpole_study
+  seed: 24
+  seeds: [24, 100, 786, 1000, 9000]
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: CartPole-v1       # raw env, as the zoo trains it
+
+algo:                     # RL-Zoo QR-DQN recipe on DQN, tuned deltas marked
+  type: dqn
+  n_timesteps: 50000
+  learning_rate: 2.3e-3   # zoo rate — aggressive, FHR-stabilised
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  gamma: 0.99
+  tau: 0.005              # TUNED (zoo: hard sync every 10 steps) — Polyak,
+  target_update_interval: 1   # synced every env step
+  train_freq: 256         # the zoo burst schedule: 128 gradient steps every
+  gradient_steps: 128     # 256 env steps (replay ratio 0.5)
+  exploration_fraction: 0.16
+  exploration_final_eps: 0.04
+  net_arch: [256, 256]
+  n_quantiles: 10
+
+agent:
+  fhr_weight: 0.5         # trial-overridden (probe stage keeps it, warm-up inf)
+  fhr_order: 2            # trial-overridden
+  reward_lags: False      # pinned for the study
+  warmup_grad_steps: 256  # hard warm-up: the first two 128-step bursts
+  c_learning_rate: 0.03   # pinned for the study
+  window_rank_every: 100  # replay-window spectrum probe (wrank), every run
+  window_rank_lags: 16
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: 475      # CartPole-v1 standard bar (reporting only here)
+  early_stopping_patience_eps: null   # full budget for every trial
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: the study's objective
+    freq_steps: 2000      # curve
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 25             # frequent Hankel sweeps (standard cadence is 50)
+  state_bounds:           # finite obs bounds kept for the analysis env (raw
+                          # CartPole velocity dims are unbounded)
+    low: [-4.8, -10.0, -0.41887903, -10.0]
+    high: [4.8, 10.0, 0.41887903, 10.0]
+  methods: []             # q_matrix grid dropped for study throughput
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false   # sv columns are the deliverable; ~165 runs
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false        # not a study deliverable

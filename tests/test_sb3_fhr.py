@@ -530,3 +530,31 @@ def test_c_predictor_save_load_roundtrip(tmp_path):
     assert loaded.c_predictor == "shared"
     for k, v in model.fhr_predictor.state_dict().items():
         assert torch.equal(v, loaded.fhr_predictor.state_dict()[k]), k
+
+
+def test_fhr_lag_source_variants_dqn():
+    """Bad value rejected at _setup_model; detached/target train cleanly and
+    the first-step penalty value matches online (q_net_target == q_net at
+    init), while the post-step parameters differ from the online variant."""
+    try:
+        FHRDQN("MlpPolicy", gym.make("CartPole-v1"),
+               **_dqn_kwargs(fhr_weight=0.5, fhr_lag_source="bogus"))
+        assert False, "expected ValueError for bad fhr_lag_source"
+    except ValueError:
+        pass
+    rows, params = {}, {}
+    for src in ("online", "detached", "target"):
+        _seed_all(0)
+        m = _filled_model(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                          fhr_lag_source=src)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        rows[src] = m.drain_diagnostics()
+        params[src] = {k: v.detach().clone()
+                       for k, v in m.q_net.state_dict().items()}
+    r0 = rows["online"][0]
+    assert r0["b_h"] > 0 and np.isfinite(r0["penalty_raw"])
+    assert abs(rows["detached"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert abs(rows["target"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert any(not torch.equal(params["online"][k], params["detached"][k])
+               for k in params["online"])
