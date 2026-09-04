@@ -9,7 +9,7 @@
 #   qsub -J 1-<ceil(N/2)>%12 ../tune.pbs       # N printed by make_jobs; %12 = user GPU cap
 #
 # Repo path / conda env override:  qsub -v REPO=...,CONDA_ENV=... -J ... ../tune.pbs
-#PBS -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S
+#PBS -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S
 #PBS -l walltime=02:00:00
 
 set -euo pipefail

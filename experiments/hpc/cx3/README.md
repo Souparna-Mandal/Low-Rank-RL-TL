@@ -69,7 +69,7 @@ pip install uv && uv pip install -r pyproject.toml
 #  opencv/tqdm matter here)
 
 # 3. smoke test ON A GPU NODE before any array (checks CUDA wheel + ALE ROMs):
-qsub -I -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S -l walltime=0:30:0
+qsub -I -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S -l walltime=0:30:0
 conda activate lowrank && cd $HOME/Low-Rank-RL-TL/experiments/atari/dqn_boxing
 python ../../src/run_fhrdqn_atari100k.py --arm baseline --seed 0 \
     --config config_effrainbow_tune.yaml --steps 2000 --eval-episodes 2
@@ -98,14 +98,14 @@ Same flow for the suite with `--mode suite` and `../suite.pbs`
   (`module load nvitop/...`) and only go wider if GPU util sits well under
   90 %. GPU jobs auto-route to the gpu72 queue (72 h max); never pass `-q`.
 * Requests: 1× L40S (48 GB VRAM, the default/plentiful card — don't request
-  the scarce A100s), **4 cores + 24 GB RAM per PACK=2 subjob**, walltime
+  the scarce A100s), **4 cores + 20 GB RAM per PACK=2 subjob**, walltime
   **2 h** (tune/ref) / 3 h (suite). Sized from measured usage: a ref pack
   (two 100k runs) peaks at ~8 GB RAM, ~200 % CPU and 32–56 min wall; the
   original 8-core/96 GB/12 h request was a 12× over-ask that only cost queue
   time (backfill favours short, small jobs). If a pack ever hits the
   walltime it simply dies and `--skip-existing` resubmits it. Requests of an
   already-queued array can be fixed in place without losing queue position:
-  `qalter -l walltime=02:00:00 -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S '<jobid>[]'`.
+  `qalter -l walltime=02:00:00 -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S '<jobid>[]'`.
 * Per-run stdout goes to `experiments/hpc/cx3/logs/jobs_<mode>_line<N>.log`
   (live-tailable, unlike the PBS `.o` files which appear only at subjob
   end).

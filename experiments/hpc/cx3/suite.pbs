@@ -8,7 +8,7 @@
 #
 # Resubmission after a partial pass: regenerate with --skip-existing first.
 # Repo path / conda env override:  qsub -v REPO=...,CONDA_ENV=... -J ... ../suite.pbs
-#PBS -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S
+#PBS -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S
 #PBS -l walltime=03:00:00
 
 set -euo pipefail

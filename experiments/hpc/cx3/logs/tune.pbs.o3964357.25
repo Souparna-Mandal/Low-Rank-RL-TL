@@ -1,0 +1,13 @@
+[run_pack] line 49 started (log: /rds/general/user/sm5125/home/Low-Rank-RL-TL/experiments/hpc/cx3/logs/jobs_tune_line49.log)
+[run_pack] line 50 started (log: /rds/general/user/sm5125/home/Low-Rank-RL-TL/experiments/hpc/cx3/logs/jobs_tune_line50.log)
+[run_pack] line 49 OK
+[run_pack] line 50 OK
+
+====================================
+CPU Time used: 00:41:18
+CPU Percent: 202%
+Memory usage: 4945716kb
+Approx Power usage: 0.008199999999999999
+Walltime usage: 00:22:14
+
+====================================
