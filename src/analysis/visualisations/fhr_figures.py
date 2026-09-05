@@ -2540,11 +2540,13 @@ class Family:
 # cross-environment summary
 # --------------------------------------------------------------------------
 def cross_env_final(families, arms=None, mode="last", figsize=(7.2, 3.8),
-                    n_boot=2000):
+                    n_boot=2000, log2=True):
     """One figure over several families (envs): each arm's final return
     relative to that env's baseline (IQM ratio, 95% bootstrap CI of the arm's
-    IQM scaled by the baseline IQM), grouped by env. Arms are matched across
-    families by key (exp1, exp2, ...); labels come from the first family."""
+    IQM scaled by the baseline IQM), grouped by env, on a log2 axis so a 7x
+    win on one env does not flatten a 10% gain on another. Arms are matched
+    across families by key (exp1, exp2, ...); labels come from the first
+    family."""
     fams = list(families)
     if not fams:
         return _empty_fig("no families")
@@ -2571,11 +2573,17 @@ def cross_env_final(families, arms=None, mode="last", figsize=(7.2, 3.8),
             his.append(hi / bi - m)
         if xs:
             ax.bar(xs, np.array(ys) - 1.0, bottom=1.0, width=w * 0.92,
-                   color=a.colour, alpha=0.9, hatch="//" if a.frozen else None,
-                   edgecolor="white", linewidth=0.4, label=a.label)
-            ax.errorbar(xs, ys, yerr=[los, his], fmt="none", ecolor="#111111",
-                        elinewidth=0.9, capsize=2.5, zorder=4)
+                   color=a.colour, alpha=0.55 if a.frozen else 0.9,
+                   edgecolor=a.colour if a.frozen else "white",
+                   linestyle="--" if a.frozen else "-",
+                   linewidth=0.9 if a.frozen else 0.4, label=a.label)
+            ax.errorbar(xs, ys, yerr=[np.maximum(los, 0), np.maximum(his, 0)],
+                        fmt="none", ecolor="#111111", elinewidth=0.9,
+                        capsize=2.5, zorder=4)
     ax.axhline(1.0, color=BASELINE_COLOUR, lw=1.2, zorder=3)
+    if log2:
+        ax.set_yscale("log", base=2)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:g}x"))
     ax.set_xticks(range(len(fams)), [F.env.split("-")[0] for F in fams])
     ax.set_ylabel("final return / baseline (IQM ratio)")
     ax.set_title("FHR arms across environments (bars: IQM ratio; whiskers: "
