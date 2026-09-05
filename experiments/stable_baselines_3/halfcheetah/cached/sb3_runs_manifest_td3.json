@@ -41,6 +41,27 @@
       "100": "cached/runs/sb3_halfcheetah_td3_exp7_seed100_20260904-162040",
       "88": "cached/runs/sb3_halfcheetah_td3_exp7_seed88_20260904-161059",
       "44": "cached/runs/sb3_halfcheetah_td3_exp7_seed44_20260904-161023"
+    },
+    "exp4": {
+      "22": "cached/runs/sb3_halfcheetah_td3_exp4_seed22_20260904-130148",
+      "100": "cached/runs/sb3_halfcheetah_td3_exp4_seed100_20260904-131526",
+      "66": "cached/runs/sb3_halfcheetah_td3_exp4_seed66_20260904-131256",
+      "44": "cached/runs/sb3_halfcheetah_td3_exp4_seed44_20260904-130410",
+      "88": "cached/runs/sb3_halfcheetah_td3_exp4_seed88_20260904-131406"
+    },
+    "exp5": {
+      "66": "cached/runs/sb3_halfcheetah_td3_exp5_seed66_20260904-155225",
+      "100": "cached/runs/sb3_halfcheetah_td3_exp5_seed100_20260904-160345",
+      "22": "cached/runs/sb3_halfcheetah_td3_exp5_seed22_20260904-154154",
+      "44": "cached/runs/sb3_halfcheetah_td3_exp5_seed44_20260904-154241",
+      "88": "cached/runs/sb3_halfcheetah_td3_exp5_seed88_20260904-155748"
+    },
+    "exp6": {
+      "100": "cached/runs/sb3_halfcheetah_td3_exp6_seed100_20260904-160917",
+      "44": "cached/runs/sb3_halfcheetah_td3_exp6_seed44_20260904-160454",
+      "66": "cached/runs/sb3_halfcheetah_td3_exp6_seed66_20260904-160459",
+      "88": "cached/runs/sb3_halfcheetah_td3_exp6_seed88_20260904-160851",
+      "22": "cached/runs/sb3_halfcheetah_td3_exp6_seed22_20260904-160406"
     }
   },
   "overrides": {
