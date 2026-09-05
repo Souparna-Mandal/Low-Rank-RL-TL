@@ -139,23 +139,26 @@ def hankel_sweep_analysis(agent: QAgent, env: gym.Env, cfg: dict,
 
             for L in lengths:
                 hk = _hankel_from_sequence(tau[:L])
+                # one SVD per matrix: the spectrum feeds both the rendered
+                # figure and the sv_* columns of hankel_sweep.csv (the
+                # sigma_i / sigma_{i-1} decay analysis reads those)
+                s_vals, metrics = rank.spectrum_and_metrics(hk)
                 if L in fig_lengths:
                     label = f"{name} full r{r}" if L == H else f"{name} sub {L}"
                     save_to = (run_logger.figure_path(_figure_name(name, L, H, r), episode)
                                if run_logger is not None else None)
-                    metrics = rank.row_rank_property_check(
-                        hk, label, save_to=save_to, show=run_logger is None)
+                    rank.plot_matrix_spectra(s_vals, label, save_to=save_to,
+                                             show=run_logger is None)
                     if save_heatmaps:
                         hm_save_to = (run_logger.figure_path(
                             _figure_name(name, L, H, r) + " heatmap", episode)
                             if run_logger is not None else None)
                         plot_matrix_heatmap(hk, label, save_to=hm_save_to,
                                             show=run_logger is None)
-                else:
-                    metrics = rank.compute_rank_metrics(hk)
 
                 if run_logger is not None:
-                    run_logger.log_hankel_sweep(episode, name, r, seed, L, *metrics)
+                    run_logger.log_hankel_sweep(episode, name, r, seed, L,
+                                                *metrics, s_vals=s_vals)
                 else:
                     _print_sweep_row(name, r, seed, L, metrics)
 

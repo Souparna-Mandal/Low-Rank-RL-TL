@@ -488,3 +488,79 @@ def test_window_rank_probe_sacd_and_dqn():
     assert rows and any(r["n_windows"] > 0 for r in rows)
     assert {r["critic"] for r in rows} == {0}                # single critic
     assert all(k.endswith("_c0") for k in arrays)
+
+
+# ------------------------------------------------- fhr_lag_source variants
+@pytest.mark.parametrize("family", ["sac", "sacd"])
+def test_fhr_lag_source_variants(family):
+    """detached/target train cleanly on both critics; at init critic_target
+    == critic, so the first-step penalty value matches online. A perturbed
+    critic_target then shifts the target-source penalty but not detached's."""
+    make = _filled_sac if family == "sac" else _filled_sacd
+    with pytest.raises(ValueError, match="fhr_lag_source"):
+        make(fhr_weight=0.5, fhr_lag_source="bogus")
+    rows = {}
+    for src in ("online", "detached", "target"):
+        _seed_all(5)
+        m = make(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                 learning_starts=0, fhr_lag_source=src)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        rows[src] = m.drain_diagnostics()
+        assert m.nan_skips == 0
+    r0 = rows["online"][0]
+    assert r0["b_h"] > 0 and np.isfinite(r0["penalty_raw"])
+    assert abs(rows["detached"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert abs(rows["target"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    # target source actually reads critic_target
+    _seed_all(5)
+    mt = make(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+              learning_starts=0, fhr_lag_source="target")
+    with torch.no_grad():
+        for p in mt.critic_target.parameters():
+            p.add_(0.5)
+    _seed_all(123)
+    mt.train(gradient_steps=1, batch_size=32)
+    shifted = mt.drain_diagnostics()[0]["penalty_raw"]
+    assert abs(shifted - rows["detached"][0]["penalty_raw"]) > 1e-6
+
+
+def test_fhr_lag_source_target_twins_shared_by_continuous_hosts():
+    """FHRSAC's target twin lives on _FHRContinuousCriticMixin (so FHRTD3
+    inherits it) and reproduces critic_target's own forward per critic."""
+    from agents.sb3_sac_fhr import _FHRContinuousCriticMixin
+    from agents.sb3_td3_fhr import FHRTD3
+    assert (FHRSAC._fhr_target_lag_q_fns
+            is _FHRContinuousCriticMixin._fhr_target_lag_q_fns)
+    assert (FHRTD3._fhr_target_lag_q_fns
+            is _FHRContinuousCriticMixin._fhr_target_lag_q_fns)
+    _seed_all(2)
+    m = _filled_sac(fhr_weight=0.5, warmup_grad_steps=0, learning_starts=0,
+                    fhr_lag_source="target")
+    m.train(gradient_steps=2, batch_size=32)
+    with torch.no_grad():
+        for p in m.critic_target.parameters():
+            p.add_(0.5)
+    replay = m.replay_buffer.sample(16)
+    obs, acts = replay.observations, replay.actions
+    fns = m._fhr_target_lag_q_fns()
+    assert len(fns) == 2
+    with torch.no_grad():
+        ref = m.critic_target(obs, acts)
+        onl = m.critic(obs, acts)
+        for i, fn in enumerate(fns):
+            assert torch.equal(fn(obs, acts), ref[i].squeeze(1))
+            assert not torch.allclose(fn(obs, acts), onl[i].squeeze(1))
+    # discrete twin: FHRSACD gathers per head from critic_target(obs)
+    _seed_all(2)
+    d = _filled_sacd(fhr_weight=0.5, warmup_grad_steps=0, learning_starts=0,
+                     fhr_lag_source="target")
+    with torch.no_grad():
+        for p in d.critic_target.parameters():
+            p.add_(0.5)
+    replay = d.replay_buffer.sample(16)
+    obs, acts = replay.observations, replay.actions.long()
+    with torch.no_grad():
+        ref = d.critic_target(obs)
+        for i, fn in enumerate(d._fhr_target_lag_q_fns()):
+            assert torch.equal(fn(obs, acts), ref[i].gather(1, acts).squeeze(1))

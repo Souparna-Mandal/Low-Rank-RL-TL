@@ -379,3 +379,164 @@ def test_launcher_builds_td3_with_action_noise():
     ou = R._build_model(cfg, env, seed=1)
     assert isinstance(ou.action_noise, OrnsteinUhlenbeckActionNoise)
     env.close()
+
+
+# ------------------------------------------------- 10. fhr_lag_source
+def _lag_source_model(src, seed=5, **over):
+    _seed_all(seed)
+    return _filled_td3(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                       learning_starts=0, fhr_lag_source=src, **over)
+
+
+def test_lag_source_validation():
+    with pytest.raises(ValueError, match="fhr_lag_source"):
+        FHRTD3("MlpPolicy", gym.make("Pendulum-v1"), action_noise=_noise(),
+               **_td3_kwargs(fhr_weight=0.5, fhr_lag_source="bogus"))
+    m = _filled_td3(fhr_weight=0.5)
+    assert m.fhr_lag_source == "online"           # default: in-graph lags
+
+
+def test_lag_source_first_step_values_equal_then_target_drifts():
+    """online == detached at every step VALUE-wise on step 1 (same closures,
+    same numbers, only the graph differs) and target == both at init
+    (critic_target == critic). After the critic moves while critic_target
+    has not (polyak fires on step policy_delay), the target source diverges
+    from detached; a perturbed critic_target does so outright."""
+    rows, crit, models = {}, {}, {}
+    for src in ("online", "detached", "target"):
+        m = _lag_source_model(src)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        rows[src] = m.drain_diagnostics()[0]
+        crit[src] = {k: v.detach().clone() for k, v in m.critic.state_dict().items()}
+        models[src] = m
+        assert m.nan_skips == 0
+    p0 = rows["online"]["penalty_raw"]
+    assert rows["online"]["b_h"] > 0 and np.isfinite(p0)
+    assert rows["detached"]["penalty_raw"] == pytest.approx(p0, abs=1e-6)
+    assert rows["target"]["penalty_raw"] == pytest.approx(p0, abs=1e-6)
+    # detached and target both see grad-free lags of identical value at
+    # init, so their first optimiser step is bit-identical; online's is not
+    assert all(torch.equal(crit["detached"][k], crit["target"][k]) for k in crit["detached"])
+    assert any(not torch.equal(crit["online"][k], crit["detached"][k]) for k in crit["online"])
+    # step 2: critic moved on step 1, critic_target did not (policy_delay=2)
+    assert models["target"].policy_delay == 2
+    second = {}
+    for src in ("detached", "target"):
+        _seed_all(321)
+        models[src].train(gradient_steps=1, batch_size=32)
+        second[src] = models[src].drain_diagnostics()[0]["penalty_raw"]
+    assert second["target"] != pytest.approx(second["detached"], abs=1e-9)
+    # and an outright perturbation of critic_target moves target, not detached
+    for src in ("detached", "target"):
+        m = _lag_source_model(src)
+        with torch.no_grad():
+            for p in m.critic_target.parameters():
+                p.add_(0.5)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        got = m.drain_diagnostics()[0]["penalty_raw"]
+        if src == "detached":
+            assert got == pytest.approx(rows["detached"]["penalty_raw"], abs=1e-6)
+        else:
+            assert abs(got - rows["target"]["penalty_raw"]) > 1e-6
+
+
+@pytest.mark.parametrize("src", ["online", "detached", "target"])
+def test_lag_source_gradient_routing(src, monkeypatch):
+    """The lag closures' outputs carry a graph only under "online"; under
+    detached/target they are constants, yet the critic (anchor) and c still
+    receive gradients, and the probe reads the acting gradient."""
+    m = _lag_source_model(src, grad_probe_every=1)
+    attr = "_fhr_target_lag_q_fns" if src == "target" else "_lag_q_fns"
+    orig = getattr(m, attr)
+    seen = []
+
+    def spying():
+        def wrap(fn):
+            def inner(obs, acts):
+                out = fn(obs, acts)
+                seen.append(bool(out.requires_grad))
+                return out
+            return inner
+        return [wrap(fn) for fn in orig()]
+    monkeypatch.setattr(m, attr, spying)
+    c0 = m.fhr_head.c.detach().clone()
+    m.train(gradient_steps=1, batch_size=32)
+    assert len(seen) == 2                         # both critics evaluated
+    assert all(seen) if src == "online" else not any(seen)
+    assert m.nan_skips == 0
+    # anchor path: every critic parameter got a gradient and c trained
+    assert all(p.grad is not None and torch.isfinite(p.grad).all()
+               for p in m.critic.parameters() if p.requires_grad)
+    assert m.fhr_head.c.grad is not None
+    assert not torch.equal(m.fhr_head.c.detach(), c0)
+    r = m.drain_diagnostics()[0]
+    assert np.isfinite(r["grad_ratio"]) and r["grad_norm_pen"] > 0
+
+
+def test_lag_source_probe_measures_acting_gradient():
+    """Same batch, same nets: the grad-free lag variants leave only the
+    anchor path in the penalty gradient, so the probe's |g_pen| differs from
+    online's in-graph reading, which adds the lag-path term (a different
+    gradient, not a different value; neither is guaranteed larger)."""
+    norms = {}
+    for src in ("online", "detached", "target"):
+        m = _lag_source_model(src, grad_probe_every=1)
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        norms[src] = m.drain_diagnostics()[0]["grad_norm_pen"]
+    assert norms["detached"] == pytest.approx(norms["target"], rel=1e-5)
+    assert norms["online"] != pytest.approx(norms["detached"], rel=1e-3)
+
+
+@pytest.mark.parametrize("src", ["detached", "target"])
+def test_lag_source_lambda0_bit_exact_matches_stock_td3(src):
+    # the lag source only touches the penalty block, which lambda=0 gates
+    # off; with the probe on it is evaluated grad-free and still consumes no
+    # RNG and touches no .grad
+    stock, _ = _final_state(TD3, {})
+    fhr, model = _final_state(FHRTD3, dict(fhr_weight=0.0, fhr_lag_source=src,
+                                           grad_probe_every=1))
+    assert model.fhr_lag_source == src
+    assert stock.keys() == fhr.keys()
+    for k in stock:
+        assert torch.equal(stock[k], fhr[k]), k
+    rows = model.drain_diagnostics()
+    assert rows and any(np.isfinite(r["grad_ratio"]) for r in rows)
+
+
+def test_lag_source_target_trains_and_reads_critic_target(tmp_path):
+    from agents.sb3_sac_fhr import _FHRContinuousCriticMixin
+    assert (FHRTD3._fhr_target_lag_q_fns
+            is _FHRContinuousCriticMixin._fhr_target_lag_q_fns)
+    m = _lag_source_model("target", seed=11)
+    m.train(gradient_steps=4, batch_size=32)      # polyak has run twice
+    assert m.nan_skips == 0
+    rows = m.drain_diagnostics()                  # one burst-aggregated row
+    assert len(rows) == 1 and np.isfinite(rows[0]["penalty_raw"])
+    assert rows[0]["b_h"] > 0
+    with torch.no_grad():                          # make the twins unmistakable
+        for p in m.critic_target.parameters():
+            p.add_(0.5)
+    replay = m.replay_buffer.sample(16)
+    obs, acts = replay.observations, replay.actions
+    fns = m._fhr_target_lag_q_fns()
+    assert len(fns) == len(m.critic_target.q_networks) == 2
+    with torch.no_grad():
+        ref = m.critic_target(obs, acts)
+        onl = m.critic(obs, acts)
+        for i, fn in enumerate(fns):
+            assert torch.equal(fn(obs, acts), ref[i].squeeze(1))
+            assert not torch.allclose(fn(obs, acts), onl[i].squeeze(1))
+    # the online closures are untouched by the setting
+    with torch.no_grad():
+        for i, fn in enumerate(m._lag_q_fns()):
+            assert torch.equal(fn(obs, acts), onl[i].squeeze(1))
+    # launcher whitelist mirrors the agent's
+    import run_sb3_seeds as R
+    assert "fhr_lag_source" in FHR_PARAMS and set(R.FHR_PARAMS) == set(FHR_PARAMS)
+    # and the setting round-trips through save/load
+    m.save(tmp_path / "target.zip")
+    loaded = FHRTD3.load(tmp_path / "target.zip", device="cpu")
+    assert loaded.fhr_lag_source == "target"

@@ -725,15 +725,15 @@ if CUSTOM_VIDEO:
 
 
 def cell_key(cell):
-    """A content-derived identity for a cell: the first header line of a
-    markdown cell, the first non-comment line of a code cell."""
+    """A content-derived identity for a cell: its full source with comments
+    and blank lines dropped and whitespace collapsed (a first-line key
+    collided - two template cells start with `for lam in F.lambdas:`)."""
     src = "".join(cell["source"]) if isinstance(cell["source"], list) else cell["source"]
     lines = [l.rstrip() for l in src.splitlines()]
-    if cell["cell_type"] == "markdown":
-        heads = [l for l in lines if l.startswith("#")]
-        return "md:" + (heads[0] if heads else (lines[0] if lines else ""))
-    body = [l for l in lines if l.strip() and not l.lstrip().startswith("#")]
-    return "code:" + (body[0] if body else "")
+    if cell["cell_type"] != "markdown":
+        lines = [l for l in lines if l.strip() and not l.lstrip().startswith("#")]
+    body = " ".join(" ".join(l.split()) for l in lines if l.strip())
+    return f"{cell['cell_type']}:{body}"
 
 
 def merge(existing, fresh):
@@ -743,17 +743,16 @@ def merge(existing, fresh):
     preceding cell, so section order is preserved. Returns (nb, n_added)."""
     cells = list(existing["cells"])
     keys = [cell_key(c) for c in cells]
-    n_added, prev_key = 0, None
-    for cell in fresh["cells"]:
+    n_added, cursor = 0, 0          # cursor: slot right after the last
+    for cell in fresh["cells"]:     # template cell matched or inserted
         k = cell_key(cell)
         if k in keys:
-            prev_key = k
+            cursor = keys.index(k) + 1
             continue
-        pos = keys.index(prev_key) + 1 if prev_key in keys else len(cells)
-        cells.insert(pos, cell)
-        keys.insert(pos, k)
+        cells.insert(cursor, cell)
+        keys.insert(cursor, k)
+        cursor += 1
         n_added += 1
-        prev_key = k
     existing["cells"] = cells
     return existing, n_added
 

@@ -44,6 +44,11 @@ Why TD3 is the cleaner host for the FHR claim than SAC:
     exploration schedule. rewards.csv is the noisy behaviour policy's
     training stream; eval.csv is the deterministic actor.
 
+fhr_lag_source (online | detached | target, agents/sb3_fhr.py) routes the
+recurrence lags; "target" reads the critic_target twins inherited from
+_FHRContinuousCriticMixin, grad-free, while the anchor stays the in-graph
+online Q_i(s_t, a_t).
+
 Design contracts carried over from agents/sb3_sac_fhr.py:
   * fhr_weight=0 with uniform replay reproduces stock SB3 TD3 bit-for-bit:
     every non-stock line is gated on `fhr_weight > 0` / `prioritized_replay`
@@ -92,6 +97,7 @@ class FHRTD3(_FHRContinuousCriticMixin, TD3):
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
                  window_rank_lags: int = 16, c_init=None,
+                 fhr_lag_source: str = "online",
                  grad_probe_every: int = 0, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
@@ -103,6 +109,7 @@ class FHRTD3(_FHRContinuousCriticMixin, TD3):
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
                              window_rank_lags=window_rank_lags, c_init=c_init,
+                             fhr_lag_source=fhr_lag_source,
                              grad_probe_every=grad_probe_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)

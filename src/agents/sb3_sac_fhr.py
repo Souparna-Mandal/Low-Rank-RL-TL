@@ -24,7 +24,9 @@ ContinuousCritic penultimate features, fused twin lag_q closures) live in
 _FHRContinuousCriticMixin, shared with FHRTD3 (agents/sb3_td3_fhr.py) — the
 two hosts differ only in their train() loops and in how the per-critic Huber
 terms combine (SAC "mean" against its 0.5 * sum_i MSE_i TD term; TD3 "sum").
-grad_probe_every > 0 adds the gradient-stream probe of agents/sb3_fhr.py.
+grad_probe_every > 0 adds the gradient-stream probe of agents/sb3_fhr.py;
+fhr_lag_source (online | detached | target) routes the recurrence lags as in
+agents/sb3_fhr.py — the "target" twins read critic_target (per class below).
 
 Design contracts carried over from agents/sb3_fhr.py:
   * fhr_weight=0 with uniform replay reproduces stock SB3 SAC bit-for-bit
@@ -207,7 +209,8 @@ class _FHRContinuousCriticMixin(_FHRSACFamilyMixin):
     encoding for the c(s,a) predictor, float lag/anchor actions (the buffer
     stores the policy's [-1, 1]-scaled actions), the critic's penultimate
     features for the shared predictor, and per-critic lag_q closures with one
-    fused feature/head forward per distinct (obs, acts) pair."""
+    fused feature/head forward per distinct (obs, acts) pair (plus their
+    critic_target twins for fhr_lag_source="target")."""
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -246,6 +249,25 @@ class _FHRContinuousCriticMixin(_FHRSACFamilyMixin):
             return lag_q
         return [make(i) for i in range(len(critic.q_networks))]
 
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target") —
+        the same fused per-(obs, acts) evaluation, one cache per call."""
+        critic = self.critic_target
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = (id(obs), id(acts))
+                if key not in cache:
+                    feats = critic.extract_features(
+                        obs, critic.features_extractor)
+                    qin = torch.cat([feats, acts], dim=1)
+                    cache[key] = [q_net(qin) for q_net in critic.q_networks]
+                return cache[key][i].squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(critic.q_networks))]
+
+
 _FHR_KWARG_DOC = """fhr_weight and friends match FHRDQN (agents/sb3_fhr.py);
     prioritized_replay/per_alpha/per_beta0 opt into the PER buffer."""
 
@@ -265,6 +287,7 @@ class FHRSAC(_FHRContinuousCriticMixin, SAC):
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
                  window_rank_lags: int = 16, c_init=None,
+                 fhr_lag_source: str = "online",
                  grad_probe_every: int = 0, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
@@ -276,6 +299,7 @@ class FHRSAC(_FHRContinuousCriticMixin, SAC):
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
                              window_rank_lags=window_rank_lags, c_init=c_init,
+                             fhr_lag_source=fhr_lag_source,
                              grad_probe_every=grad_probe_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
@@ -816,6 +840,7 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                  prioritized_replay: bool = False, per_alpha: float = 0.6,
                  per_beta0: float = 0.4, window_rank_every: int = 0,
                  window_rank_lags: int = 16, c_init=None,
+                 fhr_lag_source: str = "online",
                  grad_probe_every: int = 0, **kwargs):
         self._set_fhr_config(fhr_weight, fhr_order, reward_lags,
                              warmup_grad_steps, c_learning_rate,
@@ -827,6 +852,7 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                              per_alpha=per_alpha, per_beta0=per_beta0,
                              window_rank_every=window_rank_every,
                              window_rank_lags=window_rank_lags, c_init=c_init,
+                             fhr_lag_source=fhr_lag_source,
                              grad_probe_every=grad_probe_every)
         kwargs = self._fhr_per_kwargs(kwargs)
         super().__init__(*args, **kwargs)
@@ -844,6 +870,19 @@ class FHRSACD(_FHRSACFamilyMixin, SACD):
                 key = id(obs)
                 if key not in cache:
                     cache[key] = self.critic(obs)
+                return cache[key][i].gather(1, acts).squeeze(1)
+            return lag_q
+        return [make(i) for i in range(len(self.critic.q_networks))]
+
+    def _fhr_target_lag_q_fns(self):
+        """critic_target twin of _lag_q_fns (fhr_lag_source="target")."""
+        cache: dict = {}
+
+        def make(i):
+            def lag_q(obs, acts):
+                key = id(obs)
+                if key not in cache:
+                    cache[key] = self.critic_target(obs)
                 return cache[key][i].gather(1, acts).squeeze(1)
             return lag_q
         return [make(i) for i in range(len(self.critic.q_networks))]

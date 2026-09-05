@@ -530,3 +530,71 @@ def test_c_predictor_save_load_roundtrip(tmp_path):
     assert loaded.c_predictor == "shared"
     for k, v in model.fhr_predictor.state_dict().items():
         assert torch.equal(v, loaded.fhr_predictor.state_dict()[k]), k
+
+
+# ------------------------------------------------- fhr_lag_source variants
+def test_fhr_lag_source_variants_dqn():
+    """Bad value rejected at _setup_model; detached/target train cleanly and
+    the first-step penalty value matches online (q_net_target == q_net at
+    init), while the post-step parameters differ from the online variant
+    (the lag-path gradient exists only under "online")."""
+    with pytest.raises(ValueError, match="fhr_lag_source"):
+        FHRDQN("MlpPolicy", gym.make("CartPole-v1"),
+               **_dqn_kwargs(fhr_weight=0.5, fhr_lag_source="bogus"))
+    rows, params = {}, {}
+    for src in ("online", "detached", "target"):
+        _seed_all(0)
+        m = _filled_model(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                          fhr_lag_source=src)
+        assert m.fhr_lag_source == src
+        _seed_all(123)
+        m.train(gradient_steps=1, batch_size=32)
+        rows[src] = m.drain_diagnostics()
+        params[src] = {k: v.detach().clone()
+                       for k, v in m.q_net.state_dict().items()}
+    r0 = rows["online"][0]
+    assert r0["b_h"] > 0 and np.isfinite(r0["penalty_raw"])
+    assert abs(rows["detached"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert abs(rows["target"][0]["penalty_raw"] - r0["penalty_raw"]) < 1e-6
+    assert any(not torch.equal(params["online"][k], params["detached"][k])
+               for k in params["online"])
+    # detached and target see the same grad-free lag values at init, so
+    # their first optimiser step is identical
+    assert all(torch.equal(params["detached"][k], params["target"][k])
+               for k in params["detached"])
+
+
+def test_fhr_lag_source_target_reads_target_nets_dqn_and_qrdqn():
+    """The target twins read q_net_target / quantile_net_target: their
+    outputs equal the target module's own forward and diverge from the
+    online closures once the target is perturbed."""
+    _seed_all(4)
+    dqn = _filled_model(fhr_weight=0.5, warmup_grad_steps=0,
+                        fhr_lag_source="target")
+    dqn.train(gradient_steps=2, batch_size=32)
+    assert dqn.nan_skips == 0
+    qr = FHRQRDQN("MlpPolicy", gym.make("CartPole-v1"),
+                  **_dqn_kwargs(policy_kwargs=dict(net_arch=[32, 32],
+                                                   n_quantiles=5),
+                                fhr_weight=0.5, warmup_grad_steps=0,
+                                fhr_lag_source="target"))
+    qr.set_logger(configure(folder=None, format_strings=[]))
+    _fill_buffer(qr)
+    qr.train(gradient_steps=2, batch_size=32)
+    assert qr.nan_skips == 0
+    for m, target in ((dqn, dqn.q_net_target), (qr, qr.quantile_net_target)):
+        with torch.no_grad():
+            for p in target.parameters():
+                p.add_(0.5)
+        replay = m.replay_buffer.sample(16)
+        obs, acts = replay.observations, replay.actions.long()
+        (tgt,), (onl,) = m._fhr_target_lag_q_fns(), m._lag_q_fns()
+        with torch.no_grad():
+            out = tgt(obs, acts)
+            if m is dqn:
+                ref = target(obs).gather(1, acts).squeeze(1)
+            else:
+                idx = acts[..., None].expand(-1, m.n_quantiles, 1)
+                ref = target(obs).gather(2, idx).squeeze(2).mean(1)
+            assert torch.equal(out, ref)
+            assert not torch.allclose(out, onl(obs, acts))
