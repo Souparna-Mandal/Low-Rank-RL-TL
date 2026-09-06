@@ -36,11 +36,11 @@ experiment:
   seeds: [44, 66]
   fhr_experiments:
     # order 2 — the floor
-    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    # 1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
     2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
     3: {fhr_weight: 10.0, fhr_order: 2, c_learning_rate: 0.03}
     # order 8 — long recurrence window, same lambda ladder
-    4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
+    # 4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
     5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
     6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
   # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too

@@ -1,0 +1,140 @@
+# GLOBAL Atari-100k config for the EfficientRainbow recipe — the single
+# source of truth for every game dir. Do NOT edit the per-game
+# config_effrainbow_100k.yaml copies by hand: edit THIS file and run
+#
+#   python experiments/src/sync_effrainbow_configs_from_global.py
+#
+# which renders it into all 27 dqn_<game>/ dirs (and the tuning variant into
+# the 5-game tuning subset), substituting the __TOKEN__ placeholders with the
+# per-game fields (env id, episodic_life for the no-lives games, aggregate
+# membership). The recipe blocks below reproduce the exp_atari100k_effrainbow
+# suite baseline verbatim (burst cadence: 64 grad steps per 32 env steps =
+# replay ratio 2); the suite FHR arm is exp3 (lambda 2, r 8). New vs the
+# suite pass: seeds 0-4, env-step-cadenced eval checkpoints (eval.csv) and
+# env-step-cadenced rank/Hankel analysis — episodes vary wildly across games,
+# env steps are the protocol constant.
+experiment:
+  name: dqn_kung_fu_master_effrainbowtune
+  seed: 0
+  seeds: [0, 1]
+  device: auto
+  save_artifacts: true
+  # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
+  # augmentation over NatureCNNEncoder (src/agents/efficient_rainbow_agent.py).
+  agent_class: efficient_rainbow
+  include_in_aggregate: false
+  fhr_experiments:
+    3:  {fhr_weight: 2, fhr_order: 8}                        # suite anchor
+    10: {fhr_weight: 1, fhr_order: 8}
+    11: {fhr_weight: 4, fhr_order: 8}
+    12: {fhr_weight: 2, fhr_order: 4}
+    13: {fhr_weight: 2, fhr_order: 16}
+    14: {fhr_weight: 2, fhr_order: 8, reward_lags: True}     # ARX twin
+    15: {fhr_weight: 2, fhr_order: 8, c_learning_rate: 0.001}
+
+environment:
+  name: ALE/KungFuMaster-v5
+  render_mode: null
+  discrete_config: null
+  normalise: {action: {}, state: {}}
+  clip: {action: false, state: {}}
+  reward:
+    clip_sign: true
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    screen_size: 84
+    # Dopamine episodic-life protocol (what DER/DrQ/SPR/BBF train under):
+    # life loss ends the AGENT episode (bootstrap cut, EpisodicLifeWrapper)
+    # while the GAME continues to real game-over. Final evaluation always
+    # scores FULL games regardless (the launcher overrides both flags).
+    terminal_on_life_loss: false
+    episodic_life: true
+    grayscale_obs: true
+    grayscale_newaxis: false
+    scale_obs: false
+    frame_stack: 4
+    repeat_action_probability: 0.0
+    full_action_space: false
+
+network:
+  # efficient_rainbow builds its head from agent.head_hidden; unused here.
+  fc_hidden: 512
+
+agent:
+  replay_buffer_capacity: 100000    # holds the entire 100k-step run
+  batch_size: 32
+  nn_learning_rate: 0.0001
+  eps_start: 1.0
+  eps_min: 0.01
+  # eps 1 -> 0.01 over ~5k post-warm-up steps (DrQ): 0.01 ** (1/5000)
+  decay_rate: 0.999079
+  discount_factor: 0.99
+  TD_LR: 0.01                        # hard target copy at every update tick
+  buffer_util: 0.1
+  gd_steps_ceil: 64                  # with train_frequency_steps 32 -> replay ratio 2
+  grad_clip_norm: 30.0
+  double: true
+  # DrQ "Efficient DQN" recipe (arXiv:2004.13649 Table 4) + IQN head sizes:
+  n_step: 10                        # multi-step returns (sample-time aggregation)
+  n_quantiles: 8                    # online loss taus (also Double-Q selection)
+  n_quantiles_target: 8             # target loss taus
+  n_quantiles_act: 32               # fixed-grid taus for acting / analysis traces
+  n_quantiles_fhr: 8                # fixed-grid taus for the FHR anchor/lag forward
+  n_cos: 64
+  head_hidden: 512
+  huber_kappa: 1.0
+  use_augmentation: true            # DrQ random shift + intensity, gradient steps only
+  aug_pad: 4
+  aug_intensity: 0.05
+  prioritized_replay: false         # reserved: PER over the episodic buffer, later
+  # DrQ/Dopamine Adam settings (QAgent defaults keep the legacy wd=0.01):
+  weight_decay: 0.0
+  adam_eps: 0.00015
+  amsgrad: false
+  # FHR block (baseline arm overrides fhr_weight to 0):
+  fhr_weight: 2
+  fhr_order: 4
+  reward_lags: False
+  warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
+  c_learning_rate: 0.01
+
+training:
+  no_episodes: 100000               # upper bound; max_env_steps ends training
+  max_env_steps: 50000              # tuning budget: half of Atari-100k
+  target_network_update_steps: 1     # DrQ: hard target copy every env step (TD_LR 1.0)
+  train_frequency_steps: 32          # burst cadence: 64 grad steps every 32 env steps
+  use_episode_training: False
+  solved_reward: 1000000000         # no early stopping under a fixed budget
+  warmup_steps: 1600                # DER's min-replay-history (this recipe's own)
+  early_stopping_patience_eps: 1000000
+  no_eps_to_avg: 20
+
+# Final-policy evaluation (raw FULL-GAME scores; see evaluate_policy_atari)
+# plus env-step-cadenced mid-training checkpoints -> eval.csv (same schema as
+# the SB3 GreedyEvalCallback). NB checkpoint rollouts consume action-RNG, so
+# arms are stream-comparable only when every arm shares these settings.
+evaluation:
+  episodes: 32
+  epsilon: 0.001
+  base_seed: 1000
+  checkpoint_every_steps: 5000      # 10 tracking points across the 50k budget
+  checkpoint_episodes: 8            # cheaper than the final 32
+
+analysis:
+  step_freq: 5000                   # rank/Hankel tick every 5k ENV STEPS (at
+                                    # the next episode boundary) — replaces the
+                                    # legacy per-episode ep_freq gate; map tick
+                                    # episodes to env steps via rewards.csv
+  methods: []                       # pixel inputs -> no state-grid Q matrix
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 1
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false
+    sub_trajectory:
+      enabled: false
+      min_len: 8
+      stride: 16
+      n_figures: 5

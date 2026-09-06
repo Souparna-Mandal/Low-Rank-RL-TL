@@ -416,13 +416,25 @@ class SACDiscreteAgent(FHRDQNAgent):
                                                 factors=fac)
                     # the encoder owns input normalisation (uint8 or 0-255
                     # float alike), exactly as in EfficientRainbowAgent
-                    phi_seq = self.policy_net.features(flat)
                     a_seq = torch.cat(
                         [actions[keep].view(n, 1), p_actions], dim=1)
                     idx = a_seq.reshape(n * (r + 1), 1)
+                    if self.fhr_lag_source == "online":
+                        phi_seq = self.policy_net.features(flat)
+                        phi_anchor = phi_seq.view(n, r + 1, -1)[:, 0]
+                    else:
+                        # detached/target lags: split the feature pass on the
+                        # same augmented frames — the anchor stays an online
+                        # in-graph forward, the r lags run grad-free through
+                        # the chosen net; both critic heads below read these
+                        # same lag features.
+                        seq_aug = flat.reshape(n, r + 1, *flat.shape[1:])
+                        phi_anchor = self.policy_net.features(seq_aug[:, 0])
+                        lag_net, lag_ctx = self._fhr_lag_net_ctx()
+                        with lag_ctx:
+                            phi_lags = lag_net.features(
+                                seq_aug[:, 1:].reshape(n * r, *flat.shape[1:]))
                     if self.c_head is not None:
-                        phi_anchor = phi_seq.view(
-                            n, r + 1, -1)[:, 0]
                         c_pred, d_pred = self.c_head(phi_anchor,
                                                      actions[keep])
                         c_mean = c_pred.detach().mean(dim=0)
@@ -439,10 +451,21 @@ class SACDiscreteAgent(FHRDQNAgent):
                         diag["companion_radius"] = (
                             float(np.abs(roots).max()) if roots.size else 0.0)
                     hubers, sq_res = [], []
-                    for q_head in (self.policy_net.q1, self.policy_net.q2):
-                        q_seq = q_head(phi_seq).gather(1, idx).view(n, r + 1)
-                        anchor = q_seq[:, 0]
-                        q_lags = q_seq[:, 1:]
+                    for hi, q_head in enumerate((self.policy_net.q1,
+                                                 self.policy_net.q2)):
+                        if self.fhr_lag_source == "online":
+                            q_seq = q_head(phi_seq).gather(
+                                1, idx).view(n, r + 1)
+                            anchor = q_seq[:, 0]
+                            q_lags = q_seq[:, 1:]
+                        else:
+                            anchor = q_head(phi_anchor).gather(
+                                1, a_seq[:, :1]).squeeze(1)
+                            with lag_ctx:
+                                q_lags = (lag_net.q1, lag_net.q2)[hi](
+                                    phi_lags).gather(
+                                    1, a_seq[:, 1:].reshape(n * r, 1)
+                                    ).view(n, r)
                         if self.c_head is not None:
                             prediction = (q_lags * c_pred).sum(dim=1)
                             if self.reward_lags:

@@ -1,0 +1,84 @@
+# SB3 FHR Optuna study config — MountainCar-v0, consumed by
+# ../../src/run_sb3_optuna.py (never by run_sb3_seeds launcher mode; no
+# manifest family). The tuned config_sb3.yaml recipe (Polyak tau 0.005 +
+# lr 1e-3, the regime the tuning study says FHR needs) with the study
+# deltas:
+#   * seeds — the 5 study seeds; every trial trains all of them.
+#   * agent.window_rank_every/lags — replay-window singular spectra
+#     (window_hankel.csv) on for every run, ~300 ticks over 60k grad steps.
+#   * analysis.ep_freq 25 — Hankel sweeps at 2x the standard cadence;
+#     q_matrix + AR probe dropped (not study deliverables, and trials are
+#     5 trainings each).
+#   * training.early_stopping_patience_eps null — every trial runs the full
+#     budget so the FINAL objective is measured at the same env step, and
+#     eval freq 2500 for finer time-to-threshold resolution.
+# The driver overrides fhr_weight (from rho) and fhr_order per trial;
+# reward_lags stays false and c_learning_rate stays at the value below.
+experiment:
+  name: sb3_mountaincar_study
+  seed: 24
+  seeds: [24, 100, 786, 1000, 9000]
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: MountainCar-v0    # raw obs — the classic normalise trick actively
+                          # hurts under this lr (tuning phase B, normobs)
+
+algo:                     # RL-Zoo DQN, MountainCar-v0, tuned deltas marked
+  type: dqn
+  n_timesteps: 120000
+  learning_rate: 1.0e-3   # TUNED (zoo: 4e-3) — best/most reliable baseline
+  batch_size: 128
+  buffer_size: 10000
+  learning_starts: 1000
+  gamma: 0.98
+  tau: 0.005              # TUNED (zoo: hard sync) — Polyak soft targets,
+  target_update_interval: 1   # synced every env step
+  train_freq: 16
+  gradient_steps: 8
+  exploration_fraction: 0.2
+  exploration_final_eps: 0.07
+  net_arch: [32, 32]
+  n_quantiles: 25         # inert while type is dqn (only QR-DQN consumes it)
+
+agent:
+  fhr_weight: 0.5         # trial-overridden (probe stage keeps it, warm-up inf)
+  fhr_order: 2            # trial-overridden
+  reward_lags: False      # pinned for the study
+  warmup_grad_steps: 500  # ~1k env steps of gradient bursts past learning_starts
+  c_learning_rate: 0.03   # pinned for the study
+  window_rank_every: 200  # replay-window spectrum probe (wrank), every run
+  window_rank_lags: 16
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -110     # MountainCar-v0 standard bar (reporting only here)
+  early_stopping_patience_eps: null   # full budget for every trial
+  no_eps_to_avg: 25
+  eval:                   # greedy eval -> eval.csv: the study's objective
+    freq_steps: 2500      # curve (config_sb3 uses 5000; halved for finer
+    n_episodes: 10        # time-to-threshold resolution)
+    seed: 9000
+
+analysis:
+  ep_freq: 25             # frequent Hankel sweeps (standard cadence is 50)
+  # MountainCar's raw observation space is already bounded — no state_bounds
+  methods: []             # q_matrix grid dropped for study throughput
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false   # sv columns are the deliverable; ~165 runs
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false        # not a study deliverable

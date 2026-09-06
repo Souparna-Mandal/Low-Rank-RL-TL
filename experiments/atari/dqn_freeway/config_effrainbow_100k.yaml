@@ -1,14 +1,22 @@
-# Atari-100k config for the EfficientRainbow recipe on Krull under the
-# CORRECTED protocol (episodic-life training, full-game eval) — the fair
-# same-protocol counterpart to the BBF comparison. Launched via
-#   run_fhrdqn_atari100k.py --config config_effrainbow_100k.yaml --games krull
-# (baseline arm = fhr_weight forced to 0; exp<N> arms apply fhr_experiments).
-# The old effrainbow runs trained under the pre-2026-08-21 game-restart
-# protocol and live in the archived manifest family — never pool with these.
+# GLOBAL Atari-100k config for the EfficientRainbow recipe — the single
+# source of truth for every game dir. Do NOT edit the per-game
+# config_effrainbow_100k.yaml copies by hand: edit THIS file and run
+#
+#   python experiments/src/sync_effrainbow_configs_from_global.py
+#
+# which renders it into all 27 dqn_<game>/ dirs (and the tuning variant into
+# the 5-game tuning subset), substituting the __TOKEN__ placeholders with the
+# per-game fields (env id, episodic_life for the no-lives games, aggregate
+# membership). The recipe blocks below reproduce the exp_atari100k_effrainbow
+# suite baseline verbatim (burst cadence: 64 grad steps per 32 env steps =
+# replay ratio 2); the suite FHR arm is exp3 (lambda 2, r 8). New vs the
+# suite pass: seeds 0-4, env-step-cadenced eval checkpoints (eval.csv) and
+# env-step-cadenced rank/Hankel analysis — episodes vary wildly across games,
+# env steps are the protocol constant.
 experiment:
   name: dqn_freeway_effrainbow100k
   seed: 0
-  seeds: [0]
+  seeds: [0, 1, 2, 3, 4]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
@@ -16,7 +24,7 @@ experiment:
   agent_class: efficient_rainbow
   include_in_aggregate: false
   fhr_experiments:
-    3: {fhr_weight: 2, fhr_order: 8}   # same arm as the BBF comparison
+    3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)
 
 environment:
   name: ALE/Freeway-v5
@@ -58,7 +66,7 @@ agent:
   discount_factor: 0.99
   TD_LR: 0.01                        # hard target copy at every update tick
   buffer_util: 0.1
-  gd_steps_ceil: 64                  # with train_frequency_steps 1 -> replay ratio 2
+  gd_steps_ceil: 64                  # with train_frequency_steps 32 -> replay ratio 2
   grad_clip_norm: 30.0
   double: true
   # DrQ "Efficient DQN" recipe (arXiv:2004.13649 Table 4) + IQN head sizes:
@@ -89,21 +97,29 @@ training:
   no_episodes: 100000               # upper bound; max_env_steps ends training
   max_env_steps: 100000             # THE Atari-100k interaction budget
   target_network_update_steps: 1     # DrQ: hard target copy every env step (TD_LR 1.0)
-  train_frequency_steps: 32          # one gradient step per env step (post warm-up)
+  train_frequency_steps: 32          # burst cadence: 64 grad steps every 32 env steps
   use_episode_training: False
   solved_reward: 1000000000         # no early stopping under a fixed budget
   warmup_steps: 1600                # DER's min-replay-history (this recipe's own)
   early_stopping_patience_eps: 1000000
   no_eps_to_avg: 20
 
-# Final-policy evaluation (raw FULL-GAME scores; see evaluate_policy_atari):
+# Final-policy evaluation (raw FULL-GAME scores; see evaluate_policy_atari)
+# plus env-step-cadenced mid-training checkpoints -> eval.csv (same schema as
+# the SB3 GreedyEvalCallback). NB checkpoint rollouts consume action-RNG, so
+# arms are stream-comparable only when every arm shares these settings.
 evaluation:
   episodes: 32
   epsilon: 0.001
   base_seed: 1000
+  checkpoint_every_steps: 10000     # 10 tracking points across the 100k budget
+  checkpoint_episodes: 8            # cheaper than the final 32
 
 analysis:
-  ep_freq: 200                      # a few Hankel ticks across the run
+  step_freq: 10000                  # rank/Hankel tick every 10k ENV STEPS (at
+                                    # the next episode boundary) — replaces the
+                                    # legacy per-episode ep_freq gate; map tick
+                                    # episodes to env steps via rewards.csv
   methods: []                       # pixel inputs -> no state-grid Q matrix
   hankel_sweep:
     enabled: true

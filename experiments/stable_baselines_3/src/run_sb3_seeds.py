@@ -139,7 +139,12 @@ def _build_model(cfg, env, seed):
     noise_std = algo.pop("noise_std", 0.0)
     if algo_type == "td3" and noise_type is not None:
         algo["action_noise"] = _action_noise(noise_type, noise_std, env)
-    fhr = {k: cfg["agent"][k] for k in FHR_PARAMS if k in cfg["agent"]}
+    agent_cfg = dict(cfg["agent"])
+    # origin/main's name for the gradient-stream probe cadence (its humanoid
+    # config uses it); the local knob is grad_probe_every with the same meaning
+    if "grad_ratio_every" in agent_cfg and "grad_probe_every" not in agent_cfg:
+        agent_cfg["grad_probe_every"] = agent_cfg.pop("grad_ratio_every")
+    fhr = {k: agent_cfg[k] for k in FHR_PARAMS if k in agent_cfg}
     return cls("MlpPolicy", env, policy_kwargs=policy_kwargs, seed=seed,
                device=cfg["experiment"]["_device"], verbose=0, **algo, **fhr)
 

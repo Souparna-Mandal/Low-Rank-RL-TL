@@ -81,6 +81,13 @@ standard repo structure:
       cartpole/      CartPole-v1     configs/config_sb3.yaml + cached/ + notebooks
       mountaincar/   MountainCar-v0  "
       acrobot/       Acrobot-v1      "
+      pendulum/      Pendulum-v1     SAC track: configs/config_sb3_sac.yaml +
+      fetch_reach/   FetchReach      cached/ + exp1_fhrsac_results.ipynb
+      halfcheetah/   HalfCheetah-v5  MuJoCo locomotion, RL-Zoo mujoco-defaults
+      ant/           Ant-v5          "
+      swimmer/       Swimmer-v5      "
+      humanoid_standup/ HumanoidStandup-v5  "
+      humanoid/      Humanoid-v5     "  (regular locomotion Humanoid, 1e6 steps)
 
 The result viewer scans `experiments/` only, and this suite sits directly
 under it, so the SB3 runs appear in the app under the exp keys
