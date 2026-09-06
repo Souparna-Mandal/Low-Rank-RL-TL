@@ -455,6 +455,10 @@ def record_final_videos(arm, exp_dir=None, config=CONFIG):
     from analysis.visualisations.rollout_video import record_greedy_episode
     out = []
     for r in load_runs(arm, exp_dir, config=config):
+        if not (r["run_dir"] / "checkpoints" / "final.pt").exists():
+            print(f"{arm} seed {r['seed']}: no checkpoints/final.pt (fetch the "
+                  f"run assets with src/run_assets.py) - skipped")
+            continue
         model, adapter = load_run_model(r["run_dir"])
         env = _make_env(r["cfg"], render_mode="rgb_array")
         prefix = record_greedy_episode(adapter, env, str(r["run_dir"] / "videos"),

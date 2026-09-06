@@ -1,0 +1,118 @@
+# SB3 FHR comparison - Pendulum-v1, stock TD3 vs FHRTD3: the validation /
+# debug family of the TD3 track (TD3 twin of configs/config_sb3_sac_wrank.yaml).
+#
+# Same 20k-step budget, seeds and probe cadence as the SAC Pendulum family so
+# the two are directly comparable; the recipe is the RL-Zoo TD3 Pendulum
+# entry (lr 1e-3, Gaussian noise 0.1, net 400x300) except learning_starts 100
+# (the zoo's 10000 would leave only half the budget for learning - the SAC
+# Pendulum family uses 100 too) and gamma 0.99 (zoo: 0.98). Arms cover the
+# learned-c ladder, the state-conditioned c(s,a) variant, PER and the
+# frozen-theory control, i.e. every code path the MuJoCo waves rely on.
+# ---------------------------------------------------------------------------
+# TD3 + FHR (agents/sb3_td3_fhr.FHRTD3). Read this block once:
+#
+# PENALTY SCALE (TD3-native). Stock TD3's critic loss is the plain SUM over
+# the twin critics, sum_i MSE_i (no 1/2), and the FHR term joins on the same
+# footing: L = sum_i MSE_i + lambda * sum_i Huber_i - per critic
+# MSE_i + lambda*Huber_i, the single-critic reading of FHRDQN, with no
+# division by the number of critics anywhere. penalty_raw logs sum_i Huber_i
+# and td_loss the stock sum_i MSE_i, so rho_loss = lambda*penalty_raw/td_loss
+# is the ratio of the two terms exactly as optimised. lambda is therefore a
+# TD3-scale knob and NOT numerically comparable to the SAC families' lambda
+# (SAC weighs a per-critic mean against 0.5*sum_i MSE_i).
+#
+# STREAM RATIOS (the cross-algorithm quantities). agent.grad_probe_every > 0
+# measures, every N gradient steps and on EVERY arm including the baseline,
+# the critic-parameter gradients of the two loss terms on the same batch:
+# grad_ratio = |d pen/d theta| / |d TD/d theta| (unweighted), grad_rho =
+# lambda_eff * grad_ratio (what actually acts), grad_cos (alignment; < 0 means
+# the streams conflict), next to loss_ratio / rho_loss. On the baseline the
+# penalty never enters the loss, so its grad_ratio is the free calibration
+# signal: lambda* = target / grad_ratio (calibrate_fhr.py --by grad, or
+# Family.table_rho_streams in the notebook).
+#
+# EXPLORATION. TD3 explores with a fixed action noise (noise_type/noise_std,
+# translated by the launcher into SB3's ActionNoise), so rewards.csv is the
+# noisy behaviour policy's training stream while eval.csv is the
+# deterministic actor. The baseline arm (fhr_weight 0) is bit-for-bit stock
+# SB3 TD3 with both probes on - asserted by tests/test_sb3_td3_fhr.py.
+# ---------------------------------------------------------------------------
+experiment:
+  name: sb3_pendulum_td3
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # 1/2: learned global c at two lambdas; 3: state-conditioned c(s,a) on the
+    # critic's penultimate features; 4: + prioritized replay; 5: frozen-theory c
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03, c_predictor: shared}
+    4: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03, prioritized_replay: true}
+    5: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.0, c_init: [2.01010101, -1.01010101]}
+  device: cpu               # 2-layer MLPs, batch 256: CPU processes scale
+                            # near-linearly across cores; see the SAC configs
+  save_artifacts: true
+
+environment:
+  name: Pendulum-v1       # raw env; actions Box(-2, 2), squashed by the policy
+
+algo:                       # RL-Zoo TD3 Pendulum-v1 (learning_starts / gamma as noted above)
+  type: td3
+  n_timesteps: 20000
+  learning_rate: 1.0e-3
+  buffer_size: 1000000
+  learning_starts: 100
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  train_freq: 1             # one gradient step per env step
+  gradient_steps: 1
+  policy_delay: 2           # TD3 defaults: delayed actor/target updates,
+  target_policy_noise: 0.2  # clipped Gaussian target-policy smoothing
+  target_noise_clip: 0.5
+  noise_type: normal
+  noise_std: 0.1
+  net_arch: [400, 300]      # TD3 paper / zoo size
+  # no ent_coef / target_update_interval: TD3 has neither
+
+agent:
+  fhr_weight: 0.1           # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 2000    # = 2k env steps at the 1:1 cadence (~10% budget)
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 200     # ~100 probe ticks over the 20k-grad-step budget
+  window_rank_lags: 16
+  grad_probe_every: 20      # gradient-stream probe: 1000 ticks / run
+
+training:
+  solved_reward: null
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                     # greedy eval -> eval.csv: deterministic actor on
+    freq_steps: 1000      # fixed reset seeds; training stream untouched
+    n_episodes: 10
+    seed: 9000
+
+analysis:
+  ep_freq: 25             # Pendulum episodes are 200 steps -> ~4 ticks / 20k
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each action dimension of the deterministic pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel action rollout]
+  hankel_sweep:
+    enabled: false          # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false          # ditto

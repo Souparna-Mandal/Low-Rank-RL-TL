@@ -1,0 +1,124 @@
+# SB3 FHR comparison — HalfCheetah-v5 (MuJoCo), stock SAC vs FHRSAC.
+#
+# First of the four MuJoCo locomotion envs in the SAC track (HalfCheetah, Ant,
+# Swimmer, HumanoidStandup). HalfCheetah leads because it is the canonical SAC
+# benchmark, it never terminates early (fixed 1000-step episodes, so the FHR
+# episodic buffer sees uniform-length episodes and the recurrence residual is
+# never truncated by a done flag), and it learns monotonically — the cleanest
+# signal for a first baseline-vs-FHR read before the other three follow.
+#
+# Recipe = RL-Zoo SAC `mujoco-defaults`: SB3 SAC defaults (lr 3e-4, buffer 1e6,
+# batch 256, tau .005, gamma .99, train_freq 1, gradient_steps 1, ent_coef
+# auto, net 2x256) + learning_starts 10000, 1e6 steps. Zoo reference final
+# score for HalfCheetah SAC is ~9.5k. The baseline arm (fhr_weight 0) is
+# bit-for-bit stock SB3 SAC (asserted by tests/test_sb3_sac_fhr.py).
+#
+# UPDATE CADENCE — deliberately 1:1, not the MountainCar (16, 8). The
+# MountainCar tuning conclusion that transfers here is the TARGET rule, not the
+# burst size: "FHR is a stabiliser that licenses aggressively fresh bootstrap
+# targets". SAC already ships that regime natively (Polyak tau .005 applied
+# every gradient step), so the ingredient that had to be transplanted onto the
+# zoo DQN recipe is free here. The burst-size half of that study (coarse (64,32)
+# amplified FHR's relative edge but cost absolute sample efficiency) is a
+# SEPARATE, ratio-matched variant — configs/config_sb3_sac_burst.yaml — kept out
+# of this family so the headline comparison runs at the baseline's own best
+# setting, which is the standard the thesis claim has to meet.
+#
+# ARM GRID (user-specified): a direct lambda x order sweep rather than the
+# magnitude-calibrated single lambda used for fetch_reach. lambda spans two
+# decades (0.1 / 1 / 10) so the sweep itself brackets the magnitude-matched
+# value instead of a probe run having to find it; order 2 (the floor — order-1
+# pure AR cannot represent a Bellman-consistent sequence) vs order 8 tests
+# whether a longer recurrence window buys anything on a 1000-step episode.
+experiment:
+  name: sb3_halfcheetah_sac
+  seed: 44
+  seeds: [44, 66]
+  fhr_experiments:
+    # order 2 — the floor
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 10.0, fhr_order: 2, c_learning_rate: 0.03}
+    # order 8 — long recurrence window, same lambda ladder
+    4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
+    5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
+    6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
+  # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too
+  # small to amortise CUDA kernel-launch latency, so a single SAC process
+  # measures ~123 fps on CPU vs ~40 fps on the GB10 GPU, and CPU processes
+  # scale near-linearly across the 20 cores while GPU processes contend for
+  # one device (7 concurrent CUDA runs fell below 8 fps each). Set per-config
+  # rather than repo-wide; the Atari/pixel experiments still want cuda.
+  device: cpu
+  save_artifacts: true
+
+environment:
+  name: HalfCheetah-v5    # obs Box(17), actions Box(-1, 1)^6, no termination
+
+algo:                     # RL-Zoo SAC mujoco-defaults
+  type: sac
+  n_timesteps: 1000000
+  learning_rate: 3.0e-4
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  target_update_interval: 1
+  train_freq: 1           # SAC cadence: one gradient step per env step
+  gradient_steps: 1
+  ent_coef: auto
+  net_arch: [256, 256]    # standard SAC size (Haarnoja 2018 / zoo)
+
+agent:
+  fhr_weight: 0.1         # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 10000   # penalty active from env step 20000 = 2% of the
+                             # budget. Sized in ABSOLUTE gradient steps, not as
+                             # a fraction of budget: every prior FHR config in
+                             # this repo switches the penalty on between env
+                             # step 1.5k and 4k (dqn 256-500, sacd 1000-2000,
+                             # pendulum/fetch_reach sac 2000-3000 grad steps) -
+                             # the "10% of budget" reading of the two SAC
+                             # configs is an artifact of their 20k/30k budgets.
+                             # 10% here would mean env step 110000, past the
+                             # steepest part of the curve, which is precisely
+                             # where FHR's sample-efficiency claim lives.
+  c_learning_rate: 0.03
+  window_rank_every: 5000   # in-training penalised-window probe (200 ticks / 1e6 grad steps)
+  window_rank_lags: 16
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: deterministic policy on
+    freq_steps: 20000     # fixed reset seeds; training stream untouched.
+    n_episodes: 5         # 1000-step episodes: 5 eps = 5k env steps per eval,
+    seed: 9000            # 50 eval points over the 1e6 budget
+
+analysis:
+  ep_freq: 100            # 1000-step episodes -> 1000 episodes / 1e6 steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each of the 6 action dimensions of pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout,
+                Hankel a2 rollout, Hankel a3 rollout, Hankel a4 rollout,
+                Hankel a5 rollout]
+  hankel_sweep:
+    enabled: false        # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false        # ditto

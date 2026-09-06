@@ -32,7 +32,20 @@ ENV/
 *.ckpt
 *.npy
 *.npz
-runs/
+# Run directories: the bulk is ignored (raw per-step diagnostics ~180 MB/run,
+# checkpoints, window matrices, videos, analysis-tick figures) but the small
+# reproducibility set every results notebook reads is tracked, so a fresh
+# checkout renders every figure without the raw data. Checkpoints + videos
+# travel as release assets (experiments/stable_baselines_3/src/run_assets.py).
+**/runs/**
+!**/runs/**/
+!**/runs/**/config.yaml
+!**/runs/**/rewards.csv
+!**/runs/**/eval.csv
+!**/runs/**/rank_stats.csv
+!**/runs/**/hankel_sweep.csv
+!**/runs/**/window_hankel.csv
+!**/runs/**/diag_binned_*.npz
 outputs/
 wandb/
 mlruns/

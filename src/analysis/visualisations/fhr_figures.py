@@ -1009,15 +1009,19 @@ class Family:
         if key in self._diag_cache and not refresh:
             return self._diag_cache[key]
         src = run_dir / "train_diagnostics.csv"
-        if not src.exists():
-            return None
         cache = run_dir / f"diag_binned_{n_bins}.npz"
-        if cache.exists() and not refresh and \
-                cache.stat().st_mtime >= src.stat().st_mtime:
+        # The cache is the committed reproducibility artefact: a checkout
+        # without the raw 180 MB CSV (gitignored) still renders every panel.
+        fresh = (cache.exists() and not refresh
+                 and (not src.exists()
+                      or cache.stat().st_mtime >= src.stat().st_mtime))
+        if fresh:
             with np.load(cache) as z:
                 out = {k: z[k] for k in z.files}
             self._diag_cache[key] = out
             return out
+        if not src.exists():
+            return None
         import pandas as pd
         df = pd.read_csv(src)
         df = df.select_dtypes(include=[np.number])
@@ -1350,6 +1354,10 @@ class Family:
         for k in keys:
             dirs = self.run_dirs(k)
             if len(dirs) <= seed_idx:
+                continue
+            if not (dirs[seed_idx][1] / "checkpoints" / "final.pt").exists():
+                print(f"{self.arms[k].plain}: no checkpoints/final.pt for seed "
+                      f"{dirs[seed_idx][0]} (fetch the run assets) - skipped")
                 continue
             _, adapter = runner.load_run_model(dirs[seed_idx][1], device="cpu")
             env = runner._make_env(self.cfg)

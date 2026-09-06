@@ -1,0 +1,127 @@
+# SB3 FHR comparison - Ant-v5 (MuJoCo), stock TD3 vs FHRTD3.
+#
+# TD3 twin of configs/config_sb3_sac_tuned.yaml: same env, seeds and analysis
+# protocol, the RL-Zoo TD3 `mujoco-defaults` recipe (lr 1e-3, buffer 1e6,
+# learning_starts 10000, batch 256, Gaussian action noise 0.1, net 400x300,
+# 1e6 steps). Ant TERMINATES on unhealthy states, so episodes are
+# variable-length and short early on - the episodic buffer's predecessor
+# lookup and the order-8 arms see genuinely truncated recurrence windows.
+# Zoo reference TD3 score on Ant is ~5.8k at 1e6 steps (v3 dynamics).
+# ---------------------------------------------------------------------------
+# TD3 + FHR (agents/sb3_td3_fhr.FHRTD3). Read this block once:
+#
+# PENALTY SCALE (TD3-native). Stock TD3's critic loss is the plain SUM over
+# the twin critics, sum_i MSE_i (no 1/2), and the FHR term joins on the same
+# footing: L = sum_i MSE_i + lambda * sum_i Huber_i - per critic
+# MSE_i + lambda*Huber_i, the single-critic reading of FHRDQN, with no
+# division by the number of critics anywhere. penalty_raw logs sum_i Huber_i
+# and td_loss the stock sum_i MSE_i, so rho_loss = lambda*penalty_raw/td_loss
+# is the ratio of the two terms exactly as optimised. lambda is therefore a
+# TD3-scale knob and NOT numerically comparable to the SAC families' lambda
+# (SAC weighs a per-critic mean against 0.5*sum_i MSE_i).
+#
+# STREAM RATIOS (the cross-algorithm quantities). agent.grad_probe_every > 0
+# measures, every N gradient steps and on EVERY arm including the baseline,
+# the critic-parameter gradients of the two loss terms on the same batch:
+# grad_ratio = |d pen/d theta| / |d TD/d theta| (unweighted), grad_rho =
+# lambda_eff * grad_ratio (what actually acts), grad_cos (alignment; < 0 means
+# the streams conflict), next to loss_ratio / rho_loss. On the baseline the
+# penalty never enters the loss, so its grad_ratio is the free calibration
+# signal: lambda* = target / grad_ratio (calibrate_fhr.py --by grad, or
+# Family.table_rho_streams in the notebook).
+#
+# EXPLORATION. TD3 explores with a fixed action noise (noise_type/noise_std,
+# translated by the launcher into SB3's ActionNoise), so rewards.csv is the
+# noisy behaviour policy's training stream while eval.csv is the
+# deterministic actor. The baseline arm (fhr_weight 0) is bit-for-bit stock
+# SB3 TD3 with both probes on - asserted by tests/test_sb3_td3_fhr.py.
+# ---------------------------------------------------------------------------
+experiment:
+  name: sb3_ant_td3
+  seed: 22
+  seeds: [22, 44, 66, 88, 100]
+  fhr_experiments:
+    # Decade ladder lambda {0.1, 1, 10} x order {2, 8} - brackets the
+    # magnitude-matched lambda (read it off table_rho_streams afterwards)
+    # without a separate probe run; order 2 is the floor (order-1 pure AR
+    # cannot represent a Bellman-consistent sequence), order 8 asks whether a
+    # longer recurrence window buys anything on 1000-step episodes.
+    1: {fhr_weight: 0.1, fhr_order: 2, c_learning_rate: 0.03}
+    2: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.03}
+    3: {fhr_weight: 10.0, fhr_order: 2, c_learning_rate: 0.03}
+    4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
+    5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
+    6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
+    # exp7: frozen-theory control - c pinned at (1 + 1/gamma, -1/gamma), the
+    # annihilator of a Bellman-consistent sequence under constant reward
+    # (roots {1, 1/gamma}); c_learning_rate 0 freezes it. On TD3's plain
+    # Bellman target this is an exact identity test, not an approximation.
+    7: {fhr_weight: 1.0, fhr_order: 2, c_learning_rate: 0.0, c_init: [2.01010101, -1.01010101]}
+  device: cpu               # 2-layer MLPs, batch 256: CPU processes scale
+                            # near-linearly across cores; see the SAC configs
+  save_artifacts: true
+
+environment:
+  name: Ant-v5
+
+algo:                       # RL-Zoo TD3 mujoco-defaults
+  type: td3
+  n_timesteps: 1000000
+  learning_rate: 1.0e-3
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  train_freq: 1             # one gradient step per env step
+  gradient_steps: 1
+  policy_delay: 2           # TD3 defaults: delayed actor/target updates,
+  target_policy_noise: 0.2  # clipped Gaussian target-policy smoothing
+  target_noise_clip: 0.5
+  noise_type: normal
+  noise_std: 0.1
+  net_arch: [400, 300]      # TD3 paper / zoo size
+  # no ent_coef / target_update_interval: TD3 has neither
+
+agent:
+  fhr_weight: 0.1           # placeholder; every launched arm overrides
+  fhr_order: 2
+  reward_lags: False
+  warmup_grad_steps: 10000   # penalty live from env step 20000 (2% of the
+                             # budget), as in the SAC families
+  c_learning_rate: 0.03
+  prioritized_replay: false
+  per_alpha: 0.6
+  per_beta0: 0.4
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+  window_rank_every: 5000   # penalised-window probe: 200 ticks / 1e6 grad steps
+  window_rank_lags: 16
+  grad_probe_every: 100     # gradient-stream probe: 1e4 ticks / run (~1% overhead)
+
+training:
+  solved_reward: null
+  early_stopping_patience_eps: null
+  no_eps_to_avg: 10
+  eval:                     # greedy eval -> eval.csv: deterministic actor on
+    freq_steps: 20000     # fixed reset seeds; 50 points over 1e6 steps
+    n_episodes: 5
+    seed: 9000
+
+analysis:
+  ep_freq: 100            # 1000-step episodes -> 1000 episodes / 1e6 steps
+  methods:
+    # continuous-only rollout Hankels: the min-twin critic trace
+    # Q(s_t, pi(s_t)) plus each action dimension of the deterministic pi(s_t)
+    - name: hankel_rollout_continuous
+      kwargs:
+        n_rollouts: 3
+        base_seed: 52
+      outputs: [Hankel Q rollout, Hankel a0 rollout, Hankel a1 rollout, Hankel a2 rollout, Hankel a3 rollout, Hankel a4 rollout, Hankel a5 rollout, Hankel a6 rollout, Hankel a7 rollout]
+  hankel_sweep:
+    enabled: false          # discrete-stack analysis (needs (B, n_actions) rows)
+  autoregressive_value_probe:
+    enabled: false          # ditto
