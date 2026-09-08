@@ -46,8 +46,20 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--mode", choices=sorted(MODES), required=True)
     ap.add_argument("--skip-existing", action="store_true")
+    ap.add_argument("--out", type=pathlib.Path, default=None,
+                    help="write here instead of jobs_<mode>.txt (use for a "
+                         "resubmission list while an earlier array is still "
+                         "queued on jobs_<mode>.txt — never rewrite a file a "
+                         "live array reads by line number)")
+    ap.add_argument("--exclude-lines", default="",
+                    help="comma-separated 1-based line numbers of jobs_<mode>.txt "
+                         "to leave out (runs still queued/running in a live array)")
     args = ap.parse_args()
     config, arm_filter = MODES[args.mode]
+    live = set()
+    if args.exclude_lines:
+        base = (HERE / f"jobs_{args.mode}.txt").read_text().splitlines()
+        live = {base[int(n) - 1] for n in args.exclude_lines.split(",") if n}
 
     lines, skipped = [], 0
     for cfg_path in sorted(ATARI.glob(f"dqn_*/{config}")):
@@ -66,17 +78,22 @@ def main():
                 if args.skip_existing and finished(game_dir, name, arm_key, seed):
                     skipped += 1
                     continue
-                lines.append(f"{game_dir.name}\t{config}\t{arm_key}\t{seed}\t{ov}")
+                line = f"{game_dir.name}\t{config}\t{arm_key}\t{seed}\t{ov}"
+                if line in live:
+                    skipped += 1
+                    continue
+                lines.append(line)
 
-    out = HERE / f"jobs_{args.mode}.txt"
+    out = (args.out or HERE / f"jobs_{args.mode}.txt").resolve()
     out.write_text("\n".join(lines) + ("\n" if lines else ""))
     print(f"{len(lines)} job(s) -> {out}"
           + (f" ({skipped} already finished, skipped)" if skipped else ""))
     if lines:
         packs = -(-len(lines) // 2)          # default PACK=2 (2 runs per GPU)
+        v = f"-v JOBS_FILE={out.relative_to(HERE.parents[2])} " if args.out else ""
         print(f"submit (PACK=2 default): from experiments/hpc/cx3/logs run\n"
-              f"  qsub -J 1-{packs}%12 ../{args.mode}.pbs\n"
-              f"(PACK=1: qsub -v PACK=1 -J 1-{len(lines)}%12 ../{args.mode}.pbs)")
+              f"  qsub {v}-J 1-{packs}%12 ../{args.mode}.pbs\n"
+              f"(PACK=1: qsub {v}-v PACK=1 -J 1-{len(lines)}%12 ../{args.mode}.pbs)")
 
 
 if __name__ == "__main__":
