@@ -31,6 +31,22 @@
     "exp6": {
       "44": "cached/runs/sb3_ant_sac_exp6_seed44_20260828-082218",
       "66": "cached/runs/sb3_ant_sac_exp6_seed66_20260828-082218"
+    },
+    "exp7": {
+      "44": "cached/runs/sb3_ant_sac_exp7_seed44_20260831-234439",
+      "66": "cached/runs/sb3_ant_sac_exp7_seed66_20260831-234439"
+    },
+    "exp9": {
+      "44": "cached/runs/sb3_ant_sac_exp9_seed44_20260831-234439",
+      "66": "cached/runs/sb3_ant_sac_exp9_seed66_20260831-234439"
+    },
+    "exp8": {
+      "66": "cached/runs/sb3_ant_sac_exp8_seed66_20260831-234439",
+      "44": "cached/runs/sb3_ant_sac_exp8_seed44_20260831-234439"
+    },
+    "exp10": {
+      "44": "cached/runs/sb3_ant_sac_exp10_seed44_20260831-234439",
+      "66": "cached/runs/sb3_ant_sac_exp10_seed66_20260831-234439"
     }
   },
   "overrides": {
@@ -64,6 +80,26 @@
     },
     "exp6": {
       "fhr_weight": 10.0,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp7": {
+      "fhr_weight": 100.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp8": {
+      "fhr_weight": 100.0,
+      "fhr_order": 8,
+      "c_learning_rate": 0.03
+    },
+    "exp9": {
+      "fhr_weight": 1000.0,
+      "fhr_order": 2,
+      "c_learning_rate": 0.03
+    },
+    "exp10": {
+      "fhr_weight": 1000.0,
       "fhr_order": 8,
       "c_learning_rate": 0.03
     }

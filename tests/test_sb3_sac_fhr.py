@@ -520,3 +520,124 @@ def test_fhr_lag_source_variants(family):
     mt.train(gradient_steps=1, batch_size=32)
     shifted = mt.drain_diagnostics()[0]["penalty_raw"]
     assert abs(shifted - rows["detached"][0]["penalty_raw"]) > 1e-6
+
+
+# ------------------------------------------------- gradient-ratio probe
+def _flat_grad(loss, params):
+    grads = torch.autograd.grad(loss, params, retain_graph=True,
+                                allow_unused=True)
+    return torch.cat([(torch.zeros_like(p) if g is None else g).reshape(-1)
+                      for p, g in zip(params, grads)])
+
+
+@pytest.mark.parametrize("family", ["sac", "sacd"])
+def test_grad_ratio_probe_rows_and_math(family):
+    _seed_all(8)
+    make = _filled_sac if family == "sac" else _filled_sacd
+    # probe off: no columns at all (schema of older runs preserved)
+    off = make(fhr_weight=0.5, warmup_grad_steps=0, learning_starts=0)
+    off.train(gradient_steps=2, batch_size=32)
+    assert "grad_ratio" not in off.drain_diagnostics()[0]
+
+    # probe every 2nd step: rows carry the columns, ticks are finite, the
+    # lambda-weighted ratio is lambda x raw, and cos is a cosine
+    model = make(fhr_weight=0.5, fhr_order=2, warmup_grad_steps=0,
+                 learning_starts=0, grad_ratio_every=2)
+    for _ in range(4):
+        model.train(gradient_steps=1, batch_size=32)
+    rows = model.drain_diagnostics()
+    assert len(rows) == 4
+    ticks = [r for r in rows if np.isfinite(r["grad_ratio"])]
+    assert len(ticks) == 2                         # grad steps 0 and 2
+    for r in ticks:
+        assert r["grad_td_norm"] > 0 and r["grad_pen_norm"] > 0
+        assert r["grad_ratio_raw"] == pytest.approx(
+            r["grad_pen_norm"] / r["grad_td_norm"])
+        assert r["grad_ratio"] == pytest.approx(0.5 * r["grad_ratio_raw"])
+        assert -1.0 <= r["grad_cos"] <= 1.0
+    assert all(np.isnan(r["grad_td_norm"]) for r in rows if r not in ticks)
+
+    # warm-up: the counterfactual raw ratio is measured, the weighted one
+    # reads 0 (lambda_eff = 0) and c still gets no gradient
+    warm = make(fhr_weight=1.0, warmup_grad_steps=10 ** 6, learning_starts=0,
+                grad_ratio_every=1)
+    c_before = warm.fhr_head.c.detach().clone()
+    warm.train(gradient_steps=2, batch_size=32)
+    r = warm.drain_diagnostics()[0]
+    assert np.isfinite(r["grad_ratio_raw"]) and r["grad_ratio_raw"] > 0
+    assert r["grad_ratio"] == 0.0
+    assert warm.fhr_head.c.grad is None
+    assert torch.equal(warm.fhr_head.c.detach(), c_before)
+
+
+def test_grad_ratio_matches_manual_autograd():
+    # the logged norms equal an independent autograd.grad over the value
+    # parameters on the same batch. FHRDQN: its TD target is deterministic
+    # (SAC samples next actions and steps alpha inside train, so its target
+    # cannot be rebuilt outside). Stub the sampler to replay one batch.
+    _seed_all(9)
+    model = FHRDQN("MlpPolicy", gym.make("CartPole-v1"),
+                   policy_kwargs=dict(net_arch=[32, 32]), buffer_size=1000,
+                   learning_starts=0, batch_size=32, seed=7, device="cpu",
+                   verbose=0, fhr_weight=0.3, fhr_order=2,
+                   warmup_grad_steps=0, grad_ratio_every=1)
+    _null_logger(model)
+    _fill_buffer(model, "CartPole-v1")
+    params = [p for p in model.q_net.parameters() if p.requires_grad]
+    buf = model.replay_buffer
+    replay = buf.sample(32)
+    inds = buf.last_batch_inds.copy()
+    buf.sample = lambda *a, **k: (setattr(buf, "last_batch_inds", inds)
+                                  or replay)
+    model.policy.set_training_mode(True)
+    with torch.no_grad():
+        nq, _ = model.q_net_target(replay.next_observations).max(dim=1)
+        target = replay.rewards + (1 - replay.dones) * model.gamma * nq.reshape(-1, 1)
+    cur = torch.gather(model.q_net(replay.observations), 1,
+                       replay.actions.long())
+    td = torch.nn.functional.smooth_l1_loss(cur, target)
+    pen = model._fhr_penalty(cur.squeeze(1), model._lag_q_fns()[0], 0.3, {})
+    g_td, g_pen = _flat_grad(td, params), _flat_grad(pen, params)
+    exp_td, exp_pen = float(g_td.norm()), float(g_pen.norm())
+    exp_cos = float(torch.dot(g_td, g_pen)) / (exp_td * exp_pen)
+
+    model.train(gradient_steps=1, batch_size=32)
+    r = model.drain_diagnostics()[0]
+    assert r["grad_td_norm"] == pytest.approx(exp_td, rel=1e-5)
+    assert r["grad_pen_norm"] == pytest.approx(exp_pen, rel=1e-5)
+    assert r["grad_ratio"] == pytest.approx(0.3 * exp_pen / exp_td, rel=1e-5)
+    assert r["grad_cos"] == pytest.approx(exp_cos, rel=1e-5)
+
+
+@pytest.mark.parametrize("family", ["sac", "dqn"])
+def test_grad_ratio_probe_does_not_change_updates(family):
+    # autograd.grad + retain_graph leaves .grad and the RNG stream alone:
+    # an FHR arm with the probe on must train bit-for-bit like one without
+    def make(**over):
+        if family == "sac":
+            m = FHRSAC("MlpPolicy", gym.make("Pendulum-v1"),
+                       **_sac_kwargs(fhr_weight=0.5, warmup_grad_steps=20,
+                                     **over))
+        else:
+            m = FHRDQN("MlpPolicy", gym.make("CartPole-v1"),
+                       policy_kwargs=dict(net_arch=[32, 32]), buffer_size=1000,
+                       learning_starts=100, batch_size=32, train_freq=1,
+                       gradient_steps=1, seed=7, device="cpu", verbose=0,
+                       fhr_weight=0.5, warmup_grad_steps=20, **over)
+        return _null_logger(m)
+
+    states = []
+    for over in (dict(), dict(grad_ratio_every=3)):
+        _seed_all(0)
+        m = make(**over)
+        m.learn(total_timesteps=400)
+        states.append((_policy_state(m), m.fhr_head.c.detach().clone(),
+                       m.drain_diagnostics()))
+        m.env.close()
+    (s0, c0, d0), (s1, c1, d1) = states
+    assert s0.keys() == s1.keys()
+    for k in s0:
+        assert torch.equal(s0[k], s1[k]), k
+    assert torch.equal(c0, c1)
+    assert "grad_ratio" not in d0[0] and "grad_ratio" in d1[0]
+    assert any(np.isfinite(r["grad_ratio"]) for r in d1)

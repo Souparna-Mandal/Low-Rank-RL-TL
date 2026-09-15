@@ -175,6 +175,43 @@ class TestSummary(TreeCase):
         self.assertEqual(s["rewards"][0][2], 200)
 
 
+SWEEP_CSV = (
+    "episode,matrix,rollout,seed,sub_len,eff_rank,stable_rank,spikiness,"
+    "n_rows,n_cols,nnz_rows,nnz_cols,row_coherence,col_coherence,"
+    "row_lev_min,row_lev_max,col_lev_min,col_lev_max,sv_01,sv_02,sv_03\n"
+    "0,Hankel Q,0,52,5,2,1.01,1.09,3,3,3,3,1.5,1.5,0.24,0.5,0.24,0.5,"
+    "0.266909,0.0257733,nan\n"
+    "50,Hankel Q,0,52,5,8,3.86,1.19,8,8,8,8,1.0,1.0,0.12,0.12,0.12,0.12,"
+    "0.331891,0.317139,0.28996\n")
+
+
+class TestSpectra(TreeCase):
+    def _run_dir(self):
+        return (self.root / self.exp
+                / "cached/runs/mc_fhrdqn_baseline_seed44_20260813-175543")
+
+    def test_spectra_rows_with_nan_padding_stripped(self):
+        (self._run_dir() / "hankel_sweep.csv").write_text(SWEEP_CSV)
+        s = rank_viewer.load_spectra(self._run_dir())
+        self.assertEqual(len(s["rows"]), 2)
+        ep, matrix, rollout, sub_len, nr, nc, sv = s["rows"][0]
+        self.assertEqual((ep, matrix, rollout, sub_len, nr, nc),
+                         (0, "Hankel Q", 0, 5, 3, 3))
+        self.assertEqual(sv, [0.266909, 0.0257733])   # trailing nan dropped
+        self.assertEqual(len(s["rows"][1][6]), 3)
+        # round-trips through strict JSON (no NaN tokens)
+        json.loads(json.dumps(s))
+
+    def test_legacy_sweep_without_sv_columns(self):
+        (self._run_dir() / "hankel_sweep.csv").write_text(
+            "episode,matrix,rollout,seed,sub_len,eff_rank\n"
+            "0,Hankel Q,0,52,5,2\n")
+        self.assertIsNone(rank_viewer.load_spectra(self._run_dir())["rows"])
+
+    def test_missing_sweep(self):
+        self.assertIsNone(rank_viewer.load_spectra(self._run_dir())["rows"])
+
+
 class TestHTTP(TreeCase):
     def setUp(self):
         super().setUp()
@@ -222,6 +259,18 @@ class TestHTTP(TreeCase):
 
     def test_unknown_run_404(self):
         code, body = self.get(f"/api/summary/{self.exp}/nope")
+        self.assertEqual(code, 404)
+
+    def test_spectra_endpoint(self):
+        run = "mc_fhrdqn_exp2_seed44_20260814-010101"
+        (self.root / self.exp / "cached/runs" / run
+         / "hankel_sweep.csv").write_text(SWEEP_CSV)
+        code, body = self.get(f"/api/spectra/{self.exp}/{run}")
+        self.assertEqual(code, 200)
+        s = json.loads(body)
+        self.assertEqual(len(s["rows"]), 2)
+        self.assertEqual(s["rows"][1][6], [0.331891, 0.317139, 0.28996])
+        code, _ = self.get(f"/api/spectra/{self.exp}/nope")
         self.assertEqual(code, 404)
 
     def test_path_traversal_refused(self):

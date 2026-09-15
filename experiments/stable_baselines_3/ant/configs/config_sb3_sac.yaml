@@ -26,6 +26,11 @@ experiment:
     4: {fhr_weight: 0.1, fhr_order: 8, c_learning_rate: 0.03}
     5: {fhr_weight: 1.0, fhr_order: 8, c_learning_rate: 0.03}
     6: {fhr_weight: 10.0, fhr_order: 8, c_learning_rate: 0.03}
+
+    # 7: {fhr_weight: 100.0, fhr_order: 2, c_learning_rate: 0.03}
+    # 8: {fhr_weight: 100.0, fhr_order: 8, c_learning_rate: 0.03}
+    # 9: {fhr_weight: 1000.0, fhr_order: 2, c_learning_rate: 0.03}
+    # 10: {fhr_weight: 1000.0, fhr_order: 8, c_learning_rate: 0.03}
   # DEVICE: cpu, deliberately. These are 2x256 MLPs with batch 256 - far too
   # small to amortise CUDA kernel-launch latency, so a single SAC process
   # measures ~123 fps on CPU vs ~40 fps on the GB10 GPU, and CPU processes
@@ -77,6 +82,13 @@ agent:
   rampdown_penalty_topk: 20
   rampdown_patience_eps: 10
   rampdown_episodes: 0
+  window_rank_every: 1000 # replay-window spectrum probe (wrank) -> rank_stats
+                          # window rows: ~1000 ticks over the 1e6 grad steps.
+                          # Cadence in GRAD steps, as in the mountaincar lagsrc
+                          # family (200/60k there). Added with exp7-10; the
+                          # earlier baseline/exp1-6 runs predate it and have no
+                          # window spectra.
+  window_rank_lags: 16    # window length >= fhr_order 8 arms need
 
 training:
   solved_reward: null     # no solved bar on MuJoCo locomotion; no early stop

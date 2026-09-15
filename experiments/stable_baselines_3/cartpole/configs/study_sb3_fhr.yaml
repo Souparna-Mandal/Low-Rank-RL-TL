@@ -1,0 +1,29 @@
+# SB3 FHR Optuna study settings — CartPole-v1, consumed by
+# ../../src/run_sb3_optuna.py (run from this experiment directory) against
+# configs/config_sb3_study.yaml. Search space is rho (the weighted-penalty/TD
+# contribution ratio; fhr_weight = rho * calibrated td/penalty ratio) and the
+# recurrence order — everything else pinned by the study config. Two
+# objectives per trial: SPEED (mean env-steps to the threshold ladder, min)
+# and FINAL (mean of the last 3 greedy-eval ticks, max), each the seed mean.
+study:
+  name: sb3_cartpole_fhr_rho
+  seeds: [24, 100, 786, 1000, 9000]
+  n_trials: 30
+  n_jobs: 1                     # trials sequential; 5 seed-children in flight
+  n_startup_trials: 8
+  calibration:
+    tail_frac: 0.5              # probe-tail medians for the lambda mapping
+  enqueue:                      # known-good arms, converted to rho
+    - {fhr_weight: 0.5, fhr_order: 2}   # cross-env headline block (exp10)
+    - {fhr_weight: 1.0, fhr_order: 2}   # bracketing lambda (exp11)
+    - {fhr_weight: 0.1, fhr_order: 2}   # bracketing lambda (exp12)
+
+search_space:
+  rho: {low: 0.1, high: 100.0, log: true}
+  fhr_order: {low: 1, high: 4}
+
+objective:
+  # eval.csv greedy curve thresholds: onset / solid progress / solved bar /
+  # ceiling (published zoo final: 500)
+  thresholds: [200, 400, 475, 500]
+  final_evals: 3                # FINAL = mean of the last 3 eval ticks

@@ -1,0 +1,45 @@
+# SB3 FHR Optuna study settings — Acrobot-v1, consumed by
+# ../../src/run_sb3_optuna.py (run from this experiment directory) against
+# configs/config_sb3_study.yaml. Search space is rho (the weighted-penalty/TD
+# contribution ratio; fhr_weight = rho * calibrated td/penalty ratio) and the
+# recurrence order — everything else pinned by the study config. Two
+# objectives per trial: SPEED (mean env-steps to the threshold ladder, min)
+# and FINAL (mean of the last 3 greedy-eval ticks, max), each the seed mean.
+study:
+  # v2: v1 (sb3_acrobot_fhr_rho, same journal) used the probe-derived ratio
+  # 16.72, i.e. lambda in [1.7, 1672] — above the known-good lambda ~0.03-1,
+  # and every sampled trial collapsed (finals -230..-500 vs baseline -68).
+  # No completed FHR-active acrobot runs exist to anchor a realized-rho
+  # mapping (and its trials show penalty_raw collapsing to ~0.002-0.06 of
+  # td_loss at good lambdas, so the literal realized window can't contain
+  # them). v2 instead log-centers the window on this env's earlier Optuna
+  # pick (lambda 1, order 3): ratio 0.316 -> lambda in [0.032, 31.6],
+  # covering exp12's 0.027 through strong-penalty territory. Per-trial
+  # realized rho stays logged for interpretation.
+  name: sb3_acrobot_fhr_rho_v2
+  seeds: [24, 100, 786, 1000, 9000]
+  n_trials: 30
+  n_jobs: 1                     # trials sequential; 5 seed-children in flight
+  n_startup_trials: 8
+  calibration:
+    tail_frac: 0.5              # probe-tail medians for the reference ratio
+    td_over_penalty_override: 0.316
+    reuse_probe_dirs:           # v1's probes (bit-identical to lambda=0)
+      - optuna_sb3_fhr/runs/sb3_acrobot_study_probe_seed24_20260829-212849
+      - optuna_sb3_fhr/runs/sb3_acrobot_study_probe_seed100_20260829-212849
+      - optuna_sb3_fhr/runs/sb3_acrobot_study_probe_seed786_20260829-212849
+      - optuna_sb3_fhr/runs/sb3_acrobot_study_probe_seed1000_20260829-212849
+      - optuna_sb3_fhr/runs/sb3_acrobot_study_probe_seed9000_20260829-212849
+  enqueue:                      # known-good arms, converted to rho
+    - {fhr_weight: 0.5, fhr_order: 2}   # cross-env headline block (exp10)
+    - {fhr_weight: 1.0, fhr_order: 3}   # this env's earlier Optuna pick (exp11)
+
+search_space:
+  rho: {low: 0.1, high: 100.0, log: true}
+  fhr_order: {low: 1, high: 4}
+
+objective:
+  # eval.csv greedy curve thresholds: onset / solid progress / solved bar /
+  # near the published zoo final (-69.1 +/- 10)
+  thresholds: [-200, -150, -100, -80]
+  final_evals: 3                # FINAL = mean of the last 3 eval ticks

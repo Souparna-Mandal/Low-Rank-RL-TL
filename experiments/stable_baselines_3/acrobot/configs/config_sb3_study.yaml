@@ -1,0 +1,82 @@
+# SB3 FHR Optuna study config — Acrobot-v1, consumed by
+# ../../src/run_sb3_optuna.py (never by run_sb3_seeds launcher mode; no
+# manifest family). The tuned config_sb3.yaml recipe (Polyak fresh-target
+# port of the zoo QR-DQN entry) with the study deltas:
+#   * seeds — the 5 study seeds; every trial trains all of them.
+#   * agent.window_rank_every/lags — replay-window singular spectra
+#     (window_hankel.csv) on for every run, ~250 ticks over 100k grad steps.
+#   * analysis.ep_freq 25 — Hankel sweeps at 2x the standard cadence;
+#     q_matrix + AR probe dropped (not study deliverables).
+#   * training.early_stopping_patience_eps null — every trial runs the full
+#     budget so the FINAL objective is measured at the same env step.
+# The driver overrides fhr_weight (from rho) and fhr_order per trial;
+# reward_lags stays false and c_learning_rate stays at the value below.
+experiment:
+  name: sb3_acrobot_study
+  seed: 24
+  seeds: [24, 100, 786, 1000, 9000]
+  device: auto
+  save_artifacts: true
+
+environment:
+  name: Acrobot-v1        # raw env (bounded obs space)
+
+algo:                     # RL-Zoo QR-DQN, Acrobot-v1, tuned deltas marked
+  type: qrdqn
+  n_timesteps: 100000
+  learning_rate: 1.0e-3   # TUNED (zoo: 6.3e-4) — aggressive, FHR-stabilised
+  batch_size: 128
+  buffer_size: 50000
+  learning_starts: 0
+  gamma: 0.99
+  tau: 0.005              # TUNED (zoo: hard sync every 250 steps) — Polyak,
+  target_update_interval: 1   # synced every env step
+  train_freq: 4
+  gradient_steps: -1      # SB3 semantics: as many gradient steps as env steps
+                          # collected in the rollout (= train_freq)
+  exploration_fraction: 0.12
+  exploration_final_eps: 0.1
+  net_arch: [256, 256]
+  n_quantiles: 25
+
+agent:
+  fhr_weight: 0.5         # trial-overridden (probe stage keeps it, warm-up inf)
+  fhr_order: 2            # trial-overridden
+  reward_lags: False      # pinned for the study
+  warmup_grad_steps: 2000 # the classic acrobot warm-up (in gradient steps;
+                          # here ~2k env steps at 1 grad step / env step)
+  c_learning_rate: 0.03   # pinned for the study
+  window_rank_every: 400  # replay-window spectrum probe (wrank), every run
+  window_rank_lags: 16
+  rampdown_reward_threshold: null
+  rampdown_penalty_threshold: null
+  rampdown_penalty_topk: 20
+  rampdown_patience_eps: 10
+  rampdown_episodes: 0
+
+training:
+  solved_reward: -80      # tight classic bar (reporting only here)
+  early_stopping_patience_eps: null   # full budget for every trial
+  no_eps_to_avg: 10
+  eval:                   # greedy eval -> eval.csv: the study's objective
+    freq_steps: 2000      # curve (config_sb3 uses 4000; halved for finer
+    n_episodes: 10        # time-to-threshold resolution)
+    seed: 9000
+
+analysis:
+  ep_freq: 25             # frequent Hankel sweeps (standard cadence is 50)
+  # Acrobot's raw observation space is bounded — no state_bounds needed
+  methods: []             # q_matrix grid dropped for study throughput
+  hankel_sweep:
+    enabled: true
+    n_rollouts: 3
+    base_seed: 52
+    functions: [Hankel Q, Hankel V]
+    save_trajectories: false   # sv columns are the deliverable; ~165 runs
+    sub_trajectory:
+      enabled: false
+      min_len: 20
+      stride: 20
+      n_figures: 5
+  autoregressive_value_probe:
+    enabled: false        # not a study deliverable
