@@ -9,21 +9,33 @@
 #   qsub -J 1-<ceil(N/2)>%12 ../tune.pbs       # N printed by make_jobs; %12 = user GPU cap
 #
 # Repo path / conda env override:  qsub -v REPO=...,CONDA_ENV=... -J ... ../tune.pbs
-#PBS -l select=1:ncpus=8:mem=96gb:ngpus=1:gpu_type=L40S
-#PBS -l walltime=06:00:00
+#PBS -l select=1:ncpus=8:mem=20gb:ngpus=1:gpu_type=L40S
+#PBS -l walltime=02:00:00
 
 set -euo pipefail
 REPO=${REPO:-$HOME/Low-Rank-RL-TL}
-CONDA_ENV=${CONDA_ENV:-lowrank}
+CONDA_ENV=${CONDA_ENV:-low-rank-rl}
 
-eval "$(~/miniforge3/bin/conda shell.bash hook)"
+# conda: user-local miniforge if present, else the RCS module
+if [ -x "$HOME/miniforge3/bin/conda" ]; then
+    eval "$("$HOME/miniforge3/bin/conda" shell.bash hook)"
+else
+    source /etc/profile.d/modules.sh 2>/dev/null || true
+    module load Miniforge3/24.11.3-0 2>/dev/null || module load miniforge/3
+    eval "$(conda shell.bash hook)"
+fi
 conda activate "$CONDA_ENV"
 export PYTHONUNBUFFERED=1 MPLBACKEND=Agg TQDM_DISABLE=1
-export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4   # per packed run
+export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4   # per packed run: the FHR arm
+                                             # really uses ~4 cores (CPU-side
+                                             # penalty work) — 4-core subjobs
+                                             # thrash and time out
 
 cd "$REPO"
 # PACK runs share this job's single GPU (default 2; PACK=1 restores
 # one-run-per-GPU; override: qsub -v PACK=3 ...). Array size must be
 # ceil(n_jobs / PACK) — make_jobs.py prints the right qsub line.
+# JOBS_FILE override (qsub -v JOBS_FILE=...) lets a resubmission list run
+# while an earlier array still references jobs_tune.txt by line number.
 bash experiments/hpc/cx3/run_pack.sh \
-     experiments/hpc/cx3/jobs_tune.txt "$PBS_ARRAY_INDEX" "${PACK:-2}"
+     "${JOBS_FILE:-experiments/hpc/cx3/jobs_tune.txt}" "$PBS_ARRAY_INDEX" "${PACK:-2}"

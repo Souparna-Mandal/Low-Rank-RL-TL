@@ -16,7 +16,7 @@
 experiment:
   name: dqn_amidar_effrainbow100k
   seed: 0
-  seeds: [0, 1, 2, 3, 4]
+  seeds: [0, 1, 2]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
@@ -92,6 +92,11 @@ agent:
   reward_lags: False
   warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
   c_learning_rate: 0.01
+  # In-training diagnostics (both RNG-free — safe on every arm incl. baseline):
+  window_rank_every: 1000           # penalised-window sigma spectra every N grad
+  window_rank_lags: 16              # steps -> window_hankel.csv (17-col windows)
+  rho_every: 500                    # rho = ||lam*grad(penalty)||/||grad(TD)|| ->
+                                    # train_diagnostics.csv (nan off-sample)
 
 training:
   no_episodes: 100000               # upper bound; max_env_steps ends training
@@ -116,7 +121,7 @@ evaluation:
   checkpoint_episodes: 8            # cheaper than the final 32
 
 analysis:
-  step_freq: 10000                  # rank/Hankel tick every 10k ENV STEPS (at
+  step_freq: 5000                  # rank/Hankel tick every 10k ENV STEPS (at
                                     # the next episode boundary) — replaces the
                                     # legacy per-episode ep_freq gate; map tick
                                     # episodes to env steps via rewards.csv

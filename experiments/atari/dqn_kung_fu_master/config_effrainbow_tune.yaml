@@ -16,7 +16,7 @@
 experiment:
   name: dqn_kung_fu_master_effrainbowtune
   seed: 0
-  seeds: [0, 1]
+  seeds: [0, 1, 2]
   device: auto
   save_artifacts: true
   # DrQ Efficient-DQN recipe: IQN-dueling + double + n-step 10 + DrQ
@@ -29,8 +29,8 @@ experiment:
     11: {fhr_weight: 4, fhr_order: 8}
     12: {fhr_weight: 2, fhr_order: 4}
     13: {fhr_weight: 2, fhr_order: 16}
-    14: {fhr_weight: 2, fhr_order: 8, reward_lags: True}     # ARX twin
-    15: {fhr_weight: 2, fhr_order: 8, c_learning_rate: 0.001}
+    14: {fhr_weight: 10, fhr_order: 8}
+    15: {fhr_weight: 100, fhr_order: 8}
 
 environment:
   name: ALE/KungFuMaster-v5
@@ -98,6 +98,11 @@ agent:
   reward_lags: False
   warmup_grad_steps: 10000          # ~5k env steps of penalty warm-up at replay ratio 2
   c_learning_rate: 0.01
+  # In-training diagnostics (both RNG-free — safe on every arm incl. baseline):
+  window_rank_every: 1000           # penalised-window sigma spectra every N grad
+  window_rank_lags: 16              # steps -> window_hankel.csv (17-col windows)
+  rho_every: 500                    # rho = ||lam*grad(penalty)||/||grad(TD)|| ->
+                                    # train_diagnostics.csv (nan off-sample)
 
 training:
   no_episodes: 100000               # upper bound; max_env_steps ends training

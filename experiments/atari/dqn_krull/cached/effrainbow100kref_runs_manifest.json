@@ -1,0 +1,31 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_krull_effrainbow100kref_baseline_seed1_20260907-231901",
+      "2": "cached/runs/dqn_krull_effrainbow100kref_baseline_seed2_20260907-231901",
+      "3": "cached/runs/dqn_krull_effrainbow100kref_baseline_seed3_20260907-235126",
+      "4": "cached/runs/dqn_krull_effrainbow100kref_baseline_seed4_20260907-235126"
+    },
+    "exp3": {
+      "1": "cached/runs/dqn_krull_effrainbow100kref_exp3_seed1_20260910-191911",
+      "2": "cached/runs/dqn_krull_effrainbow100kref_exp3_seed2_20260910-191911",
+      "3": "cached/runs/dqn_krull_effrainbow100kref_exp3_seed3_20260910-195408",
+      "4": "cached/runs/dqn_krull_effrainbow100kref_exp3_seed4_20260910-195408"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

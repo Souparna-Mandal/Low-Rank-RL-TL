@@ -5,8 +5,30 @@ renders from `experiments/atari/config_effrainbow_100k.global.yaml`:
 
 | campaign | jobs | budget | arms | seeds |
 |---|---|---|---|---|
-| **tune** (`tune.pbs`) | 5 games × 8 arms × 2 seeds = **80** | 50k steps | baseline + 7-arm grid around λ2/r8 | 0–1 |
-| **suite** (`suite.pbs`) | 27 games × 2 arms × 5 seeds = **270** | 100k steps | baseline + exp3 (λ2, r8) | 0–4 |
+| **tune** (`tune.pbs`) | 5 games × 8 arms × 3 seeds = **120** (done 2026-09-03) | 50k steps | baseline + 7-arm grid around λ2/r8 | 0–2 |
+| **suite** (`suite.pbs`) | 27 games × 2 arms × 3 seeds = **162** | 100k steps | baseline + exp3 (λ2, r8) | 0–2 |
+| **ref** (`ref.pbs`) | 27 games × 2 arms × 4 seeds = **216** | 100k steps | baseline + exp3, **pre-instrumentation protocol** | **1–4** (seed 0 = the notebook pass) |
+
+`ref` renders `config_effrainbow_100k_ref.yaml`: functionally identical to the
+config that produced `exp_atari100k_effrainbow.ipynb`'s results (no
+mid-training eval checkpoints, episode-gated analysis) — run it instead of
+`suite` when new numbers must extend that notebook's comparison; runs get
+their own `_effrainbow100kref` name/manifest family
+(`rebuild_atari_manifests.py --family ref`). Don't run both `suite` and
+`ref` — pick one protocol and spend the GPU hours once.
+
+The ref campaign's seeds come from `experiment.ref_seeds` in the global yaml
+(currently `[1, 2, 3, 4]`): seed 0 of exactly this protocol already exists
+for all 27 games × {baseline, exp3} (the `effrainbow100k` manifests), so
+pooling the ref runs with that seed-0 pass gives a **5-seed mean** per
+game/arm. The tuning grid (2026-09-03, `exp_effrainbow_tune50k.ipynb`)
+confirmed exp3 (λ=2, r=8) as the best arm, so the ref pass is the campaign
+to run now:
+
+```bash
+python experiments/hpc/cx3/make_jobs.py --mode ref     # 216 jobs -> jobs_ref.txt
+cd experiments/hpc/cx3/logs && qsub -J 1-108%12 ../ref.pbs
+```
 
 Tuning subset (picked from the 1-seed suite's per-game ΔHNS): Boxing (+1.47)
 and BankHeist (+0.62) as wins, KungFuMaster and BattleZone as washes,
@@ -31,7 +53,7 @@ never the global directly, so always re-sync before re-listing.)
 
 ```bash
 # 1. conda via the RCS-recommended miniforge route (skip if you have it)
-module load miniforge/3
+module load miniforge/3   # some nodes name it Miniforge3/<ver> — check `module avail -i miniforge`
 miniforge-setup                      # installs ~/miniforge3; then re-login
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda create -n lowrank python=3.12 -y
@@ -47,7 +69,7 @@ pip install uv && uv pip install -r pyproject.toml
 #  opencv/tqdm matter here)
 
 # 3. smoke test ON A GPU NODE before any array (checks CUDA wheel + ALE ROMs):
-qsub -I -l select=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=L40S -l walltime=0:30:0
+qsub -I -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S -l walltime=0:30:0
 conda activate lowrank && cd $HOME/Low-Rank-RL-TL/experiments/atari/dqn_boxing
 python ../../src/run_fhrdqn_atari100k.py --arm baseline --seed 0 \
     --config config_effrainbow_tune.yaml --steps 2000 --eval-episodes 2
@@ -76,11 +98,14 @@ Same flow for the suite with `--mode suite` and `../suite.pbs`
   (`module load nvitop/...`) and only go wider if GPU util sits well under
   90 %. GPU jobs auto-route to the gpu72 queue (72 h max); never pass `-q`.
 * Requests: 1× L40S (48 GB VRAM, the default/plentiful card — don't request
-  the scarce A100s), **8 cores + 96 GB RAM per subjob** (the natural
-  64-core/8-GPU node ratio; ~6 GB uint8 replay buffer + torch headroom per
-  packed run). Walltime 6 h (tune) / 12 h (suite) per PACK is deliberately
-  fat: a solo GB10 run of the 100k recipe took ~35–60 min and two packed
-  runs contend, so budget ~2× solo.
+  the scarce A100s), **4 cores + 20 GB RAM per PACK=2 subjob**, walltime
+  **2 h** (tune/ref) / 3 h (suite). Sized from measured usage: a ref pack
+  (two 100k runs) peaks at ~8 GB RAM, ~200 % CPU and 32–56 min wall; the
+  original 8-core/96 GB/12 h request was a 12× over-ask that only cost queue
+  time (backfill favours short, small jobs). If a pack ever hits the
+  walltime it simply dies and `--skip-existing` resubmits it. Requests of an
+  already-queued array can be fixed in place without losing queue position:
+  `qalter -l walltime=02:00:00 -l select=1:ncpus=4:mem=20gb:ngpus=1:gpu_type=L40S '<jobid>[]'`.
 * Per-run stdout goes to `experiments/hpc/cx3/logs/jobs_<mode>_line<N>.log`
   (live-tailable, unlike the PBS `.o` files which appear only at subjob
   end).

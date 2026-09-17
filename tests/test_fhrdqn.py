@@ -588,3 +588,24 @@ def test_lag_source_target_reads_target_net():
     db = b.train()
     assert da["b_h"] > 0 and db["b_h"] > 0
     assert abs(da["penalty_raw"] - db["penalty_raw"]) > 1e-6
+
+
+def test_rho_gradient_ratio_diagnostic():
+    """rho_every samples ||lam*grad(penalty)|| / ||grad(TD)|| into the diag;
+    off-sample steps and the lambda=0 baseline stay NaN."""
+    a = _make_fhr(0.5, fhr_lag_source="online", rho_every=1)
+    _fill_agent(a)
+    d = a.train()
+    assert d["b_h"] > 0 and np.isfinite(d["rho"]) and d["rho"] > 0
+    b = _make_fhr(0.0, rho_every=1)          # baseline: no penalty, no rho
+    _fill_agent(b)
+    assert np.isnan(b.train()["rho"])
+    c = _make_fhr(0.5, rho_every=0)          # disabled
+    _fill_agent(c)
+    assert np.isnan(c.train()["rho"])
+    # detached lags: penalty gradient flows through the anchor only, rho still
+    # finite (and typically smaller than the online variant's)
+    e = _make_fhr(0.5, fhr_lag_source="detached", rho_every=1)
+    _fill_agent(e)
+    de = e.train()
+    assert np.isfinite(de["rho"]) and de["rho"] > 0

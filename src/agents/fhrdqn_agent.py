@@ -64,6 +64,10 @@ class FHRDQNAgent(QAgent):
             (a backward-in-time bootstrap, the two-timescale analogue of the
             TD target). The anchor always stays the online in-graph Q(s_t, a_t)
             shared with the TD term, and c/d always train.
+        rho_every: every N gradient steps, log diag["rho"] =
+            ||lam * grad_theta(penalty)|| / ||grad_theta(td_loss)|| over the
+            policy-net parameters — the penalty's share of update pressure.
+            Costs two extra backward passes per sample; 0 (default) disables.
         rampdown_reward_threshold: arming this (non-None) enables the automatic
             lambda ramp-DOWN. After warm-up, once the mean episode reward over
             the last rampdown_patience_eps episodes reaches this value while
@@ -97,13 +101,16 @@ class FHRDQNAgent(QAgent):
                  rampdown_penalty_topk: int = 20,
                  rampdown_patience_eps: int = 10,
                  rampdown_episodes: int = 0, window_rank_every: int = 0,
-                 window_rank_lags: int = 16, **q_agent_kwargs):
+                 window_rank_lags: int = 16, rho_every: int = 0,
+                 **q_agent_kwargs):
         super().__init__(**q_agent_kwargs)
         if fhr_order < 1:
             raise ValueError(f"fhr_order must be >= 1, got {fhr_order}")
         if fhr_lag_source not in ("online", "detached", "target"):
             raise ValueError("fhr_lag_source must be one of online|detached|"
                              f"target, got {fhr_lag_source!r}")
+        if rho_every < 0:
+            raise ValueError(f"rho_every must be >= 0, got {rho_every}")
         if window_rank_every < 0:
             raise ValueError(f"window_rank_every must be >= 0, got {window_rank_every}")
         if window_rank_lags < 1:
@@ -126,6 +133,7 @@ class FHRDQNAgent(QAgent):
         self.reward_lags = reward_lags
         self.warmup_grad_steps = warmup_grad_steps
         self.fhr_lag_source = fhr_lag_source
+        self.rho_every = rho_every
 
         gamma = self.loss.gamma
         c0 = torch.zeros(fhr_order)
@@ -253,6 +261,33 @@ class FHRDQNAgent(QAgent):
                    else self.policy_net)
         return lag_net, torch.no_grad()
 
+    def _probe_q(self, x):
+        """Q-value forward used by the window-rank probe — subclasses whose
+        nets need extra arguments (e.g. the IQN head's fixed tau grid)
+        override this so the probe measures the same Q the penalty sees."""
+        return self.policy_net(x)
+
+    def _grad_ratio(self, td_loss, penalty, lam) -> float:
+        """rho = ||lam * grad_theta(penalty)|| / ||grad_theta(td_loss)|| over
+        the policy-net parameters (c/d excluded). Grad-free lag sources
+        (detached/target) route the penalty gradient through the anchor
+        alone, so rho then measures exactly that channel. Two extra backward
+        passes — sampled via rho_every, never every step."""
+        params = [q for q in self.policy_net.parameters() if q.requires_grad]
+        g_td = torch.autograd.grad(td_loss, params, retain_graph=True,
+                                   allow_unused=True)
+        g_p = torch.autograd.grad(penalty, params, retain_graph=True,
+                                  allow_unused=True)
+
+        def _norm(gs):
+            sq = 0.0
+            for g in gs:
+                if g is not None:
+                    sq += float(g.pow(2).sum())
+            return sq ** 0.5
+        td_n = _norm(g_td)
+        return float(lam) * _norm(g_p) / td_n if td_n > 0 else float("nan")
+
     def notify_episode_end(self, episode: int, episode_reward: float) -> None:
         """Per-episode hook (called by dqn_training_loop): watch the reward
         window and the recurrence residual to decide the lambda ramp-down.
@@ -356,10 +391,10 @@ class FHRDQNAgent(QAgent):
         p_actions = p_actions.to(self.device)
         n = len(keep)
         with torch.no_grad():
-            out = self.policy_net(p_states.reshape(n * L, *p_states.shape[2:]))
+            out = self._probe_q(p_states.reshape(n * L, *p_states.shape[2:]))
             # gather_predecessors is most-recent-lag-first; flip to time order
             q_lags = out.gather(1, p_actions.reshape(n * L, 1)).view(n, L).flip(1)
-            anchor_q = self.policy_net(states[keep]).gather(
+            anchor_q = self._probe_q(states[keep]).gather(
                 1, actions[keep].unsqueeze(1))
             W = torch.cat([q_lags, anchor_q], dim=1).cpu().numpy()
         sv_full = np.linalg.svd(W, compute_uv=False)
@@ -406,7 +441,7 @@ class FHRDQNAgent(QAgent):
                 "rampdown_scale": self._rampdown_scale(),
                 "rampdown_penalty_bar": (float("nan") if (bar := self._penalty_bar()) is None
                                          else bar),
-                "nan_skips": self.nan_skips}
+                "nan_skips": self.nan_skips, "rho": np.nan}
         for j in range(self.fhr_order):
             diag[f"c_{j + 1}"] = float(self.c[j].detach())
             if self.reward_lags:
@@ -451,6 +486,9 @@ class FHRDQNAgent(QAgent):
                     self._ep_penalty_vals.append(diag["penalty_raw"])
                 diag["residual_rms"] = float(
                     (anchor.detach() - prediction.detach()).pow(2).mean().sqrt())
+                if (self.rho_every > 0 and lam > 0
+                        and self._grad_steps % self.rho_every == 0):
+                    diag["rho"] = self._grad_ratio(loss, penalty, lam)
                 if lam > 0:
                     loss = loss + lam * penalty
 

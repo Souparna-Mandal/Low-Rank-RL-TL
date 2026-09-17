@@ -1,0 +1,31 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_assault_effrainbow100kref_baseline_seed1_20260905-055336",
+      "2": "cached/runs/dqn_assault_effrainbow100kref_baseline_seed2_20260905-055336",
+      "3": "cached/runs/dqn_assault_effrainbow100kref_baseline_seed3_20260905-055632",
+      "4": "cached/runs/dqn_assault_effrainbow100kref_baseline_seed4_20260905-055632"
+    },
+    "exp3": {
+      "1": "cached/runs/dqn_assault_effrainbow100kref_exp3_seed1_20260909-232805",
+      "2": "cached/runs/dqn_assault_effrainbow100kref_exp3_seed2_20260909-232805",
+      "3": "cached/runs/dqn_assault_effrainbow100kref_exp3_seed3_20260910-003428",
+      "4": "cached/runs/dqn_assault_effrainbow100kref_exp3_seed4_20260910-003428"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

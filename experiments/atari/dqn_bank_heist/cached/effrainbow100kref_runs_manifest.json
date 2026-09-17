@@ -1,0 +1,31 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_bank_heist_effrainbow100kref_baseline_seed1_20260905-081416",
+      "2": "cached/runs/dqn_bank_heist_effrainbow100kref_baseline_seed2_20260905-081416",
+      "3": "cached/runs/dqn_bank_heist_effrainbow100kref_baseline_seed3_20260905-202438",
+      "4": "cached/runs/dqn_bank_heist_effrainbow100kref_baseline_seed4_20260905-202438"
+    },
+    "exp3": {
+      "1": "cached/runs/dqn_bank_heist_effrainbow100kref_exp3_seed1_20260910-012913",
+      "2": "cached/runs/dqn_bank_heist_effrainbow100kref_exp3_seed2_20260910-012913",
+      "3": "cached/runs/dqn_bank_heist_effrainbow100kref_exp3_seed3_20260910-013624",
+      "4": "cached/runs/dqn_bank_heist_effrainbow100kref_exp3_seed4_20260910-013624"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

@@ -13,6 +13,12 @@ itself (experiment.tune_fhr_experiments — edit it THERE): this script strips
 that block from the 100k renderings and swaps it in as the tune configs'
 fhr_experiments.
 
+The ref rendering (config_effrainbow_100k_ref.yaml) takes its seeds from
+experiment.ref_seeds in the global yaml instead of experiment.seeds — seed 0
+of that protocol already exists (the notebook's 1-seed suite pass), so the
+ref campaign only trains the seeds that are missing. The key is stripped
+from the 100k and tune renderings.
+
     python experiments/src/sync_effrainbow_configs_from_global.py
 """
 import pathlib
@@ -45,10 +51,17 @@ TUNE_BLOCK_RE = re.compile(                 # line-anchored on purpose: the
     r"  tune_fhr_experiments:\n"            # the key,
     r"((?:    .*\n)+)")                     # -> group(1): the entry lines
 
+# The ref-campaign seeds + their comment banner, stripped from the 100k and
+# tune renderings and swapped in as the ref config's seeds line.
+REF_SEEDS_RE = re.compile(
+    r"  # ---- REF-CAMPAIGN SEEDS.*\n"
+    r"(?:  #.*\n)*"
+    r"  ref_seeds: (\[.*\])\n")             # -> group(1): the seed list
+
 
 def render(template: str, name: str, env_id: str, episodic_life: bool,
            include_in_aggregate: bool) -> str:
-    out = TUNE_BLOCK_RE.sub("", template)
+    out = REF_SEEDS_RE.sub("", TUNE_BLOCK_RE.sub("", template))
     out = (out
            .replace("__EXPERIMENT_NAME__", name)
            .replace("__ENV_ID__", env_id)
@@ -72,6 +85,7 @@ def _validate(text: str) -> None:
                 "evaluation", "analysis"):
         assert key in cfg, f"rendered config lost its {key}: section"
     assert "tune_fhr_experiments" not in cfg["experiment"]
+    assert "ref_seeds" not in cfg["experiment"]
 
 
 def tune_variant(text: str, grid: str) -> str:
@@ -79,20 +93,53 @@ def tune_variant(text: str, grid: str) -> str:
     grid: the tune_fhr_experiments entry lines lifted from the global yaml,
     re-indented to sit under fhr_experiments."""
     text = text.replace("_effrainbow100k", "_effrainbowtune")
-    text = text.replace("  seeds: [0, 1, 2, 3, 4]", "  seeds: [0, 1]")
-    text = text.replace(
-        "  max_env_steps: 100000             # THE Atari-100k interaction budget",
-        "  max_env_steps: 50000              # tuning budget: half of Atari-100k")
-    text = text.replace(
-        "  checkpoint_every_steps: 10000     # 10 tracking points across the 100k budget",
-        "  checkpoint_every_steps: 5000      # 10 tracking points across the 50k budget")
-    text = text.replace(
-        "  step_freq: 10000                  # rank/Hankel tick every 10k ENV STEPS (at",
-        "  step_freq: 5000                   # rank/Hankel tick every 5k ENV STEPS (at")
+    # seeds are INHERITED from the global config — one seeds line governs the
+    # tune, suite and ref campaigns alike. Budget/cadences are tune-specific
+    # and forced regardless of the global values:
+    text, n = re.subn(r"  max_env_steps: \d+.*",
+                      "  max_env_steps: 50000              "
+                      "# tuning budget: half of Atari-100k", text, count=1)
+    assert n == 1, "max_env_steps line not found"
+    text, n = re.subn(r"  checkpoint_every_steps: \d+.*",
+                      "  checkpoint_every_steps: 5000      "
+                      "# 10 tracking points across the 50k budget", text, count=1)
+    assert n == 1, "checkpoint_every_steps line not found"
+    text, n = re.subn(r"  step_freq: \d+ .*",
+                      "  step_freq: 5000                   "
+                      "# rank/Hankel tick every 5k ENV STEPS (at", text, count=1)
+    assert n == 1, "step_freq line not found"
     old_arm = "    3: {fhr_weight: 2, fhr_order: 8}   # the suite arm (also the BBF comparison)"
     assert old_arm in text
     text = text.replace(old_arm, grid.rstrip("\n"))
     _validate(text)
+    return text
+
+
+def ref_variant(text: str, ref_seeds: str) -> str:
+    """The notebook-comparison rendering: the EXACT protocol the completed
+    1-seed suite (exp_atari100k_effrainbow.ipynb) trained under — no
+    mid-training eval checkpoints, episode-gated analysis (ep_freq 200) —
+    so new seeds extend that comparison rather than the instrumented
+    protocol. Own run-name family (_effrainbow100kref) so provenance can
+    never blur into the instrumented suite runs. ref_seeds: the seed list
+    lifted from the global yaml's experiment.ref_seeds (the seeds the
+    notebook pass did NOT already train)."""
+    text = text.replace("_effrainbow100k", "_effrainbow100kref")
+    text, n = re.subn(r"  seeds: \[.*\]\n",
+                      f"  seeds: {ref_seeds}   # ref campaign: the seeds the "
+                      "notebook's 1-seed pass did not train\n", text, count=1)
+    assert n == 1, "seeds line not found for ref variant"
+    text, n = re.subn(r"  checkpoint_every_steps:.*\n  checkpoint_episodes:.*\n",
+                      "", text)
+    assert n == 1, "checkpoint keys not found for ref variant"
+    text, n = re.subn(
+        r"  step_freq: \d+ .*\n(?: {30,}#.*\n)*",
+        "  ep_freq: 200                      # legacy per-episode cadence — the\n"
+        "                                    # notebook suite pass ran exactly this\n",
+        text)
+    assert n == 1, "step_freq block not found for ref variant"
+    _validate(text)
+    assert "checkpoint_every_steps" not in text
     return text
 
 
@@ -102,6 +149,10 @@ def main():
     if m is None:
         sys.exit("no tune_fhr_experiments block in the global yaml")
     grid = m.group(1)
+    m = REF_SEEDS_RE.search(template)
+    if m is None:
+        sys.exit("no ref_seeds block in the global yaml")
+    ref_seeds = m.group(1)
     made = tuned = 0
     for src_cfg in sorted(ATARI.glob("dqn_*/config_fhrdqn_100k.yaml")):
         game_dir = src_cfg.parent
@@ -115,6 +166,8 @@ def main():
                                                        False),
         )
         (game_dir / "config_effrainbow_100k.yaml").write_text(text)
+        (game_dir / "config_effrainbow_100k_ref.yaml").write_text(
+            ref_variant(text, ref_seeds))
         made += 1
         if game_dir.name in TUNE_GAMES:
             (game_dir / "config_effrainbow_tune.yaml").write_text(

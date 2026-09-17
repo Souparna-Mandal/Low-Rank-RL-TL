@@ -1,0 +1,31 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_freeway_effrainbow100kref_baseline_seed1_20260907-014202",
+      "2": "cached/runs/dqn_freeway_effrainbow100kref_baseline_seed2_20260907-014202",
+      "3": "cached/runs/dqn_freeway_effrainbow100kref_baseline_seed3_20260907-020515",
+      "4": "cached/runs/dqn_freeway_effrainbow100kref_baseline_seed4_20260907-020515"
+    },
+    "exp3": {
+      "1": "cached/runs/dqn_freeway_effrainbow100kref_exp3_seed1_20260910-052504",
+      "2": "cached/runs/dqn_freeway_effrainbow100kref_exp3_seed2_20260910-052504",
+      "3": "cached/runs/dqn_freeway_effrainbow100kref_exp3_seed3_20260910-061138",
+      "4": "cached/runs/dqn_freeway_effrainbow100kref_exp3_seed4_20260910-061138"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}

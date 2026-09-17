@@ -452,3 +452,30 @@ def test_fhr_lag_source_split_path_matches_fused_at_init():
     assert np.isfinite(p0)
     assert abs(diags["detached"]["penalty_raw"] - p0) < 1e-5
     assert abs(diags["target"]["penalty_raw"] - p0) < 1e-5
+
+
+def test_wrank_probe_and_rho_effrainbow():
+    """The window-rank probe and the rho gradient-ratio diagnostic run on the
+    IQN recipe: probe rows carry the sigma spectrum (baseline arm included as
+    the lambda=0 control), rho is finite on FHR steps."""
+    torch.manual_seed(0), np.random.seed(0), random.seed(0)
+    agent, env = _cartpole_agent(fhr_weight=0.5, window_rank_every=1,
+                                 rho_every=1)
+    _fill_buffer(agent, env)
+    d = agent.train()
+    assert np.isfinite(d["rho"]) and d["rho"] > 0
+    rows, arrays = agent.drain_window_rank()
+    assert rows and rows[-1]["n_windows"] > 0
+    assert np.isfinite(rows[-1]["sv_01"]) and rows[-1]["sv_01"] > 0
+    assert arrays
+    env.close()
+    # baseline arm: probe still measures (control), rho stays NaN
+    torch.manual_seed(0), np.random.seed(0), random.seed(0)
+    base, env = _cartpole_agent(fhr_weight=0.0, window_rank_every=1,
+                                rho_every=1)
+    _fill_buffer(base, env)
+    db = base.train()
+    assert np.isnan(db["rho"])
+    rows_b, _ = base.drain_window_rank()
+    assert rows_b and np.isfinite(rows_b[-1]["sv_01"])
+    env.close()
