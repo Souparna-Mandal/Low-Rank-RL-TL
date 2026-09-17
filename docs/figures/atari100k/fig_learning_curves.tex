@@ -1,0 +1,16 @@
+% Written ONCE by experiments/src/export_atari100k_pgfplots.py and never overwritten:
+% edit caption / label / placement freely (--rewrite-wrappers re-creates it).
+% The picture itself is \input from the regenerated *_body.tex file.
+\begin{figure}[p]
+  \centering
+  \input{\figtex/fig_learning_curves_a_body}
+  \caption{Training curves on the 26 Atari-100k games: EfficientRainbow baseline and the same agent with the FHR loss. Lines: mean over 4 seeds of the raw episode return smoothed with a moving average of 20 episodes, on a common grid of 200 points over the 100k environment steps; shaded: $\pm$ one standard deviation across seeds. Panels whose FHR arm has fewer seeds say so in the title. Games Alien--Jamesbond.}
+  \label{fig:atari100k-learning-curves-a}
+\end{figure}
+
+\begin{figure}[p]
+  \centering
+  \input{\figtex/fig_learning_curves_b_body}
+  \caption{Training curves on the 26 Atari-100k games (continued): EfficientRainbow baseline and the same agent with the FHR loss. Lines: mean over 4 seeds of the raw episode return smoothed with a moving average of 20 episodes, on a common grid of 200 points over the 100k environment steps; shaded: $\pm$ one standard deviation across seeds. Panels whose FHR arm has fewer seeds say so in the title. Games Kangaroo--UpNDown.}
+  \label{fig:atari100k-learning-curves-b}
+\end{figure}

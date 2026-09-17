@@ -1,0 +1,2 @@
+dqn_kung_fu_master	config_effrainbow_100k_ref.yaml	exp3	3	{"fhr_weight":2,"fhr_order":8}
+dqn_kung_fu_master	config_effrainbow_100k_ref.yaml	exp3	4	{"fhr_weight":2,"fhr_order":8}

@@ -1,0 +1,31 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "runs": {
+    "baseline": {
+      "1": "cached/runs/dqn_pacman_effrainbow100kref_baseline_seed1_20260908-124248",
+      "2": "cached/runs/dqn_pacman_effrainbow100kref_baseline_seed2_20260908-124248",
+      "3": "cached/runs/dqn_pacman_effrainbow100kref_baseline_seed3_20260908-133400",
+      "4": "cached/runs/dqn_pacman_effrainbow100kref_baseline_seed4_20260908-133400"
+    },
+    "exp3": {
+      "1": "cached/runs/dqn_pacman_effrainbow100kref_exp3_seed1_20260915-214302",
+      "2": "cached/runs/dqn_pacman_effrainbow100kref_exp3_seed2_20260915-214302",
+      "3": "cached/runs/dqn_pacman_effrainbow100kref_exp3_seed3_20260915-215352",
+      "4": "cached/runs/dqn_pacman_effrainbow100kref_exp3_seed4_20260915-215352"
+    }
+  },
+  "overrides": {
+    "baseline": {
+      "fhr_weight": 0.0
+    },
+    "exp3": {
+      "fhr_weight": 2,
+      "fhr_order": 8
+    }
+  }
+}
